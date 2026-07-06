@@ -9,3 +9,8 @@
 | 2026-07-06T23:02:47Z | phase0 | `.venv/bin/python split_dataset.py --seed 42 --out split.json` | Verified existing `split.json` unchanged; script refused to rewrite different content by design. |
 | 2026-07-06T23:02:47Z | phase0 | `.venv/bin/python evaluate.py logs/phase3/naive_rag/76550cb6-e96e-4c38-8ad6-f55d9cbc4414.json` | Emitted required metrics: `EM`, `F1`, `vlm_rate`, `harm_rate`. |
 | 2026-07-06T23:02:47Z | phase0 | `.venv/bin/python -m pytest -q` | Passed: 28 tests, 3 warnings. |
+| 2026-07-06T23:02:47Z | phase1 | `.venv/bin/python run.py --gate off --recovery off --out results/b0.json` | Blocked: `NV-Embed-v2` was not accessible through Hugging Face; `results/b0.json` was not created. |
+| 2026-07-06T23:02:47Z | phase1 | `VLM_BACKEND=claude-sonnet-4-5 ... .venv/bin/python run.py --gate off --recovery always_vlm --out results/b1.json` | Blocked: missing `ANTHROPIC_API_KEY`; `results/b1.json` was not created. |
+| 2026-07-06T23:02:47Z | phase1 | `.venv/bin/python run.py --gate on --recovery random_type --out results/b2.json` | Blocked: `NV-Embed-v2` was not accessible through Hugging Face; `results/b2.json` was not created. |
+| 2026-07-06T23:02:47Z | phase1 | `VLM_BACKEND=claude-sonnet-4-5 ... .venv/bin/python run.py --mode colpali --out results/b3.json` | Blocked: missing `ANTHROPIC_API_KEY`; `results/b3.json` was not created. |
+| 2026-07-06T23:02:47Z | phase1 | `VLM_BACKEND=claude-sonnet-4-5 ... .venv/bin/python run.py --mode visrag --out results/b4.json` | Blocked: missing `ANTHROPIC_API_KEY`; `results/b4.json` was not created. |
