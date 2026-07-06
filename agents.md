@@ -22,3 +22,44 @@
 - Do not commit files that are intentionally ignored by `.gitignore`.
 - Avoid destructive git commands unless explicitly requested.
 
+# FAAR Agent Operating Notes
+
+## Stack Choices
+
+Use the recommended column from the fixed experimental plan unless the user explicitly says compute is constrained.
+
+| Component | Selected Stack |
+| --- | --- |
+| VLM | `claude-sonnet-4-5` |
+| Embeddings | `NV-Embed-v2` |
+| Reranker | `BGE-reranker-v2-m3` |
+| OCR | `GOT-OCR 2.0` |
+| PDF Pre-processing | `Docling` |
+| Visual RAG Base | `ColPali` |
+| Eval Framework | `RAGAS` |
+| Experiment Track | `Weights & Biases` |
+| Annotation Tool | `Label Studio` |
+
+## Model and Tool Version Pins
+
+Put these in the paper implementation section.
+
+| Role | Pin |
+| --- | --- |
+| VLM | `claude-sonnet-4-5` |
+| Embeddings | `NV-Embed-v2` |
+| Reranker | `bge-reranker-v2-m3` |
+| OCR | `GOT-OCR 2.0` |
+| PDF Prep | `Docling 1.x` |
+| Eval | `RAGAS 0.2.x` |
+| Tracking | `wandb 0.17.x` |
+| Annotation | `Label Studio 1.x` |
+
+## Non-Negotiables
+
+- `split.json` is created once and never touched again.
+- The gate threshold is tuned on validation data only, never on test data.
+- `evaluate.py` must always emit `EM`, `F1`, `vlm_rate`, and `harm_rate`, or the run does not count.
+- Never commit API keys or credentials.
+- Do not silently switch to the free/local stack when a required paid key is missing.
+- Keep all work on the `faar-aaai-experiments` branch until human review and merge.

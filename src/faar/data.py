@@ -6,9 +6,43 @@ import json
 import re
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 from .settings import AppSettings
 from .types import Phase0Example
+
+
+class DatasetUnavailableError(FileNotFoundError):
+    pass
+
+
+def load_dataset_records(project_root: Path, dataset: str, split: str) -> list[dict[str, Any]]:
+    dataset_key = dataset.lower().replace("-", "").replace("_", "")
+    if dataset_key in {"ohrbench", "ohr"}:
+        split_path = project_root / "split.json"
+        if not split_path.exists():
+            raise DatasetUnavailableError("split.json is required for OHR-Bench runs. Run `python split_dataset.py --seed 42 --out split.json`.")
+        split_payload = json.loads(split_path.read_text())
+        ids = set(split_payload["splits"][split])
+        all_rows = json.loads((project_root / "OHR-Bench/data/qas_v2.json").read_text())
+        return [row for row in all_rows if row["ID"] in ids]
+
+    external_dir = project_root / "data/external"
+    candidates = {
+        "mpdocvqa": external_dir / "mpdocvqa_val.json",
+        "arxivqa": external_dir / "arxivqa_val.json",
+    }
+    path = candidates.get(dataset_key)
+    if path is None:
+        raise ValueError(f"Unsupported dataset {dataset!r}. Expected one of: ohrbench, mpdocvqa, arxivqa.")
+    if not path.exists():
+        raise DatasetUnavailableError(
+            f"{dataset} {split} data is not present at {path}. Add the dataset file before running this phase."
+        )
+    payload = json.loads(path.read_text())
+    if isinstance(payload, dict):
+        payload = payload.get(split) or payload.get("data") or payload.get("examples") or []
+    return list(payload)
 
 
 def _parse_pages(raw: str) -> list[int]:

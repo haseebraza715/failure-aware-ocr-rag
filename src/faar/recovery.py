@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -8,6 +9,7 @@ from pathlib import Path
 from openai import OpenAI
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
+from .api_logging import estimate_anthropic_cost_usd, estimate_openai_cost_usd, make_vlm_logger, new_record
 from .settings import AppSettings
 from .types import RetrievalHit
 
@@ -54,6 +56,7 @@ class ByT5Corrector:
 class VisualFallback:
     def __init__(self, settings: AppSettings) -> None:
         self.settings = settings
+        self.logger = make_vlm_logger(settings.project_root, enabled=settings.recovery.log_vlm_calls)
 
     def answer(self, question: str, image_paths: list[Path], fallback_context: str) -> dict:
         if not self.settings.recovery.api_enabled and self.settings.recovery.vlm_backend == "openai":
@@ -66,6 +69,8 @@ class VisualFallback:
             }
         if self.settings.recovery.vlm_backend == "openai":
             return self._answer_with_openai(question, image_paths)
+        if self.settings.recovery.vlm_backend in {"claude-sonnet-4-5", "anthropic", "claude"}:
+            return self._answer_with_anthropic(question, image_paths, fallback_context)
         return {
             "backend": "mock",
             "status": "skipped",
@@ -84,6 +89,8 @@ class VisualFallback:
                 "answer": "",
                 "used_images": [],
             }
+        if not os.getenv("OPENAI_API_KEY"):
+            raise RuntimeError("OPENAI_API_KEY is required for VLM_BACKEND=openai.")
         client = OpenAI()
         content: list[dict] = [{"type": "text", "text": f"Answer the question using only the page image.\n\nQuestion: {question}"}]
         for path in image_paths:
@@ -95,12 +102,30 @@ class VisualFallback:
                 }
             )
         try:
+            self.logger.log(
+                new_record(
+                    provider="openai",
+                    model=self.settings.recovery.openai_model,
+                    operation="visual_fallback",
+                    status="started",
+                    metadata={"image_count": len(image_paths)},
+                )
+            )
             response = client.chat.completions.create(
                 model=self.settings.recovery.openai_model,
                 messages=[{"role": "user", "content": content}],
                 timeout=self.settings.recovery.request_timeout_seconds,
             )
         except Exception as exc:  # pragma: no cover - external runtime dependent
+            self.logger.log(
+                new_record(
+                    provider="openai",
+                    model=self.settings.recovery.openai_model,
+                    operation="visual_fallback",
+                    status="failed",
+                    metadata={"error": type(exc).__name__},
+                )
+            )
             return {
                 "backend": "openai",
                 "status": "failed",
@@ -108,11 +133,109 @@ class VisualFallback:
                 "answer": "",
                 "used_images": [str(path) for path in image_paths],
             }
+        usage = getattr(response, "usage", None)
+        prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+        completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+        self.logger.log(
+            new_record(
+                provider="openai",
+                model=self.settings.recovery.openai_model,
+                operation="visual_fallback",
+                status="succeeded",
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost_usd=estimate_openai_cost_usd(prompt_tokens, completion_tokens),
+                metadata={"image_count": len(image_paths)},
+            )
+        )
         return {
             "backend": "openai",
             "status": "succeeded",
             "reason": "visual_fallback_answer_generated",
             "answer": response.choices[0].message.content or "",
+            "used_images": [str(path) for path in image_paths],
+        }
+
+    def _answer_with_anthropic(self, question: str, image_paths: list[Path], fallback_context: str) -> dict:
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            raise RuntimeError("ANTHROPIC_API_KEY is required for VLM_BACKEND=claude-sonnet-4-5.")
+        try:  # pragma: no cover - optional external runtime
+            from anthropic import Anthropic
+        except ImportError as exc:  # pragma: no cover - optional external runtime
+            raise RuntimeError("The `anthropic` package is required for VLM_BACKEND=claude-sonnet-4-5.") from exc
+
+        client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        content: list[dict] = [
+            {
+                "type": "text",
+                "text": (
+                    "Answer the question using the page image when available and the OCR context only as supporting evidence.\n\n"
+                    f"Question: {question}\n\nOCR context:\n{fallback_context[:4000]}"
+                ),
+            }
+        ]
+        for path in image_paths:
+            encoded = base64.b64encode(path.read_bytes()).decode("utf-8")
+            content.append(
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": "image/png", "data": encoded},
+                }
+            )
+        self.logger.log(
+            new_record(
+                provider="anthropic",
+                model=self.settings.recovery.anthropic_model,
+                operation="visual_fallback",
+                status="started",
+                metadata={"image_count": len(image_paths)},
+            )
+        )
+        try:
+            response = client.messages.create(
+                model=self.settings.recovery.anthropic_model,
+                max_tokens=256,
+                messages=[{"role": "user", "content": content}],
+                timeout=self.settings.recovery.request_timeout_seconds,
+            )
+        except Exception as exc:  # pragma: no cover - external runtime dependent
+            self.logger.log(
+                new_record(
+                    provider="anthropic",
+                    model=self.settings.recovery.anthropic_model,
+                    operation="visual_fallback",
+                    status="failed",
+                    metadata={"error": type(exc).__name__},
+                )
+            )
+            return {
+                "backend": "anthropic",
+                "status": "failed",
+                "reason": f"anthropic_error:{type(exc).__name__}",
+                "answer": "",
+                "used_images": [str(path) for path in image_paths],
+            }
+        usage = getattr(response, "usage", None)
+        prompt_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+        completion_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+        text_parts = [getattr(block, "text", "") for block in getattr(response, "content", []) if getattr(block, "type", "") == "text"]
+        self.logger.log(
+            new_record(
+                provider="anthropic",
+                model=self.settings.recovery.anthropic_model,
+                operation="visual_fallback",
+                status="succeeded",
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost_usd=estimate_anthropic_cost_usd(self.settings.recovery.anthropic_model, prompt_tokens, completion_tokens),
+                metadata={"image_count": len(image_paths)},
+            )
+        )
+        return {
+            "backend": "anthropic",
+            "status": "succeeded",
+            "reason": "visual_fallback_answer_generated",
+            "answer": "\n".join(part for part in text_parts if part).strip(),
             "used_images": [str(path) for path in image_paths],
         }
 

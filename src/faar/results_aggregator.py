@@ -30,6 +30,7 @@ def summarize_examples(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "em": round(em, 4),
         "f1": round(f1, 4),
         "visual_fallback_rate": round(visual_rate, 4),
+        "vlm_rate": round(visual_rate, 4),
     }
 
 

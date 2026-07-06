@@ -11,7 +11,9 @@ class RetrievalSettings(BaseModel):
     chunk_overlap_words: int = 40
     top_k: int = 5
     semantic_backtrack_top_k: int = 8
-    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_model: str = Field(default_factory=lambda: os.getenv("EMBED_MODEL", "NV-Embed-v2"))
+    reranker: str = Field(default_factory=lambda: os.getenv("RERANKER", "bge-reranker-v2-m3"))
+    visual_rag_base: str = Field(default_factory=lambda: os.getenv("VISUAL_RAG_BASE", "colpali"))
 
 
 class GateSettings(BaseModel):
@@ -25,11 +27,15 @@ class GateSettings(BaseModel):
 class RecoverySettings(BaseModel):
     byt5_model: str = "google/byt5-small"
     enable_backtracking: bool = True
-    vlm_backend: str = "mock"
+    vlm_backend: str = Field(default_factory=lambda: os.getenv("VLM_BACKEND", "claude-sonnet-4-5"))
     openai_model: str = "gpt-4o"
+    anthropic_model: str = "claude-sonnet-4-5"
+    ocr_engine: str = Field(default_factory=lambda: os.getenv("OCR_ENGINE", "got-ocr-2"))
+    pdf_preprocessor: str = Field(default_factory=lambda: os.getenv("PDF_PREPROCESSOR", "docling"))
     enable_vlm: bool = True
     api_enabled: bool = True
     request_timeout_seconds: int = 60
+    log_vlm_calls: bool = Field(default_factory=lambda: os.getenv("LOG_VLM_CALLS", "false").lower() == "true")
 
 
 class ExperimentSettings(BaseModel):
@@ -48,6 +54,9 @@ class AppSettings(BaseModel):
     phase0_ocr_dir: Path | None = None
     logs_dir: Path | None = None
     artifacts_dir: Path | None = None
+    split_path: Path | None = None
+    external_data_dir: Path | None = None
+    results_dir: Path | None = None
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
     gate: GateSettings = Field(default_factory=GateSettings)
     recovery: RecoverySettings = Field(default_factory=RecoverySettings)
@@ -61,6 +70,9 @@ class AppSettings(BaseModel):
         self.phase0_ocr_dir = (self.phase0_ocr_dir or self.project_root / "artifacts/phase0/ocr_text").resolve()
         self.logs_dir = (self.logs_dir or self.project_root / "logs/phase1").resolve()
         self.artifacts_dir = (self.artifacts_dir or self.project_root / "artifacts/phase1").resolve()
+        self.split_path = (self.split_path or self.project_root / "split.json").resolve()
+        self.external_data_dir = (self.external_data_dir or self.project_root / "data/external").resolve()
+        self.results_dir = (self.results_dir or self.project_root / "results").resolve()
 
     def validate_runtime_paths(self) -> None:
         required = {
