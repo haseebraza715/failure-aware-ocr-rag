@@ -54,7 +54,7 @@ Implementation status: complete; execution is pending a real validation B0 resul
 - After labels exist, compute Cohen's kappa and require `kappa >= 0.65`.
 - Commit prepared annotation assets as `phase3: annotation setup`.
 
-Implementation status: pending.
+Implementation status: complete; execution is pending B0 failures, GOT-OCR runtime/model access, and two independent human annotations.
 
 ## Phase 4: Main FAAR Runs
 

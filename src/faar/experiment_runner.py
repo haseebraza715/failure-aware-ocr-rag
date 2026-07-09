@@ -52,6 +52,10 @@ def run_profile(
             },
             "top_hit_texts": hit_texts[:5],
             "top_reranker_score": (result.get("gate") or {}).get("top_reranker_score", 0.0),
+            "source_assets": {
+                "ocr_text_path": str(getattr(result["example"], "ocr_text_path", "")),
+                "image_paths": [str(path) for path in getattr(result["example"], "image_paths", [])],
+            },
             "run_metadata": {
                 "profile": profile_name,
                 "run_id": datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ"),
