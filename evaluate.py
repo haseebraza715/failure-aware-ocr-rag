@@ -33,7 +33,7 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
 def evaluate_results(results_path: Path, baseline_path: Path | None = None) -> dict[str, float]:
     payload = json.loads(results_path.read_text())
     summary = payload.get("summary") if isinstance(payload, dict) else None
-    if isinstance(summary, dict) and all(key in summary for key in REQUIRED_KEYS):
+    if isinstance(summary, dict) and all(key in summary for key in REQUIRED_KEYS) and baseline_path is None:
         return {key: float(summary[key]) for key in REQUIRED_KEYS}
 
     rows = load_rows(results_path)

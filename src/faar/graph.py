@@ -33,8 +33,8 @@ class GraphState(TypedDict, total=False):
     action_outcome: dict[str, Any]
 
 
-def build_graph(settings: AppSettings):
-    repo = Phase0Repository(settings)
+def build_graph(settings: AppSettings, repo: Phase0Repository | Any | None = None):
+    repo = repo or Phase0Repository(settings)
     corrector = ByT5Corrector(settings.recovery.byt5_model)
     visual_fallback = VisualFallback(settings)
 

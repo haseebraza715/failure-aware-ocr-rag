@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .benchmarks import load_benchmark_repository
 from .data import Phase0Repository
 from .experiment_profiles import apply_profile
 from .graph import build_graph
@@ -19,10 +20,16 @@ def run_profile(
     output_dir: Path | None = None,
     example_ids: list[str] | None = None,
     selection: dict[str, Any] | None = None,
+    dataset: str | None = None,
+    split: str | None = None,
 ) -> list[dict[str, Any]]:
     settings = apply_profile(settings, profile_name)
-    repo = Phase0Repository(settings)
-    graph = build_graph(settings)
+    if dataset and split:
+        repo = load_benchmark_repository(settings.project_root, dataset, split)
+        graph = build_graph(settings, repo=repo)
+    else:
+        repo = Phase0Repository(settings)
+        graph = build_graph(settings)
     selected_ids = list(example_ids) if example_ids is not None else repo.list_example_ids()
     if max_examples is not None and example_ids is None:
         selected_ids = selected_ids[: max(0, max_examples)]
@@ -64,6 +71,8 @@ def run_profile(
                 "openai_model": settings.recovery.openai_model,
                 "evaluation_size": len(selected_ids),
                 "selection": selection or {"max_examples": max_examples},
+                "dataset": dataset or "phase0",
+                "split": split or "development",
             },
         }
         rows.append(row)

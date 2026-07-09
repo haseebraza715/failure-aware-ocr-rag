@@ -59,9 +59,19 @@ def _run_profile_to_result(
     label: str,
     max_examples: int | None,
     run_spec: dict[str, Any],
+    dataset: str,
+    split: str,
 ) -> dict[str, Any]:
     start = time.perf_counter()
-    rows = run_profile(settings, profile_name=profile, max_examples=max_examples, output_dir=out.parent / f"{out.stem}_rows")
+    start_cost = _read_vlm_cost(settings.project_root / "logs/vlm_calls.jsonl")
+    rows = run_profile(
+        settings,
+        profile_name=profile,
+        max_examples=max_examples,
+        output_dir=out.parent / f"{out.stem}_rows",
+        dataset=dataset,
+        split=split,
+    )
     summary = summarize_examples(rows)
     payload = {
         "label": label,
@@ -73,7 +83,7 @@ def _run_profile_to_result(
             "F1": summary["f1"],
             "vlm_rate": summary["vlm_rate"],
             "harm_rate": 0.0,
-            "cost_usd": _read_vlm_cost(settings.project_root / "logs/vlm_calls.jsonl"),
+            "cost_usd": round(_read_vlm_cost(settings.project_root / "logs/vlm_calls.jsonl") - start_cost, 6),
             "runtime_sec": round(time.perf_counter() - start, 4),
         },
         "rows": rows,
@@ -140,7 +150,7 @@ def main() -> None:
     if args.mode == "faar":
         _require_key_for_paid_vlm(settings.recovery.vlm_backend)
         payload = _run_profile_to_result(
-            settings, "faar_full", args.out, f"FAAR {args.dataset} {args.split}", args.max_examples, run_spec
+            settings, "faar_full", args.out, f"FAAR {args.dataset} {args.split}", args.max_examples, run_spec, args.dataset, args.split
         )
         print(json.dumps(payload["summary"], indent=2))
         return
@@ -154,7 +164,9 @@ def main() -> None:
         }[args.ablate]
         if args.ablate == "no_gate":
             _require_key_for_paid_vlm(settings.recovery.vlm_backend)
-        payload = _run_profile_to_result(settings, ablation_profile, args.out, args.ablate, args.max_examples, run_spec)
+        payload = _run_profile_to_result(
+            settings, ablation_profile, args.out, args.ablate, args.max_examples, run_spec, args.dataset, args.split
+        )
         print(json.dumps(payload["summary"], indent=2))
         return
 
@@ -164,7 +176,7 @@ def main() -> None:
     baseline_id, profile, label = BASELINE_MAP[key]
     if baseline_id == "B1":
         _require_key_for_paid_vlm(settings.recovery.vlm_backend)
-    payload = _run_profile_to_result(settings, profile, args.out, label, args.max_examples, run_spec)
+    payload = _run_profile_to_result(settings, profile, args.out, label, args.max_examples, run_spec, args.dataset, args.split)
     if baseline_id == "B2" and Path("results/b0.json").exists():
         payload["summary"]["harm_rate"] = evaluate_results(args.out, baseline_path=Path("results/b0.json"))["harm_rate"]
         args.out.write_text(json.dumps(payload, indent=2) + "\n")

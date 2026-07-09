@@ -65,6 +65,8 @@ Implementation status: complete; execution is pending B0 failures, GOT-OCR runti
 - Verify all result JSON files exist and contain the required metrics.
 - Commit as `phase4: main faar runs`.
 
+Implementation status: complete; execution is pending full registered OHR-Bench/MP-DocVQA/ArXivQA OCR and image assets plus the pinned-model credentials.
+
 ## Phase 5: Ablations
 
 - Run A1 no gate, always recover.
