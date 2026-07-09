@@ -88,6 +88,8 @@ Implementation status: complete; execution is pending the locked gate, complete 
 - Verify numbers are loaded from result JSON files.
 - Commit as `phase6: analysis`.
 
+Implementation status: complete; execution is pending real saved result JSON files and the Plotly/Kaleido PDF export dependency.
+
 ## Phase 7: Paper Tables and Pre-Submission Checklist
 
 - Generate Table 1 main results from result JSON files.
