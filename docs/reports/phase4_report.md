@@ -11,10 +11,10 @@ Phase 4 focused on claim refinement, decision hardening, and evidence alignment 
 
 ## Key Outputs
 
-- [artifacts/phase4/phase4_summary.json](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase4/phase4_summary.json)
-- [artifacts/phase4/claim_assessment.json](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase4/claim_assessment.json)
-- [artifacts/phase4/case_studies.json](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase4/case_studies.json)
-- [artifacts/phase4/profile_deltas_vs_baseline.csv](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase4/profile_deltas_vs_baseline.csv)
+- [artifacts/phase4/phase4_summary.json](/artifacts/phase4/phase4_summary.json)
+- [artifacts/phase4/claim_assessment.json](/artifacts/phase4/claim_assessment.json)
+- [artifacts/phase4/case_studies.json](/artifacts/phase4/case_studies.json)
+- [artifacts/phase4/profile_deltas_vs_baseline.csv](/artifacts/phase4/profile_deltas_vs_baseline.csv)
 
 ## Claim Status Summary
 
@@ -25,6 +25,6 @@ Phase 4 focused on claim refinement, decision hardening, and evidence alignment 
 
 ## Documentation
 
-- [Phase 4 Docs Index](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/phases/phase4/index.md)
-- [Claim Refinement Decisions](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/phases/phase4/claim_refinement.md)
-- [Testing and Verification](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/phases/phase4/testing_and_verification.md)
+- [Phase 4 Docs Index](/docs/phases/phase4/index.md)
+- [Claim Refinement Decisions](/docs/phases/phase4/claim_refinement.md)
+- [Testing and Verification](/docs/phases/phase4/testing_and_verification.md)

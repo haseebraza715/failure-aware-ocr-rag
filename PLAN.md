@@ -101,3 +101,5 @@ Implementation status: complete; execution is pending real saved result JSON fil
   - check PDF metadata author field
   - confirm anonymization checklist items
 - Commit as `phase7: paper tables`.
+
+Implementation status: complete; tables and Figure 1 require completed Phase 4-6 artifacts. The source-tree anonymization scan is clean except for intentional checklist text and local `.git` metadata; PDF metadata cannot be checked until `paper.pdf` exists and `pdfinfo` is available.

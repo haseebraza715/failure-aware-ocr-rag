@@ -4,11 +4,11 @@
 
 Primary artifact:
 
-- [artifacts/phase4/claim_assessment.json](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase4/claim_assessment.json)
+- [artifacts/phase4/claim_assessment.json](/artifacts/phase4/claim_assessment.json)
 
 Supporting artifact:
 
-- [artifacts/phase4/phase4_summary.json](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase4/phase4_summary.json)
+- [artifacts/phase4/phase4_summary.json](/artifacts/phase4/phase4_summary.json)
 
 ## Decision Table
 
@@ -40,4 +40,4 @@ Phase 5 writing should treat the current evidence as:
 - insufficient support for quality-improvement claims over the naive baseline on the current 40-example slice;
 - motivation for larger or stratified reruns before thesis-level claim escalation.
 
-Use [Phase 5 Writing Plan](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/phases/phase5/writing_plan.md) as the default handoff document for drafting.
+Use [Phase 5 Writing Plan](/docs/phases/phase5/writing_plan.md) as the default handoff document for drafting.

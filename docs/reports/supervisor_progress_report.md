@@ -3,7 +3,7 @@
 ## FAAR: Failure-Aware Agentic Recovery for OCR-RAG
 
 **Status date:** April 21, 2026  
-**Repository:** [failure-aware-ocr-rag](https://github.com/haseebraza715/failure-aware-ocr-rag)  
+**Repository:** failure-aware-ocr-rag
 **Branch:** `main`  
 **Purpose:** Provide a supervisor-ready, evidence-based summary of what has been built, what was updated in the latest cycle, and what the current results show.
 
@@ -43,11 +43,11 @@ Current conclusion:
 
 | Phase | Status | What was done | Evidence |
 | --- | --- | --- | --- |
-| Phase 0 | Complete | Built and manually inspected a 40-example OCR-grounded slice with failure labels. | [manual_labels.csv](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/data/phase0/manual_labels.csv), [sample_manifest.csv](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/data/phase0/sample_manifest.csv) |
-| Phase 1 | Complete | Implemented FAAR controller graph with quality gate and typed actions. | [phase1 completion report](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/phases/phase1/completion_report.md) |
-| Phase 2 | Complete | Formalized framework and mapped theory directly to implementation. | [methodology formalization](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/phases/phase2/methodology_formalization.md), [code-math mapping](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/phases/phase2/code_math_mapping.md) |
-| Phase 3 | Complete | Executed benchmark matrix, ablations, and consolidated metrics exports. | [phase3 report](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/reports/phase3_report.md), [metrics_summary.json](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase3/metrics_summary.json) |
-| Phase 4 | Complete | Added claim-assessment module and supervisor-facing claim evidence artifacts. | [phase4 report](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/reports/phase4_report.md), [claim_assessment.json](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase4/claim_assessment.json) |
+| Phase 0 | Complete | Built and manually inspected a 40-example OCR-grounded slice with failure labels. | [manual_labels.csv](/data/phase0/manual_labels.csv), [sample_manifest.csv](/data/phase0/sample_manifest.csv) |
+| Phase 1 | Complete | Implemented FAAR controller graph with quality gate and typed actions. | [phase1 completion report](/docs/phases/phase1/completion_report.md) |
+| Phase 2 | Complete | Formalized framework and mapped theory directly to implementation. | [methodology formalization](/docs/phases/phase2/methodology_formalization.md), [code-math mapping](/docs/phases/phase2/code_math_mapping.md) |
+| Phase 3 | Complete | Executed benchmark matrix, ablations, and consolidated metrics exports. | [phase3 report](/docs/reports/phase3_report.md), [metrics_summary.json](/artifacts/phase3/metrics_summary.json) |
+| Phase 4 | Complete | Added claim-assessment module and supervisor-facing claim evidence artifacts. | [phase4 report](/docs/reports/phase4_report.md), [claim_assessment.json](/artifacts/phase4/claim_assessment.json) |
 
 ### Latest implementation cycle completed
 
@@ -79,7 +79,7 @@ Current conclusion:
 | `text_corruption` | 5 |
 | `structure_corruption` | 2 |
 
-Source: [manual_labels.csv](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/data/phase0/manual_labels.csv)
+Source: [manual_labels.csv](/data/phase0/manual_labels.csv)
 
 ### 3.2 Latest benchmark rerun (April 21, 2026, n=40/profile)
 
@@ -97,7 +97,7 @@ Rerun command used for current artifacts:
 | `faar_no_diagnosis` | 0.4789 | 0.5250 | 0.1250 | 0.2036 | 0.0000 |
 | `naive_rag` | 0.4789 | 0.5250 | 0.1250 | 0.2036 | 0.0000 |
 
-Source: [metrics_summary.json](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase3/metrics_summary.json)
+Source: [metrics_summary.json](/artifacts/phase3/metrics_summary.json)
 
 ### 3.3 What changed versus the previous reported run
 
@@ -129,7 +129,7 @@ Rerun command used for current claim artifacts:
 | Does selective VLM improve quality vs no-VLM while controlling cost? | `not_supported` | `delta_f1_vs_faar_no_vlm = 0.0`, `delta_em_vs_faar_no_vlm = 0.0` |
 | Do diagnosis categories align with executed behavior? | `supported` | diagnosis-policy consistency `1.0`, non-pass rate `0.475` |
 
-Source: [claim_assessment.json](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase4/claim_assessment.json)
+Source: [claim_assessment.json](/artifacts/phase4/claim_assessment.json)
 
 ### 3.5 Routing behavior highlights (`faar_full`)
 
@@ -139,14 +139,14 @@ Source: [claim_assessment.json](https://github.com/haseebraza715/failure-aware-o
 - semantic: `2/40` (`0.050`)
 - executed actions: `answer_direct=21`, `correct_text=14`, `invoke_vlm=3`, `retry_retrieval=2`
 
-Source: [phase4_summary.json](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase4/phase4_summary.json)
+Source: [phase4_summary.json](/artifacts/phase4/phase4_summary.json)
 
 ### 3.6 Case-study signal
 
 - Phase 4 comparison currently shows `0` improvements, `0` regressions, and only ties between `faar_full` and `naive_rag` on the latest rerun.
 - This is consistent with the updated benchmark table: the latest extraction changes lifted all profiles together rather than creating a measurable FAAR-only advantage.
 
-Source: [case_studies.json](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase4/case_studies.json)
+Source: [case_studies.json](/artifacts/phase4/case_studies.json)
 
 ---
 
@@ -207,21 +207,21 @@ The most defensible thesis position at this point is:
 
 ### Project overview
 
-- [README.md](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/README.md)
-- [ARCHITECTURE.md](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/ARCHITECTURE.md)
+- [README.md](/README.md)
+- [ARCHITECTURE.md](/ARCHITECTURE.md)
 
 ### Phase and report links
 
-- [phase1_report.md](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/reports/phase1_report.md)
-- [phase2_report.md](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/reports/phase2_report.md)
-- [phase3_report.md](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/reports/phase3_report.md)
-- [phase4_report.md](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/reports/phase4_report.md)
-- [Phase 5 Writing Plan](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/phases/phase5/writing_plan.md)
+- [phase1_report.md](/docs/reports/phase1_report.md)
+- [phase2_report.md](/docs/reports/phase2_report.md)
+- [phase3_report.md](/docs/reports/phase3_report.md)
+- [phase4_report.md](/docs/reports/phase4_report.md)
+- [Phase 5 Writing Plan](/docs/phases/phase5/writing_plan.md)
 
 ### Core artifacts used in this update
 
-- [artifacts/phase3/metrics_summary.json](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase3/metrics_summary.json)
-- [artifacts/phase4/phase4_summary.json](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase4/phase4_summary.json)
-- [artifacts/phase4/claim_assessment.json](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase4/claim_assessment.json)
-- [artifacts/phase4/case_studies.json](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase4/case_studies.json)
-- [artifacts/phase4/profile_deltas_vs_baseline.csv](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase4/profile_deltas_vs_baseline.csv)
+- [artifacts/phase3/metrics_summary.json](/artifacts/phase3/metrics_summary.json)
+- [artifacts/phase4/phase4_summary.json](/artifacts/phase4/phase4_summary.json)
+- [artifacts/phase4/claim_assessment.json](/artifacts/phase4/claim_assessment.json)
+- [artifacts/phase4/case_studies.json](/artifacts/phase4/case_studies.json)
+- [artifacts/phase4/profile_deltas_vs_baseline.csv](/artifacts/phase4/profile_deltas_vs_baseline.csv)

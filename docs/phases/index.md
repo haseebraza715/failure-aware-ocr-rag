@@ -2,13 +2,13 @@
 
 Phase-scoped documentation is organized as:
 
-- [`phase0/`](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/phases/phase0/index.md)
-- [`phase1/`](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/phases/phase1/index.md)
-- [`phase2/`](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/phases/phase2/index.md)
-- [`phase3/`](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/phases/phase3/index.md)
-- [`phase4/`](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/phases/phase4/index.md)
-- [`phase5/`](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/phases/phase5/index.md)
-- [`phase_overview/`](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/phases/phase_overview/index.md)
+- [`phase0/`](/docs/phases/phase0/index.md)
+- [`phase1/`](/docs/phases/phase1/index.md)
+- [`phase2/`](/docs/phases/phase2/index.md)
+- [`phase3/`](/docs/phases/phase3/index.md)
+- [`phase4/`](/docs/phases/phase4/index.md)
+- [`phase5/`](/docs/phases/phase5/index.md)
+- [`phase_overview/`](/docs/phases/phase_overview/index.md)
 
 ## Conventions
 
