@@ -14,3 +14,4 @@
 | 2026-07-06T23:02:47Z | phase1 | `.venv/bin/python run.py --gate on --recovery random_type --out results/b2.json` | Blocked: `NV-Embed-v2` was not accessible through Hugging Face; `results/b2.json` was not created. |
 | 2026-07-06T23:02:47Z | phase1 | `VLM_BACKEND=claude-sonnet-4-5 ... .venv/bin/python run.py --mode colpali --out results/b3.json` | Blocked: missing `ANTHROPIC_API_KEY`; `results/b3.json` was not created. |
 | 2026-07-06T23:02:47Z | phase1 | `VLM_BACKEND=claude-sonnet-4-5 ... .venv/bin/python run.py --mode visrag --out results/b4.json` | Blocked: missing `ANTHROPIC_API_KEY`; `results/b4.json` was not created. |
+| 2026-07-09T00:00:00Z | phase2 | `tune_gate.py` implementation and `.venv/bin/python -m pytest -q` | Implemented validation-only BGE top-1 reranker threshold search over 0.3/0.4/0.5/0.6/0.7, lock-file writer, and provenance guard. Tests passed: 31. Execution is pending a real B0 validation result; no threshold or metrics were fabricated. |

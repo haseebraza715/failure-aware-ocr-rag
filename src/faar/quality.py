@@ -54,23 +54,14 @@ def quality_gate(hits: list[RetrievalHit], settings: GateSettings) -> dict:
     corruption_score = weird_char_ratio(top.chunk.text)
     layout = layout_signals(top.chunk.text)
     layout_count = sum(layout.values())
-    lexical = top.bm25_score
-    dense = top.dense_score
-    quality_score = (0.40 * dense) + (0.35 * lexical) + (0.25 * (1.0 - min(corruption_score, 1.0)))
+    quality_score = top.reranker_score
     reasons: list[str] = []
     if quality_score < settings.quality_threshold:
-        reasons.append("low_quality_score")
-    if layout_count >= settings.structural_threshold:
-        reasons.append("layout_alert")
-    if corruption_score > settings.weird_char_threshold:
-        reasons.append("word_noise_alert")
-    if lexical < settings.lexical_floor:
-        reasons.append("low_lexical_score")
-    if dense < settings.dense_floor:
-        reasons.append("low_dense_score")
+        reasons.append("top_reranker_below_threshold")
 
     return {
         "quality_score": round(quality_score, 4),
+        "top_reranker_score": round(top.reranker_score, 6),
         "pass_gate": not reasons,
         "reasons": reasons,
         "layout_signal_count": layout_count,

@@ -18,6 +18,7 @@ if str(SRC) not in sys.path:
 
 from evaluate import evaluate_results
 from faar.experiment_runner import run_profile
+from faar.gate_tuning import load_locked_threshold
 from faar.results_aggregator import summarize_examples
 from faar.settings import AppSettings
 
@@ -45,10 +46,20 @@ def _settings_from_args(args: argparse.Namespace) -> AppSettings:
     settings.retrieval.reranker = args.reranker or os.getenv("RERANKER", settings.retrieval.reranker)
     settings.recovery.ocr_engine = args.ocr or os.getenv("OCR_ENGINE", settings.recovery.ocr_engine)
     settings.recovery.log_vlm_calls = os.getenv("LOG_VLM_CALLS", "false").lower() == "true"
+    locked_threshold = load_locked_threshold(settings.gate_threshold_path)
+    if locked_threshold is not None:
+        settings.gate.quality_threshold = locked_threshold
     return settings
 
 
-def _run_profile_to_result(settings: AppSettings, profile: str, out: Path, label: str, max_examples: int | None) -> dict[str, Any]:
+def _run_profile_to_result(
+    settings: AppSettings,
+    profile: str,
+    out: Path,
+    label: str,
+    max_examples: int | None,
+    run_spec: dict[str, Any],
+) -> dict[str, Any]:
     start = time.perf_counter()
     rows = run_profile(settings, profile_name=profile, max_examples=max_examples, output_dir=out.parent / f"{out.stem}_rows")
     summary = summarize_examples(rows)
@@ -56,6 +67,7 @@ def _run_profile_to_result(settings: AppSettings, profile: str, out: Path, label
         "label": label,
         "profile": profile,
         "created_at_utc": datetime.now(UTC).isoformat(),
+        "run_spec": run_spec,
         "summary": {
             "EM": summary["em"],
             "F1": summary["f1"],
@@ -110,6 +122,16 @@ def main() -> None:
     np.random.seed(args.seed)
     settings = _settings_from_args(args)
     settings.validate_runtime_paths()
+    run_spec = {
+        "dataset": args.dataset,
+        "split": args.split,
+        "seed": args.seed,
+        "gate_threshold": settings.gate.quality_threshold,
+        "embedding_model": settings.retrieval.embedding_model,
+        "reranker": settings.retrieval.reranker,
+        "ocr_engine": settings.recovery.ocr_engine,
+        "vlm_backend": settings.recovery.vlm_backend,
+    }
 
     if args.mode in {"colpali", "visrag"}:
         _require_key_for_paid_vlm(settings.recovery.vlm_backend)
@@ -117,7 +139,9 @@ def main() -> None:
 
     if args.mode == "faar":
         _require_key_for_paid_vlm(settings.recovery.vlm_backend)
-        payload = _run_profile_to_result(settings, "faar_full", args.out, f"FAAR {args.dataset} {args.split}", args.max_examples)
+        payload = _run_profile_to_result(
+            settings, "faar_full", args.out, f"FAAR {args.dataset} {args.split}", args.max_examples, run_spec
+        )
         print(json.dumps(payload["summary"], indent=2))
         return
 
@@ -130,7 +154,7 @@ def main() -> None:
         }[args.ablate]
         if args.ablate == "no_gate":
             _require_key_for_paid_vlm(settings.recovery.vlm_backend)
-        payload = _run_profile_to_result(settings, ablation_profile, args.out, args.ablate, args.max_examples)
+        payload = _run_profile_to_result(settings, ablation_profile, args.out, args.ablate, args.max_examples, run_spec)
         print(json.dumps(payload["summary"], indent=2))
         return
 
@@ -140,7 +164,7 @@ def main() -> None:
     baseline_id, profile, label = BASELINE_MAP[key]
     if baseline_id == "B1":
         _require_key_for_paid_vlm(settings.recovery.vlm_backend)
-    payload = _run_profile_to_result(settings, profile, args.out, label, args.max_examples)
+    payload = _run_profile_to_result(settings, profile, args.out, label, args.max_examples, run_spec)
     if baseline_id == "B2" and Path("results/b0.json").exists():
         payload["summary"]["harm_rate"] = evaluate_results(args.out, baseline_path=Path("results/b0.json"))["harm_rate"]
         args.out.write_text(json.dumps(payload, indent=2) + "\n")

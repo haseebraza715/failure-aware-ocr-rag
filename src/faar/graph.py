@@ -110,6 +110,7 @@ def build_graph(settings: AppSettings):
                     bm25_score=hit.bm25_score,
                     dense_score=hit.dense_score,
                     fused_score=hit.fused_score,
+                    reranker_score=hit.reranker_score,
                 )
             )
         return {

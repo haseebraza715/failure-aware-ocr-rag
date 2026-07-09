@@ -43,6 +43,8 @@ This plan mirrors the fixed Phase 0-7 experimental plan. Each phase is a checkpo
 - Verify gate precision is at least `0.75` and gate recall is at least `0.70`.
 - Commit as `phase2: gate threshold`.
 
+Implementation status: complete; execution is pending a real validation B0 result file produced with the pinned stack.
+
 ## Phase 3: Annotation Study
 
 - Sample 100 examples where B0 got the wrong answer.
@@ -51,6 +53,8 @@ This plan mirrors the fixed Phase 0-7 experimental plan. Each phase is a checkpo
 - Stop for real double annotation by humans rather than fabricating labels.
 - After labels exist, compute Cohen's kappa and require `kappa >= 0.65`.
 - Commit prepared annotation assets as `phase3: annotation setup`.
+
+Implementation status: pending.
 
 ## Phase 4: Main FAAR Runs
 

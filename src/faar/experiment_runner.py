@@ -41,6 +41,7 @@ def run_profile(
             "gold_answer": gold,
             "predicted_answer": prediction,
             "failure_type": result.get("failure_type", "pass"),
+            "gate": result.get("gate", {}),
             "policy_action": result.get("policy_action", "answer_direct"),
             "action_outcome": result.get("action_outcome", {}),
             "metrics": {
@@ -50,6 +51,7 @@ def run_profile(
                 "f1": token_f1(prediction, gold),
             },
             "top_hit_texts": hit_texts[:5],
+            "top_reranker_score": (result.get("gate") or {}).get("top_reranker_score", 0.0),
             "run_metadata": {
                 "profile": profile_name,
                 "run_id": datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ"),
