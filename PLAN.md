@@ -77,6 +77,8 @@ Implementation status: complete; execution is pending full registered OHR-Bench/
 - Verify all ablation rows are saved.
 - Commit as `phase5: ablations`.
 
+Implementation status: complete; execution is pending the locked gate, complete benchmark assets, and pinned-model credentials.
+
 ## Phase 6: Analysis
 
 - Compute bootstrap 95% confidence intervals.

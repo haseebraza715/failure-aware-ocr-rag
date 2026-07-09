@@ -37,6 +37,7 @@ class RecoverySettings(BaseModel):
     api_enabled: bool = True
     request_timeout_seconds: int = 60
     log_vlm_calls: bool = Field(default_factory=lambda: os.getenv("LOG_VLM_CALLS", "false").lower() == "true")
+    wordlevel_fallback: str | None = None
 
 
 class ExperimentSettings(BaseModel):
@@ -45,6 +46,10 @@ class ExperimentSettings(BaseModel):
     disable_backtracking: bool = False
     disable_vlm: bool = False
     force_direct_answer: bool = False
+    force_recovery: bool = False
+    random_recovery: bool = False
+    random_seed: int = 42
+    wordlevel_fallback: str | None = None
 
 
 class AppSettings(BaseModel):

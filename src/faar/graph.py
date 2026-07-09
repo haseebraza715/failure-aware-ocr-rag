@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -12,6 +13,7 @@ from .quality import diagnose_failure, quality_gate
 from .recovery import ByT5Corrector, VisualFallback, semantic_backtrack
 from .retrieval import HybridRetriever
 from .settings import AppSettings
+from .symspell import correct_text as symspell_correct_text
 from .types import Chunk, RetrievalHit
 
 
@@ -35,7 +37,8 @@ class GraphState(TypedDict, total=False):
 
 def build_graph(settings: AppSettings, repo: Phase0Repository | Any | None = None):
     repo = repo or Phase0Repository(settings)
-    corrector = ByT5Corrector(settings.recovery.byt5_model)
+    wordlevel_fallback = settings.experiment.wordlevel_fallback or settings.recovery.wordlevel_fallback
+    corrector = None if wordlevel_fallback == "symspell" else ByT5Corrector(settings.recovery.byt5_model)
     visual_fallback = VisualFallback(settings)
 
     def load_example(state: GraphState) -> GraphState:
@@ -60,9 +63,19 @@ def build_graph(settings: AppSettings, repo: Phase0Repository | Any | None = Non
     def route_after_gate(state: GraphState) -> str:
         if settings.experiment.force_direct_answer:
             return "answer_direct"
+        if settings.experiment.force_recovery:
+            return "diagnose"
         return "answer_direct" if state["gate"]["pass_gate"] else "diagnose"
 
     def diagnose_node(state: GraphState) -> GraphState:
+        if settings.experiment.random_recovery:
+            recovery_type = random.choice(("semantic", "word_level", "structural"))
+            policy_action = {
+                "word_level": "correct_text",
+                "structural": "invoke_vlm",
+                "semantic": "retry_retrieval",
+            }[recovery_type]
+            return {"failure_type": "random", "policy_action": policy_action}
         if settings.experiment.disable_diagnosis:
             return {"failure_type": "semantic", "policy_action": "answer_direct"}
         failure_type = diagnose_failure(state["retrieved_hits"], state["gate"], settings.gate)
@@ -87,8 +100,17 @@ def build_graph(settings: AppSettings, repo: Phase0Repository | Any | None = Non
         applied = 0
         decisions: list[dict[str, str | bool]] = []
         for hit in state["retrieved_hits"]:
-            proposal = corrector.propose_correction(hit.chunk.text)
-            corrected_text = str(proposal["text"]) or hit.chunk.text
+            if wordlevel_fallback == "symspell":
+                corrected_text = symspell_correct_text(hit.chunk.text)
+                proposal = {
+                    "text": corrected_text,
+                    "applied": corrected_text != hit.chunk.text,
+                    "reason": "symspell_local_fallback",
+                }
+            else:
+                assert corrector is not None
+                proposal = corrector.propose_correction(hit.chunk.text)
+                corrected_text = str(proposal["text"]) or hit.chunk.text
             decisions.append(
                 {
                     "chunk_id": hit.chunk.chunk_id,

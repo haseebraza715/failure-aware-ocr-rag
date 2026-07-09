@@ -46,6 +46,10 @@ def _settings_from_args(args: argparse.Namespace) -> AppSettings:
     settings.retrieval.reranker = args.reranker or os.getenv("RERANKER", settings.retrieval.reranker)
     settings.recovery.ocr_engine = args.ocr or os.getenv("OCR_ENGINE", settings.recovery.ocr_engine)
     settings.recovery.log_vlm_calls = os.getenv("LOG_VLM_CALLS", "false").lower() == "true"
+    settings.experiment.random_seed = args.seed
+    if args.wordlevel_fallback:
+        settings.experiment.wordlevel_fallback = args.wordlevel_fallback
+        settings.recovery.wordlevel_fallback = args.wordlevel_fallback
     locked_threshold = load_locked_threshold(settings.gate_threshold_path)
     if locked_threshold is not None:
         settings.gate.quality_threshold = locked_threshold
@@ -157,13 +161,12 @@ def main() -> None:
 
     if args.ablate:
         ablation_profile = {
-            "no_gate": "faar_full",
+            "no_gate": "faar_no_gate",
             "no_diagnosis": "faar_no_diagnosis",
-            "no_wordlevel_llm": "faar_full",
+            "no_wordlevel_llm": "faar_symspell",
             "no_semantic_retry": "faar_no_backtrack",
         }[args.ablate]
-        if args.ablate == "no_gate":
-            _require_key_for_paid_vlm(settings.recovery.vlm_backend)
+        _require_key_for_paid_vlm(settings.recovery.vlm_backend)
         payload = _run_profile_to_result(
             settings, ablation_profile, args.out, args.ablate, args.max_examples, run_spec, args.dataset, args.split
         )

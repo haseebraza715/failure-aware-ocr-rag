@@ -12,7 +12,8 @@ def _tokenize_words(text: str) -> list[str]:
 
 def build_chunks(example: Phase0Example, settings: RetrievalSettings) -> list[Chunk]:
     chunks: list[Chunk] = []
-    for page_id, page_text in example.metadata["page_texts"].items():
+    page_texts = example.metadata.get("page_texts") or {page_id: example.ocr_text for page_id in example.page_ids or [0]}
+    for page_id, page_text in page_texts.items():
         words = _tokenize_words(page_text)
         if not words:
             continue
