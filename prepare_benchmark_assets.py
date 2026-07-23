@@ -1,21 +1,21 @@
 from __future__ import annotations
 
 """
-Resumable FAAR benchmark asset preparation (design + smoke harness).
+Resumable FAAR benchmark asset preparation.
 
 Pipeline stages per document:
-  1. PDF discovery
-  2. Docling audit Markdown
+  1. Safe PDF extract/copy from zip or filesystem
+  2. Docling structured audit Markdown
   3. Deterministic page PNG rendering
   4. Pinned GOT-OCR text extraction
 
-Full-dataset execution is intentionally disabled. Use `--smoke-doc` to write a
-one-document plan and checkpoint. Do not use this to start Phase 1 or paid calls.
+Full-dataset execution remains disabled. Use `--smoke-doc` for one document.
 """
 
 import argparse
 import json
 import sys
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -24,21 +24,20 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from faar.asset_paths import to_relative_project_path
-
-
-STAGE_ORDER = ("docling_audit", "render_pages", "got_ocr")
-
-
-def page_image_name(doc_rel: str, page_id: int) -> str:
-    return f"{doc_rel}_page_{page_id}.png"
-
-
-def page_ocr_name(doc_rel: str, page_id: int) -> str:
-    return f"{doc_rel}_page_{page_id}.txt"
-
-
-def docling_audit_name(doc_rel: str) -> str:
-    return f"{doc_rel}.docling.md"
+from faar.asset_preparation import (
+    STAGE_ORDER,
+    execute_document_preparation,
+    load_locked_got_ocr,
+    page_image_name,
+    page_ocr_name,
+    plan_document_work,
+    resolve_pdf_source,
+)
+from faar.ohr_inventory import (
+    diagnose_ohr_inventory_gaps,
+    load_resolved_ohr_document_inventory,
+    resolve_ohr_inventory_path,
+)
 
 
 def _rel(path: Path, project_root: Path) -> str:
@@ -46,46 +45,6 @@ def _rel(path: Path, project_root: Path) -> str:
         return to_relative_project_path(path, project_root)
     except Exception:
         return path.as_posix()
-
-
-def plan_document_work(
-    *,
-    project_root: Path,
-    doc_rel: str,
-    pdf_path: Path,
-    page_ids: list[int],
-    out_root: Path,
-) -> dict:
-    """Deterministic output naming for one document (no heavy work)."""
-    image_dir = out_root / "images"
-    ocr_dir = out_root / "ocr"
-    audit_dir = out_root / "docling"
-    audit_output = audit_dir / docling_audit_name(doc_rel)
-    image_outputs = [image_dir / page_image_name(doc_rel, page_id) for page_id in page_ids]
-    ocr_outputs = [ocr_dir / page_ocr_name(doc_rel, page_id) for page_id in page_ids]
-
-    stages = {
-        "docling_audit": {
-            "input": _rel(pdf_path, project_root),
-            "output": _rel(audit_output, project_root),
-            "done": audit_output.exists(),
-        },
-        "render_pages": {
-            "outputs": [_rel(path, project_root) for path in image_outputs],
-            "done": all(path.exists() for path in image_outputs),
-        },
-        "got_ocr": {
-            "outputs": [_rel(path, project_root) for path in ocr_outputs],
-            "done": all(path.exists() for path in ocr_outputs),
-        },
-    }
-    return {
-        "doc_name": doc_rel,
-        "pdf": _rel(pdf_path, project_root),
-        "page_ids": page_ids,
-        "stages": stages,
-        "checkpoint": {stage: stages[stage]["done"] for stage in STAGE_ORDER},
-    }
 
 
 def load_checkpoint(path: Path) -> dict:
@@ -100,86 +59,223 @@ def save_checkpoint(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _inventory_page_ids(project_root: Path, doc_rel: str, inventory_dir: Path, page_ids_arg: str | None) -> list[int]:
+    if page_ids_arg:
+        return [int(part.strip()) for part in page_ids_arg.split(",") if part.strip()]
+    inventory, _resolutions = load_resolved_ohr_document_inventory(inventory_dir, {doc_rel})
+    if doc_rel not in inventory:
+        path, resolved, kind = resolve_ohr_inventory_path(inventory_dir, doc_rel)
+        raise SystemExit(
+            f"No complete gt inventory for {doc_rel!r} (resolved={resolved!r}, diagnosis={kind}, path={path})."
+        )
+    return inventory[doc_rel]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Plan or smoke-test resumable PDF → Docling → PNG → GOT-OCR asset preparation."
+        description="Plan or execute one-document PDF → Docling → PNG → GOT-OCR asset preparation."
     )
     parser.add_argument("--dataset", required=True, choices=["ohrbench", "mpdocvqa", "arxivqa"])
-    parser.add_argument("--pdf-root", type=Path, help="Root containing source PDFs.")
+    parser.add_argument("--pdf-root", type=Path, help="Optional filesystem root containing source PDFs.")
+    parser.add_argument(
+        "--pdf-zip",
+        type=Path,
+        default=None,
+        help="PDF archive (default: data/ohr_bench_raw/pdfs.zip).",
+    )
     parser.add_argument("--out-root", type=Path, required=True, help="Output root for audit/images/ocr.")
     parser.add_argument(
         "--smoke-doc",
         type=str,
-        help="Document id for one-document smoke planning (e.g. academic/2403.20330v2).",
+        help="Document id for one-document planning/execution (e.g. academic/DUDE_...).",
     )
     parser.add_argument(
         "--page-ids",
         type=str,
-        default="1",
-        help="Comma-separated page ids for smoke planning when inventory is unavailable (default: 1).",
+        default=None,
+        help="Optional explicit page ids. Default: complete gt inventory pages for the document.",
+    )
+    parser.add_argument(
+        "--document-inventory",
+        type=Path,
+        default=None,
+        help="OHR gt inventory directory (default: OHR-Bench/data/retrieval_base/gt).",
     )
     parser.add_argument(
         "--execute",
         action="store_true",
-        help="Reserved for future one-document execution. Without this flag, only plans/checkpoints are written.",
+        help="Execute the one-document pipeline (local Docling/GOT-OCR). Full-dataset mode remains blocked.",
     )
     parser.add_argument("--checkpoint", type=Path, help="Resumable checkpoint JSON path.")
+    parser.add_argument(
+        "--diagnose-inventory",
+        action="store_true",
+        help="Print OHR inventory gap diagnosis for qas_v2 and exit.",
+    )
     args = parser.parse_args()
 
     project_root = Path.cwd().resolve()
+    inventory_dir = (
+        args.document_inventory
+        if args.document_inventory is not None
+        else project_root / "OHR-Bench/data/retrieval_base/gt"
+    )
+    if not inventory_dir.is_absolute():
+        inventory_dir = project_root / inventory_dir
+
+    if args.diagnose_inventory:
+        pdf_zip = args.pdf_zip or (project_root / "data/ohr_bench_raw/pdfs.zip")
+        pdf_names: set[str] = set()
+        if pdf_zip.is_file():
+            with zipfile.ZipFile(pdf_zip) as archive:
+                pdf_names = {name for name in archive.namelist() if name.endswith(".pdf")}
+        report = diagnose_ohr_inventory_gaps(
+            qas_path=project_root / "OHR-Bench/data/qas_v2.json",
+            inventory_dir=inventory_dir,
+            pdf_names=pdf_names,
+        )
+        print(json.dumps(report, indent=2))
+        return
+
     out_root = args.out_root if args.out_root.is_absolute() else project_root / args.out_root
     out_root.mkdir(parents=True, exist_ok=True)
     checkpoint_path = args.checkpoint or (out_root / "prepare_checkpoint.json")
 
     if not args.smoke_doc:
         raise SystemExit(
-            "Full-dataset preparation is intentionally not enabled yet. "
-            "Pass --smoke-doc <doc_rel> to plan a one-document smoke run."
+            "Full-dataset preparation is intentionally not enabled. "
+            "Pass --smoke-doc <doc_rel> to plan or execute one document."
         )
+    if args.dataset != "ohrbench":
+        raise SystemExit("One-document execution is currently implemented for --dataset ohrbench only.")
 
     doc_rel = args.smoke_doc.strip().removesuffix(".pdf")
-    pdf_root = args.pdf_root or (project_root / "data/ohr_bench_raw/pdfs_sample")
-    pdf_path = Path(pdf_root)
-    if not pdf_path.is_absolute():
-        pdf_path = project_root / pdf_path
-    pdf_path = pdf_path / f"{doc_rel}.pdf"
-
-    page_ids = [int(part.strip()) for part in args.page_ids.split(",") if part.strip()]
+    page_ids = _inventory_page_ids(project_root, doc_rel, inventory_dir, args.page_ids)
     if not page_ids:
-        raise SystemExit("--page-ids must contain at least one integer page id.")
+        raise SystemExit("--page-ids / inventory must contain at least one page id.")
 
+    kind, source = resolve_pdf_source(
+        project_root=project_root,
+        doc_rel=doc_rel,
+        pdf_root=args.pdf_root,
+        pdf_zip=args.pdf_zip,
+        inventory_dir=inventory_dir,
+    )
+    if kind == "missing":
+        raise SystemExit(f"PDF for {doc_rel!r} was not found in --pdf-root or pdfs.zip.")
+
+    pdf_path = out_root / "pdfs" / f"{doc_rel}.pdf"
+    locked = load_locked_got_ocr(project_root)
     work = plan_document_work(
         project_root=project_root,
         doc_rel=doc_rel,
         pdf_path=pdf_path,
         page_ids=page_ids,
         out_root=out_root,
+        got_ocr=locked,
     )
+    work["pdf_source"] = {
+        "kind": kind,
+        "source": source.as_posix() if isinstance(source, Path) else None,
+    }
     checkpoint = load_checkpoint(checkpoint_path)
     checkpoint.setdefault("completed", {})
     checkpoint["dataset"] = args.dataset
     checkpoint["smoke_doc"] = doc_rel
     checkpoint["plan"] = work
 
-    if args.execute:
-        raise SystemExit(
-            "Execute mode is intentionally blocked in this Phase 0 audit commit. "
-            "The plan and checkpoint were prepared; run Docling/GOT-OCR later after asset access is approved."
-        )
-
-    save_checkpoint(checkpoint_path, checkpoint)
     plan_path = out_root / f"prepare_plan_{doc_rel.replace('/', '__')}.json"
     plan_path.write_text(json.dumps(work, indent=2) + "\n", encoding="utf-8")
+
+    if not args.execute:
+        save_checkpoint(checkpoint_path, checkpoint)
+        print(
+            json.dumps(
+                {
+                    "mode": "plan_only",
+                    "dataset": args.dataset,
+                    "smoke_doc": doc_rel,
+                    "page_ids": page_ids,
+                    "page_count": len(page_ids),
+                    "pdf_source": work["pdf_source"],
+                    "got_ocr": locked,
+                    "expected_outputs": {
+                        "pdf": work["pdf"],
+                        "docling_audit": work["stages"]["docling_audit"]["output"],
+                        "images": work["stages"]["render_pages"]["outputs"],
+                        "ocr": work["stages"]["got_ocr"]["outputs"],
+                    },
+                    "plan": _rel(plan_path, project_root),
+                    "checkpoint": _rel(checkpoint_path, project_root),
+                    "stages": STAGE_ORDER,
+                },
+                indent=2,
+            )
+        )
+        return
+
+    result = execute_document_preparation(
+        project_root=project_root,
+        doc_rel=doc_rel,
+        page_ids=page_ids,
+        out_root=out_root,
+        pdf_root=args.pdf_root,
+        pdf_zip=args.pdf_zip,
+        inventory_dir=inventory_dir,
+    )
+    checkpoint["completed"][doc_rel] = {
+        "page_ids": page_ids,
+        "pdf_sha256": result.pdf_sha256,
+        "outputs": result.outputs,
+        "metrics": result.metrics,
+    }
+    checkpoint["plan"] = plan_document_work(
+        project_root=project_root,
+        doc_rel=doc_rel,
+        pdf_path=result.pdf_path,
+        page_ids=page_ids,
+        out_root=out_root,
+        got_ocr=locked,
+    )
+    save_checkpoint(checkpoint_path, checkpoint)
+    result_path = out_root / f"prepare_result_{doc_rel.replace('/', '__')}.json"
+    result_path.write_text(
+        json.dumps(
+            {
+                "doc_name": result.doc_name,
+                "page_ids": result.page_ids,
+                "pdf_sha256": result.pdf_sha256,
+                "got_ocr_repository": result.got_ocr_repository,
+                "got_ocr_revision": result.got_ocr_revision,
+                "device": result.device,
+                "outputs": result.outputs,
+                "metrics": result.metrics,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     print(
         json.dumps(
             {
-                "mode": "plan_only",
+                "mode": "execute",
                 "dataset": args.dataset,
                 "smoke_doc": doc_rel,
-                "plan": _rel(plan_path, project_root),
-                "checkpoint": _rel(checkpoint_path, project_root),
-                "stages": STAGE_ORDER,
-                "note": "Full PDF→Docling→PNG→GOT-OCR execution is not run in this audit.",
+                "page_count": len(page_ids),
+                "device": result.device,
+                "got_ocr_revision": result.got_ocr_revision,
+                "result": _rel(result_path, project_root),
+                "outputs": result.outputs,
+                "metrics": {
+                    "pdf_sha256": result.pdf_sha256,
+                    "render_runtime_sec": result.metrics.get("render_runtime_sec"),
+                    "docling_runtime_sec": result.metrics.get("docling_runtime_sec"),
+                    "got_ocr_runtime_sec_total": result.metrics.get("got_ocr_runtime_sec_total"),
+                    "per_page_got_ocr_runtime_sec": result.metrics.get("per_page_got_ocr_runtime_sec"),
+                    "peak_rss_bytes": result.metrics.get("peak_rss_bytes"),
+                    "storage": result.metrics.get("storage"),
+                },
             },
             indent=2,
         )

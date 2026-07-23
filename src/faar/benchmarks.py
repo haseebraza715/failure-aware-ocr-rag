@@ -8,6 +8,7 @@ from typing import Any
 from .asset_paths import AssetPathError, resolve_project_asset, to_relative_project_path
 from .chunking import build_page_chunks
 from .data import DatasetUnavailableError
+from .ohr_inventory import load_resolved_ohr_document_inventory
 from .settings import RetrievalSettings
 from .types import Phase0Example
 
@@ -202,29 +203,8 @@ def load_ohr_document_inventory(
     if not inventory_dir.is_dir():
         raise DatasetUnavailableError(f"OHR document inventory directory is missing: {inventory_dir}")
 
-    inventory: dict[str, list[int]] = {}
-    missing: list[str] = []
-    for doc_name in sorted(selected_documents):
-        path = inventory_dir / f"{doc_name}.json"
-        if not path.is_file():
-            missing.append(doc_name)
-            continue
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        rows = payload if isinstance(payload, list) else payload.get("pages", payload.get("data", []))
-        if not isinstance(rows, list) or not rows:
-            missing.append(doc_name)
-            continue
-        page_ids = sorted(
-            {
-                int(row.get("page_idx", row.get("page_no", row.get("page_id", 0))))
-                for row in rows
-                if isinstance(row, dict)
-            }
-        )
-        if not page_ids:
-            missing.append(doc_name)
-            continue
-        inventory[doc_name] = page_ids
+    inventory, _resolutions = load_resolved_ohr_document_inventory(inventory_dir, selected_documents)
+    missing = sorted(selected_documents - set(inventory))
     if missing:
         preview = ", ".join(missing[:10])
         raise DatasetUnavailableError(

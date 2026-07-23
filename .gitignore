@@ -13,5 +13,8 @@ src/*.egg-info/
 src/**/*.egg-info/
 
 data/ohr_bench_raw/
+data/benchmark_prep/
+data/benchmark_assets_smoke/
 OHR-Bench/.git/
 AGENT.MD
+*.partial
