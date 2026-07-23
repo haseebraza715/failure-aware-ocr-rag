@@ -2,6 +2,7 @@
 .env
 .env.*
 .venv/
+.venv-aaai/
 __pycache__/
 *.pyc
 *.pyo
