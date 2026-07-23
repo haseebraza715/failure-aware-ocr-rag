@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import os
 import re
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from uuid import uuid4
@@ -139,6 +140,8 @@ class VisualFallback:
         usage = getattr(response, "usage", None)
         prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
         completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+        response_model = getattr(response, "model", None) or self.settings.recovery.openai_model
+        completed_at_utc = datetime.now(UTC).isoformat()
         self.logger.log(
             new_record(
                 provider="openai",
@@ -148,7 +151,13 @@ class VisualFallback:
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 cost_usd=estimate_openai_cost_usd(prompt_tokens, completion_tokens),
-                metadata={"request_id": request_id, "image_count": len(image_paths)},
+                metadata={
+                    "request_id": request_id,
+                    "image_count": len(image_paths),
+                    "request_model": self.settings.recovery.openai_model,
+                    "response_model": response_model,
+                    "completed_at_utc": completed_at_utc,
+                },
             )
         )
         return {
@@ -157,6 +166,9 @@ class VisualFallback:
             "reason": "visual_fallback_answer_generated",
             "answer": response.choices[0].message.content or "",
             "used_images": [str(path) for path in image_paths],
+            "request_model": self.settings.recovery.openai_model,
+            "response_model": response_model,
+            "completed_at_utc": completed_at_utc,
         }
 
     def _answer_with_anthropic(self, question: str, image_paths: list[Path], fallback_context: str) -> dict:
@@ -223,6 +235,8 @@ class VisualFallback:
         prompt_tokens = int(getattr(usage, "input_tokens", 0) or 0)
         completion_tokens = int(getattr(usage, "output_tokens", 0) or 0)
         text_parts = [getattr(block, "text", "") for block in getattr(response, "content", []) if getattr(block, "type", "") == "text"]
+        response_model = getattr(response, "model", None) or self.settings.recovery.anthropic_model
+        completed_at_utc = datetime.now(UTC).isoformat()
         self.logger.log(
             new_record(
                 provider="anthropic",
@@ -232,7 +246,13 @@ class VisualFallback:
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 cost_usd=estimate_anthropic_cost_usd(self.settings.recovery.anthropic_model, prompt_tokens, completion_tokens),
-                metadata={"request_id": request_id, "image_count": len(image_paths)},
+                metadata={
+                    "request_id": request_id,
+                    "image_count": len(image_paths),
+                    "request_model": self.settings.recovery.anthropic_model,
+                    "response_model": response_model,
+                    "completed_at_utc": completed_at_utc,
+                },
             )
         )
         return {
@@ -241,6 +261,9 @@ class VisualFallback:
             "reason": "visual_fallback_answer_generated",
             "answer": "\n".join(part for part in text_parts if part).strip(),
             "used_images": [str(path) for path in image_paths],
+            "request_model": self.settings.recovery.anthropic_model,
+            "response_model": response_model,
+            "completed_at_utc": completed_at_utc,
         }
 
 

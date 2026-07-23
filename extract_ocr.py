@@ -13,6 +13,7 @@ if str(SRC) not in sys.path:
 
 from faar.annotation import label_studio_config, write_label_studio_tasks
 from faar.ocr import GOT_OCR_MODEL, extract_got_ocr
+from faar.settings import AppSettings
 
 
 def main() -> None:
@@ -20,8 +21,18 @@ def main() -> None:
     parser.add_argument("--engine", required=True, choices=["got-ocr-2"])
     parser.add_argument("--samples", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--model", default=os.getenv("GOT_OCR_MODEL", GOT_OCR_MODEL))
+    parser.add_argument("--model", default=None)
+    parser.add_argument("--revision", default=None)
     args = parser.parse_args()
+
+    settings = AppSettings(project_root=Path.cwd())
+    model_name = args.model or os.getenv("GOT_OCR_MODEL", settings.recovery.got_ocr_model or GOT_OCR_MODEL)
+    revision = args.revision or os.getenv("GOT_OCR_MODEL_REVISION", settings.recovery.got_ocr_revision)
+    if not revision:
+        raise SystemExit(
+            "GOT-OCR extraction requires an immutable 40-character revision. "
+            "Pass --revision or set GOT_OCR_MODEL_REVISION / config/model_revisions.json."
+        )
 
     payload = json.loads(args.samples.read_text())
     samples = payload.get("samples", payload)
@@ -34,7 +45,7 @@ def main() -> None:
             raise FileNotFoundError(f"No page image recorded for annotation example {sample.get('example_id')}.")
         pages = []
         for index, image_path in enumerate(image_paths):
-            text = extract_got_ocr(image_path, model_name=args.model)
+            text = extract_got_ocr(image_path, model_name=model_name, revision=revision)
             pages.append(f"===== PAGE {index} =====\n{text}")
         (args.out / f"{sample['example_id']}.txt").write_text("\n\n".join(pages) + "\n")
 
@@ -46,7 +57,8 @@ def main() -> None:
     manifest = {
         "created_at_utc": datetime.now(UTC).isoformat(),
         "engine": args.engine,
-        "model": args.model,
+        "model": model_name,
+        "revision": revision,
         "count": len(samples),
         "label_set": ["semantic", "word_level", "structural", "other"],
     }

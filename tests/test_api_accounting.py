@@ -59,6 +59,7 @@ def test_openai_request_is_logged_before_execution_and_usage_after(
             assert records[-1]["status"] == "started"
             assert kwargs["model"] == "gpt-4o-2024-11-20"
             return SimpleNamespace(
+                model="gpt-4o-2024-11-20",
                 usage=SimpleNamespace(prompt_tokens=100, completion_tokens=20),
                 choices=[SimpleNamespace(message=SimpleNamespace(content="answer"))],
             )
@@ -78,3 +79,7 @@ def test_openai_request_is_logged_before_execution_and_usage_after(
     assert records[1]["prompt_tokens"] == 100
     assert records[1]["completion_tokens"] == 20
     assert records[1]["cost_usd"] > 0
+    assert records[1]["metadata"]["request_model"] == "gpt-4o-2024-11-20"
+    assert records[1]["metadata"]["response_model"] == "gpt-4o-2024-11-20"
+    assert result["response_model"] == "gpt-4o-2024-11-20"
+    assert result["completed_at_utc"]
