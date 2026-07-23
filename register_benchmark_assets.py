@@ -19,11 +19,22 @@ def main() -> None:
     parser.add_argument("--split", required=True, choices=["train", "val", "test"])
     parser.add_argument("--ocr-dir", type=Path, required=True)
     parser.add_argument("--image-dir", type=Path, required=True)
+    parser.add_argument(
+        "--document-inventory",
+        type=Path,
+        help="Directory of complete per-document page inventories (default: OHR-Bench/data/retrieval_base/gt).",
+    )
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
 
-    root = Path.cwd()
-    manifest = build_ohr_asset_manifest(root, args.split, args.ocr_dir, args.image_dir)
+    root = Path.cwd().resolve()
+    manifest = build_ohr_asset_manifest(
+        root,
+        args.split,
+        args.ocr_dir,
+        args.image_dir,
+        document_inventory_dir=args.document_inventory,
+    )
     out = args.out or root / "data/benchmark_assets/ohrbench" / f"{args.split}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -33,7 +44,17 @@ def main() -> None:
         **manifest,
     }
     out.write_text(json.dumps(payload, indent=2) + "\n")
-    print(json.dumps({"out": str(out), "records": len(manifest["records"]), "corpus_pages": len(manifest["corpus_pages"])}, indent=2))
+    print(
+        json.dumps(
+            {
+                "out": str(out.relative_to(root)) if out.is_relative_to(root) else str(out),
+                "records": len(manifest["records"]),
+                "corpus_pages": len(manifest["corpus_pages"]),
+                "documents": len(manifest["document_inventory"]),
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

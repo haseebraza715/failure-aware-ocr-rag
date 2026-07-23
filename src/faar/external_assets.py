@@ -5,6 +5,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .asset_paths import AssetPathError, resolve_project_asset, to_relative_project_path
+
 
 SUPPORTED_DATASETS = {"mpdocvqa", "arxivqa"}
 
@@ -13,7 +15,7 @@ _ALIASES = {
     "question": ("question", "questions", "query"),
     "answer": ("correct_answer", "answers", "answer", "ground_truth", "gold_answer"),
     "document": ("doc_name", "document_id", "doc_id", "document", "document_name", "file_name"),
-    "page": ("page_ids", "page_id", "page_no", "page", "page_number", "evidence_page_no"),
+    "page": ("page_ids", "page_id", "page_no", "page", "page_number", "evidence_page_no", "answer_page_idx"),
     "image": ("image_paths", "image_path", "page_images", "page_image", "image"),
     "ocr": ("ocr_text_paths", "ocr_text_path", "ocr_paths", "ocr_path", "ocr_file", "ocr"),
 }
@@ -97,7 +99,7 @@ def _page_number(value: Any, row_label: str) -> int:
         raise ExternalAssetError(f"{row_label} has invalid page value {value!r}; expected an integer.") from exc
 
 
-def _resolve_asset_path(value: Any, asset_root: Path, row_label: str, kind: str) -> str:
+def _resolve_existing_file(value: Any, asset_root: Path, row_label: str, kind: str) -> Path:
     if isinstance(value, dict):
         value = value.get("path") or value.get("file") or value.get("uri")
     if _is_placeholder(value):
@@ -108,7 +110,7 @@ def _resolve_asset_path(value: Any, asset_root: Path, row_label: str, kind: str)
     path = path.resolve()
     if not path.is_file():
         raise ExternalAssetError(f"{row_label} references a missing {kind} file: {path}")
-    return str(path)
+    return path
 
 
 def _extract_val_rows(payload: Any) -> list[dict[str, Any]]:
@@ -130,7 +132,11 @@ def _extract_val_rows(payload: Any) -> list[dict[str, Any]]:
     if not all(isinstance(row, dict) for row in rows):
         raise ExternalAssetError("Every external benchmark record must be a JSON object.")
 
-    row_splits = {str(row.get("split") or row.get("dataset_split")).strip().lower() for row in rows if row.get("split") or row.get("dataset_split")}
+    row_splits = {
+        str(row.get("split") or row.get("dataset_split")).strip().lower()
+        for row in rows
+        if row.get("split") or row.get("dataset_split")
+    }
     if row_splits:
         if row_splits != {"val"}:
             raise ExternalAssetError(f"External benchmark records must all be val; found splits {sorted(row_splits)}.")
@@ -144,37 +150,76 @@ def _extract_val_rows(payload: Any) -> list[dict[str, Any]]:
     return rows
 
 
-def _page_rows(row: dict[str, Any]) -> list[dict[str, Any]]:
-    nested_pages = row.get("pages") or row.get("document_pages")
-    if isinstance(nested_pages, list) and nested_pages:
-        merged: list[dict[str, Any]] = []
-        for page in nested_pages:
-            if not isinstance(page, dict):
-                raise ExternalAssetError("Nested page entries must be JSON objects.")
-            item = {**row, **page}
-            for kind, canonical_key in (("page", "page_id"), ("image", "image_path"), ("ocr", "ocr_text_path")):
-                page_value = _first(page, kind)
-                item[canonical_key] = page_value if page_value is not None else _first(row, kind)
-            merged.append(item)
-        return merged
+def _evidence_page_ids(row: dict[str, Any], example_id: str) -> list[int]:
+    """Evidence/answer pages for evaluation only; never used to build the retrieval corpus."""
+    if "evidence_page_no" in row or "evidence_page_ids" in row or "answer_page_idx" in row:
+        values = _as_list(row.get("evidence_page_ids") or row.get("evidence_page_no") or row.get("answer_page_idx"))
+    else:
+        values = _as_list(_first(row, "page"))
+    if not values:
+        raise ExternalAssetError(f"{example_id} is missing evidence/answer page ids.")
+    return [_page_number(value, example_id) for value in values]
 
-    pages = _as_list(_first(row, "page"))
-    images = _as_list(_first(row, "image"))
-    ocr_paths = _as_list(_first(row, "ocr"))
-    count = max(len(pages), len(images), len(ocr_paths))
-    if count == 0:
-        return [row]
-    for values, label in ((pages, "page"), (images, "image"), (ocr_paths, "OCR")):
-        if len(values) not in {1, count}:
-            raise ExternalAssetError(f"Mismatched {label} list length: expected 1 or {count}, got {len(values)}.")
-    expanded = []
-    for index in range(count):
-        item = dict(row)
-        item["page_id"] = pages[index if len(pages) > 1 else 0] if pages else None
-        item["image_path"] = images[index if len(images) > 1 else 0] if images else None
-        item["ocr_text_path"] = ocr_paths[index if len(ocr_paths) > 1 else 0] if ocr_paths else None
-        expanded.append(item)
-    return expanded
+
+def _document_inventory(payload: Any, asset_root: Path) -> dict[str, list[dict[str, Any]]]:
+    """
+    Complete document-page inventory, separate from QA evidence pages.
+
+    Accepted shapes:
+      {"documents": [{"doc_id": "...", "pages": [{"page_id": 1, "image_path": "...", "ocr_text_path": "..."}, ...]}]}
+      {"document_pages": [{"doc_name": "...", "page_id": 1, "image_path": "...", "ocr_text_path": "..."}, ...]}
+    """
+    if not isinstance(payload, dict):
+        raise ExternalAssetError(
+            "Complete document pages cannot be proven: source must be a JSON object with a documents inventory."
+        )
+
+    inventory: dict[str, dict[int, dict[str, Any]]] = {}
+
+    documents = payload.get("documents")
+    if isinstance(documents, list) and documents:
+        for index, document in enumerate(documents):
+            if not isinstance(document, dict):
+                raise ExternalAssetError("documents entries must be JSON objects.")
+            doc_id = _required_text(document, "document", f"documents[{index}]")
+            pages = document.get("pages") or document.get("document_pages")
+            if not isinstance(pages, list) or not pages:
+                raise ExternalAssetError(f"Document {doc_id!r} has an empty pages inventory.")
+            for page in pages:
+                if not isinstance(page, dict):
+                    raise ExternalAssetError(f"Document {doc_id!r} page entries must be JSON objects.")
+                page_id = _page_number(_first(page, "page"), doc_id)
+                image_path = _resolve_existing_file(_first(page, "image"), asset_root, doc_id, "image")
+                ocr_path = _resolve_existing_file(_first(page, "ocr"), asset_root, doc_id, "OCR")
+                inventory.setdefault(doc_id, {})[page_id] = {
+                    "page_id": page_id,
+                    "image_path": image_path,
+                    "ocr_text_path": ocr_path,
+                }
+    else:
+        document_pages = payload.get("document_pages")
+        if not isinstance(document_pages, list) or not document_pages:
+            raise ExternalAssetError(
+                "Complete document pages cannot be proven. Provide top-level 'documents' (with full page lists) "
+                "or 'document_pages'. QA evidence pages alone are not a retrieval corpus."
+            )
+        for index, page in enumerate(document_pages):
+            if not isinstance(page, dict):
+                raise ExternalAssetError("document_pages entries must be JSON objects.")
+            doc_id = _required_text(page, "document", f"document_pages[{index}]")
+            page_id = _page_number(_first(page, "page"), doc_id)
+            image_path = _resolve_existing_file(_first(page, "image"), asset_root, doc_id, "image")
+            ocr_path = _resolve_existing_file(_first(page, "ocr"), asset_root, doc_id, "OCR")
+            inventory.setdefault(doc_id, {})[page_id] = {
+                "page_id": page_id,
+                "image_path": image_path,
+                "ocr_text_path": ocr_path,
+            }
+
+    return {
+        doc_id: [pages[page_id] for page_id in sorted(pages)]
+        for doc_id, pages in sorted(inventory.items())
+    }
 
 
 def build_external_asset_manifest(
@@ -182,6 +227,7 @@ def build_external_asset_manifest(
     dataset: str,
     *,
     asset_root: Path | None = None,
+    project_root: Path | None = None,
 ) -> dict[str, Any]:
     """Normalize an MP-DocVQA/ArXivQA val JSON file into FAAR's asset schema."""
     dataset_key = normalise_dataset_name(dataset)
@@ -196,10 +242,16 @@ def build_external_asset_manifest(
     root = (asset_root or source.parent).resolve()
     if not root.is_dir():
         raise ExternalAssetError(f"Asset root does not exist or is not a directory: {root}")
+    project = (project_root or root).resolve()
+
+    documents = _document_inventory(payload, root)
+    if not documents:
+        raise ExternalAssetError("Complete document pages cannot be proven: documents inventory is empty.")
 
     records: list[dict[str, Any]] = []
     corpus_by_id: dict[str, dict[str, Any]] = {}
     seen_examples: set[str] = set()
+
     for row_index, row in enumerate(rows):
         row_label = f"record {row_index}"
         example_id = _required_text(row, "id", row_label)
@@ -209,31 +261,39 @@ def build_external_asset_manifest(
         question = _required_text(row, "question", example_id)
         answer = _required_text(row, "answer", example_id)
         document_id = _required_text(row, "document", example_id)
+        if document_id not in documents:
+            raise ExternalAssetError(
+                f"{example_id} references document {document_id!r} with no complete document-page inventory."
+            )
 
-        query_page_ids: list[int] = []
-        query_images: list[str] = []
-        query_ocr: list[str] = []
-        corpus_ids: list[str] = []
-        for page_row in _page_rows(row):
-            page_id = _page_number(_first(page_row, "page"), example_id)
-            image_path = _resolve_asset_path(_first(page_row, "image"), root, example_id, "image")
-            ocr_path = _resolve_asset_path(_first(page_row, "ocr"), root, example_id, "OCR")
+        evidence_pages = _evidence_page_ids(row, example_id)
+        inventory_page_ids = {int(page["page_id"]) for page in documents[document_id]}
+        missing_evidence = [page_id for page_id in evidence_pages if page_id not in inventory_page_ids]
+        if missing_evidence:
+            raise ExternalAssetError(
+                f"{example_id} evidence pages {missing_evidence} are absent from the complete document inventory."
+            )
+
+        # Corpus is every inventoried page of the document — never evidence-only.
+        for page in documents[document_id]:
+            page_id = int(page["page_id"])
             corpus_id = f"{document_id}:p{page_id}"
+            try:
+                image_rel = to_relative_project_path(page["image_path"], project)
+                ocr_rel = to_relative_project_path(page["ocr_text_path"], project)
+            except AssetPathError as exc:
+                raise ExternalAssetError(str(exc)) from exc
             corpus_page = {
                 "corpus_id": corpus_id,
                 "doc_name": document_id,
                 "page_id": page_id,
-                "ocr_text_path": ocr_path,
-                "image_path": image_path,
+                "ocr_text_path": ocr_rel,
+                "image_path": image_rel,
             }
             existing = corpus_by_id.get(corpus_id)
             if existing is not None and existing != corpus_page:
                 raise ExternalAssetError(f"Conflicting assets for corpus page {corpus_id!r}.")
             corpus_by_id[corpus_id] = corpus_page
-            query_page_ids.append(page_id)
-            query_images.append(image_path)
-            query_ocr.append(ocr_path)
-            corpus_ids.append(corpus_id)
 
         records.append(
             {
@@ -241,25 +301,35 @@ def build_external_asset_manifest(
                 "doc_name": document_id,
                 "question": question,
                 "correct_answer": answer,
-                "page_ids": query_page_ids,
-                "ocr_text_path": query_ocr[0],
-                "ocr_text_paths": query_ocr,
-                "image_paths": query_images,
-                "corpus_ids": corpus_ids,
-                "metadata": {"dataset": dataset_key, "split": "val", "document_id": document_id},
+                "page_ids": evidence_pages,
+                "corpus_ids": [f"{document_id}:p{page_id}" for page_id in sorted(inventory_page_ids)],
+                "metadata": {
+                    "dataset": dataset_key,
+                    "split": "val",
+                    "document_id": document_id,
+                    "evidence_page_ids": evidence_pages,
+                },
             }
         )
+
+    try:
+        source_rel = to_relative_project_path(source, project)
+    except AssetPathError:
+        source_rel = str(source)
 
     return {
         "dataset": dataset_key,
         "split": "val",
-        "source": str(source),
+        "source": source_rel,
         "records": records,
         "corpus_pages": [corpus_by_id[key] for key in sorted(corpus_by_id)],
+        "document_inventory": {
+            doc_id: [int(page["page_id"]) for page in pages] for doc_id, pages in documents.items()
+        },
     }
 
 
-def validate_manifest_payload(payload: dict[str, Any]) -> None:
+def validate_manifest_payload(payload: dict[str, Any], *, project_root: Path | None = None) -> None:
     """Validate a normalized payload without relying on the source JSON."""
     if payload.get("split") != "val":
         raise ExternalAssetError("External asset manifest split must be exactly 'val'.")
@@ -267,9 +337,48 @@ def validate_manifest_payload(payload: dict[str, Any]) -> None:
         raise ExternalAssetError("External asset manifest has an unsupported dataset.")
     records = payload.get("records")
     pages = payload.get("corpus_pages")
+    inventory = payload.get("document_inventory")
     if not isinstance(records, list) or not records or not isinstance(pages, list) or not pages:
         raise ExternalAssetError("External asset manifest requires non-empty records and corpus_pages lists.")
+    if not isinstance(inventory, dict) or not inventory:
+        raise ExternalAssetError(
+            "Complete document pages cannot be proven: document_inventory is required and must be non-empty."
+        )
+
     page_ids = {page.get("corpus_id") for page in pages if isinstance(page, dict)}
+    pages_by_doc: dict[str, set[int]] = {}
+    for page in pages:
+        if not isinstance(page, dict):
+            raise ExternalAssetError("corpus_pages entries must be JSON objects.")
+        doc_name = str(page.get("doc_name", ""))
+        pages_by_doc.setdefault(doc_name, set()).add(int(page["page_id"]))
+        if project_root is not None:
+            for key in ("image_path", "ocr_text_path"):
+                value = page.get(key)
+                if value:
+                    resolve_project_asset(str(value), project_root)
+
+    for doc_id, expected_pages in inventory.items():
+        expected = {int(page_id) for page_id in expected_pages}
+        actual = pages_by_doc.get(str(doc_id), set())
+        if actual != expected:
+            raise ExternalAssetError(
+                f"Corpus pages for document {doc_id!r} do not match complete inventory "
+                f"(expected {sorted(expected)}, found {sorted(actual)})."
+            )
+
     for record in records:
-        if not isinstance(record, dict) or not set(record.get("corpus_ids", [])).issubset(page_ids):
+        if not isinstance(record, dict):
+            raise ExternalAssetError("records entries must be JSON objects.")
+        doc_name = str(record.get("doc_name", ""))
+        evidence = [int(page_id) for page_id in record.get("page_ids", [])]
+        inventory_pages = {int(page_id) for page_id in inventory.get(doc_name, [])}
+        if not evidence or not set(evidence).issubset(inventory_pages):
+            raise ExternalAssetError("Every query evidence page must belong to the complete document inventory.")
+        expected_corpus_ids = {f"{doc_name}:p{page_id}" for page_id in inventory_pages}
+        if set(record.get("corpus_ids", [])) != expected_corpus_ids:
+            raise ExternalAssetError(
+                "Every query record must reference every inventoried page of its document via corpus_ids."
+            )
+        if not expected_corpus_ids.issubset(page_ids):
             raise ExternalAssetError("Every query record must reference registered corpus_pages.")

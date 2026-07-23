@@ -28,7 +28,8 @@ Status (2026-07-23):
 - **Locked-env test status:** focused graph/ablation/shared-corpus suite **10 passed**; full `.venv-aaai` suite **84 passed**; legacy `.venv` suite **84 passed**. No dependency pins were changed.
 - **Split protected:** `split.json` remains unchanged; SHA-256 is `64583a532c5db5aa31e4cbb5cd9c7d894c7a2d5e8aa49f1a7f6041f54e714f53`.
 - **Model preflight:** all six locked Hugging Face revisions resolve and are accessible; the selected OpenAI snapshot is fixed to `gpt-4o-2024-11-20`. No paid experiment or Phase 1 baseline was started.
-- **Still not paper-run ready:** complete OHR-Bench/MP-DocVQA/ArXivQA OCR and image manifests are absent.
+- **Asset integrity contracts enforced:** manifests must use project-relative paths; loaders reject path traversal; shared corpora require a complete `document_inventory` (evidence pages cannot define retrieval). `prepare_benchmark_assets.py` provides a one-document plan/smoke harness only.
+- **Still not paper-run ready:** OHR val/test need complete page OCR/images for ~7,033 / ~6,842 inventoried pages (a few textbook inventory files are missing from `retrieval_base/gt`); MP-DocVQA val must be downloaded from the RRC DocVQA Task 4 portal; ArXivQA remains a research-specification choice among figure-QA vs retrieval remappings; no complete external assets are present locally.
 
 ## Phase 1: Baselines
 

@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .asset_paths import AssetPathError, resolve_project_asset, to_relative_project_path
 from .chunking import build_page_chunks
 from .data import DatasetUnavailableError
 from .settings import RetrievalSettings
@@ -23,6 +24,12 @@ def _listify(value: Any) -> list[str]:
     return [str(value)]
 
 
+def _resolve_page_asset(path_value: str | Path | None, project_root: Path) -> Path | None:
+    if path_value is None or str(path_value).strip() == "":
+        return None
+    return resolve_project_asset(path_value, project_root)
+
+
 class BenchmarkRepository:
     """Loads the complete, explicitly registered assets required for a paper run."""
 
@@ -33,17 +40,66 @@ class BenchmarkRepository:
         project_root: Path,
         dataset: str,
         split: str,
+        *,
+        document_inventory: dict[str, list[int]] | None = None,
     ) -> None:
-        self.project_root = project_root
+        self.project_root = project_root.expanduser().resolve()
         self.dataset = dataset
         self.split = split
         self._records = {str(record["example_id"]): record for record in records}
-        self._corpus_pages = corpus_pages
+        self._corpus_pages = [self._normalise_corpus_page(page) for page in corpus_pages]
+        self._document_inventory = {
+            str(doc_name): sorted({int(page_id) for page_id in page_ids})
+            for doc_name, page_ids in (document_inventory or {}).items()
+        }
         if not self._records:
             raise DatasetUnavailableError(f"No records were registered for {dataset} split {split}.")
         if not self._corpus_pages:
             raise DatasetUnavailableError(f"No shared corpus pages were registered for {dataset} split {split}.")
+        self._validate_shared_corpus_integrity()
         self._validate_assets()
+
+    def _normalise_corpus_page(self, page: dict[str, Any]) -> dict[str, Any]:
+        normalised = dict(page)
+        for key in ("ocr_text_path", "image_path"):
+            value = normalised.get(key)
+            if value:
+                normalised[key] = str(resolve_project_asset(str(value), self.project_root))
+        return normalised
+
+    def _validate_shared_corpus_integrity(self) -> None:
+        if not self._document_inventory:
+            raise DatasetUnavailableError(
+                f"{self.dataset} {self.split} cannot prove complete document pages. "
+                "Manifest must include document_inventory separate from QA evidence pages."
+            )
+        pages_by_doc: dict[str, set[int]] = {}
+        for page in self._corpus_pages:
+            pages_by_doc.setdefault(str(page["doc_name"]), set()).add(int(page["page_id"]))
+
+        for doc_name, expected_pages in self._document_inventory.items():
+            actual = pages_by_doc.get(doc_name, set())
+            expected = set(expected_pages)
+            if actual != expected:
+                raise DatasetUnavailableError(
+                    f"{self.dataset} {self.split} corpus for {doc_name!r} is incomplete or evidence-biased. "
+                    f"Expected pages {sorted(expected)}, found {sorted(actual)}."
+                )
+
+        for record in self._records.values():
+            doc_name = str(record.get("doc_name", ""))
+            evidence = {int(page_id) for page_id in record.get("page_ids", [])}
+            inventory_pages = set(self._document_inventory.get(doc_name, []))
+            if not evidence or not evidence.issubset(inventory_pages):
+                raise DatasetUnavailableError(
+                    f"Record {record.get('example_id')!r} evidence pages are not covered by document_inventory."
+                )
+            expected_corpus_ids = {f"{doc_name}:p{page_id}" for page_id in inventory_pages}
+            if set(record.get("corpus_ids", [])) != expected_corpus_ids:
+                raise DatasetUnavailableError(
+                    f"Record {record.get('example_id')!r} corpus_ids must list every inventoried document page; "
+                    "evidence pages must not control the retrieval corpus."
+                )
 
     def _validate_assets(self) -> None:
         missing: list[str] = []
@@ -59,7 +115,7 @@ class BenchmarkRepository:
             preview = "\n".join(missing[:10])
             raise DatasetUnavailableError(
                 f"{self.dataset} {self.split} is not ready for a paper run. "
-                "Register complete GOT-OCR text and page images for every selected example.\n"
+                "Register complete GOT-OCR text and page images for every selected document page.\n"
                 f"Missing assets (first 10):\n{preview}"
             )
 
@@ -107,6 +163,7 @@ class BenchmarkRepository:
 
 def load_benchmark_repository(project_root: Path, dataset: str, split: str) -> BenchmarkRepository:
     dataset_key = _normalise_dataset(dataset)
+    project_root = project_root.expanduser().resolve()
     manifest_path = project_root / "data/benchmark_assets" / dataset_key / f"{split}.json"
     if not manifest_path.exists():
         raise DatasetUnavailableError(
@@ -116,12 +173,76 @@ def load_benchmark_repository(project_root: Path, dataset: str, split: str) -> B
     payload = json.loads(manifest_path.read_text())
     records = payload.get("records") if isinstance(payload, dict) else None
     corpus_pages = payload.get("corpus_pages") if isinstance(payload, dict) else None
+    inventory = payload.get("document_inventory") if isinstance(payload, dict) else None
     if not isinstance(records, list) or not isinstance(corpus_pages, list):
         raise DatasetUnavailableError(f"Asset manifest {manifest_path} must contain records and corpus_pages lists.")
-    return BenchmarkRepository(records, corpus_pages, project_root, dataset_key, split)
+    if isinstance(inventory, dict):
+        document_inventory = {
+            str(doc_name): [int(page_id) for page_id in page_ids]
+            for doc_name, page_ids in inventory.items()
+        }
+    else:
+        document_inventory = None
+    return BenchmarkRepository(
+        records,
+        corpus_pages,
+        project_root,
+        dataset_key,
+        split,
+        document_inventory=document_inventory,
+    )
 
 
-def build_ohr_asset_manifest(project_root: Path, split: str, ocr_dir: Path, image_dir: Path) -> dict[str, list[dict[str, Any]]]:
+def load_ohr_document_inventory(
+    inventory_dir: Path,
+    selected_documents: set[str],
+) -> dict[str, list[int]]:
+    """Load complete page ids per document from OHR retrieval_base-style JSON files."""
+    inventory_dir = inventory_dir.expanduser().resolve()
+    if not inventory_dir.is_dir():
+        raise DatasetUnavailableError(f"OHR document inventory directory is missing: {inventory_dir}")
+
+    inventory: dict[str, list[int]] = {}
+    missing: list[str] = []
+    for doc_name in sorted(selected_documents):
+        path = inventory_dir / f"{doc_name}.json"
+        if not path.is_file():
+            missing.append(doc_name)
+            continue
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        rows = payload if isinstance(payload, list) else payload.get("pages", payload.get("data", []))
+        if not isinstance(rows, list) or not rows:
+            missing.append(doc_name)
+            continue
+        page_ids = sorted(
+            {
+                int(row.get("page_idx", row.get("page_no", row.get("page_id", 0))))
+                for row in rows
+                if isinstance(row, dict)
+            }
+        )
+        if not page_ids:
+            missing.append(doc_name)
+            continue
+        inventory[doc_name] = page_ids
+    if missing:
+        preview = ", ".join(missing[:10])
+        raise DatasetUnavailableError(
+            "Complete document pages cannot be proven for OHR-Bench. Missing inventory files for: "
+            f"{preview}"
+        )
+    return inventory
+
+
+def build_ohr_asset_manifest(
+    project_root: Path,
+    split: str,
+    ocr_dir: Path,
+    image_dir: Path,
+    *,
+    document_inventory_dir: Path | None = None,
+) -> dict[str, list[dict[str, Any]] | dict[str, list[int]]]:
+    project_root = project_root.expanduser().resolve()
     split_payload = json.loads((project_root / "split.json").read_text())
     if split not in split_payload["splits"]:
         raise ValueError(f"Unknown OHR-Bench split {split!r}.")
@@ -131,32 +252,59 @@ def build_ohr_asset_manifest(project_root: Path, split: str, ocr_dir: Path, imag
     records: list[dict[str, Any]] = []
     for example_id in sorted(selected_ids):
         row = source_by_id[example_id]
-        page_ids = [int(page) for page in _listify(row.get("evidence_page_no"))]
+        evidence_pages = [int(page) for page in _listify(row.get("evidence_page_no"))]
         records.append(
             {
                 "example_id": example_id,
                 "doc_name": row["doc_name"],
                 "question": row["questions"],
                 "correct_answer": row["answers"],
-                "page_ids": page_ids,
-                "corpus_ids": [f"{row['doc_name']}:p{page_id}" for page_id in page_ids],
+                "page_ids": evidence_pages,
+                "corpus_ids": [],  # filled after inventory is known
                 "metadata": {
                     "doc_type": row.get("doc_type", ""),
                     "evidence_source": row.get("evidence_source", ""),
+                    "evidence_page_ids": evidence_pages,
                 },
             }
         )
     selected_documents = {str(record["doc_name"]) for record in records}
-    corpus_pages = _load_ohr_corpus_pages(ocr_dir, image_dir, selected_documents)
-    return {"records": records, "corpus_pages": corpus_pages}
+    inventory_dir = document_inventory_dir or (project_root / "OHR-Bench/data/retrieval_base/gt")
+    document_inventory = load_ohr_document_inventory(inventory_dir, selected_documents)
+    corpus_pages = _load_ohr_corpus_pages(
+        ocr_dir,
+        image_dir,
+        selected_documents,
+        document_inventory,
+        project_root,
+    )
+    for record in records:
+        doc_name = str(record["doc_name"])
+        page_ids = document_inventory[doc_name]
+        evidence = {int(page_id) for page_id in record["page_ids"]}
+        if not evidence.issubset(set(page_ids)):
+            raise DatasetUnavailableError(
+                f"OHR evidence pages for {record['example_id']} are outside the complete document inventory."
+            )
+        record["corpus_ids"] = [f"{doc_name}:p{page_id}" for page_id in page_ids]
+    return {
+        "records": records,
+        "corpus_pages": corpus_pages,
+        "document_inventory": document_inventory,
+    }
 
 
 def _load_ohr_corpus_pages(
     ocr_dir: Path,
     image_dir: Path,
     selected_documents: set[str],
+    document_inventory: dict[str, list[int]],
+    project_root: Path,
 ) -> list[dict[str, Any]]:
+    ocr_dir = ocr_dir.expanduser().resolve()
+    image_dir = image_dir.expanduser().resolve()
     pages_by_id: dict[str, dict[str, Any]] = {}
+
     for path in sorted(ocr_dir.rglob("*.json")):
         payload = json.loads(path.read_text())
         rows = payload if isinstance(payload, list) else payload.get("pages", payload.get("data", []))
@@ -168,13 +316,18 @@ def _load_ohr_corpus_pages(
             text = str(row.get("text", ""))
             image_path = _find_page_image(image_dir, doc_name, page_id)
             corpus_id = f"{doc_name}:p{page_id}"
+            try:
+                image_rel = to_relative_project_path(image_path, project_root) if image_path else ""
+            except AssetPathError as exc:
+                raise DatasetUnavailableError(str(exc)) from exc
             pages_by_id[corpus_id] = {
                 "corpus_id": corpus_id,
                 "doc_name": doc_name,
                 "page_id": page_id,
                 "text": text,
-                "image_path": str(image_path.resolve()) if image_path else "",
+                "image_path": image_rel,
             }
+
     for path in sorted(ocr_dir.rglob("*.txt")):
         relative = path.relative_to(ocr_dir)
         match = re.match(r"(.+?)(?:_page_|_p)(\d+)$", relative.stem)
@@ -186,17 +339,48 @@ def _load_ohr_corpus_pages(
         page_id = int(match.group(2))
         image_path = _find_page_image(image_dir, doc_name, page_id)
         corpus_id = f"{doc_name}:p{page_id}"
+        try:
+            ocr_rel = to_relative_project_path(path, project_root)
+            image_rel = to_relative_project_path(image_path, project_root) if image_path else ""
+        except AssetPathError as exc:
+            raise DatasetUnavailableError(str(exc)) from exc
         page = {
             "corpus_id": corpus_id,
             "doc_name": doc_name,
             "page_id": page_id,
-            "ocr_text_path": str(path.resolve()),
-            "image_path": str(image_path.resolve()) if image_path else "",
+            "ocr_text_path": ocr_rel,
+            "image_path": image_rel,
         }
         existing = pages_by_id.get(corpus_id)
         if existing is None or not str(existing.get("text", "")).strip():
             pages_by_id[corpus_id] = page
-    return [pages_by_id[corpus_id] for corpus_id in sorted(pages_by_id)]
+
+    # Evidence pages must never control membership: enforce the inventory exactly.
+    missing: list[str] = []
+    for doc_name, page_ids in document_inventory.items():
+        for page_id in page_ids:
+            corpus_id = f"{doc_name}:p{page_id}"
+            page = pages_by_id.get(corpus_id)
+            if page is None:
+                missing.append(f"{corpus_id}: missing OCR/image assets")
+                continue
+            if not str(page.get("text", "")).strip() and not page.get("ocr_text_path"):
+                missing.append(f"{corpus_id}: OCR text")
+            if not page.get("image_path"):
+                missing.append(f"{corpus_id}: page image")
+    if missing:
+        preview = "\n".join(missing[:10])
+        raise DatasetUnavailableError(
+            "OHR shared corpus is incomplete relative to the document inventory. "
+            "Evidence-page assets alone are insufficient.\n"
+            f"Missing (first 10):\n{preview}"
+        )
+
+    ordered: list[dict[str, Any]] = []
+    for doc_name, page_ids in sorted(document_inventory.items()):
+        for page_id in page_ids:
+            ordered.append(pages_by_id[f"{doc_name}:p{page_id}"])
+    return ordered
 
 
 def _find_page_image(image_dir: Path, doc_name: str, page_id: int) -> Path | None:
@@ -206,5 +390,19 @@ def _find_page_image(image_dir: Path, doc_name: str, page_id: int) -> Path | Non
         base.with_name(f"{base.name}_page_{page_id}.jpg"),
         base.with_name(f"{base.name}_p{page_id}.png"),
         base.with_name(f"{base.name}_p{page_id}.jpg"),
+        image_dir / f"{doc_name}_page_{page_id}.png",
+        image_dir / f"{doc_name}_page_{page_id}.jpg",
+        image_dir / f"{doc_name}_p{page_id}.png",
+        image_dir / f"{doc_name}_p{page_id}.jpg",
     ]
+    # Nested doc_name paths: images/academic/foo_page_1.png
+    nested = image_dir / doc_name
+    candidates.extend(
+        [
+            nested.parent / f"{nested.name}_page_{page_id}.png",
+            nested.parent / f"{nested.name}_page_{page_id}.jpg",
+            nested.parent / f"{nested.name}_p{page_id}.png",
+            nested.parent / f"{nested.name}_p{page_id}.jpg",
+        ]
+    )
     return next((path for path in candidates if path.exists()), None)
