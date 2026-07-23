@@ -23,12 +23,12 @@ This plan mirrors the fixed Phase 0-7 experimental plan. Each phase is a checkpo
 - Commit as `phase0: complete protocol setup`.
 
 Status (2026-07-23):
-- **Implementation complete:** all three dataset registration paths, shared-corpus retrieval, pinned model loaders, Docling adapter, visual baseline dispatch, OpenAI request accounting, four-metric evaluation, and model provenance are implemented at commit `a715b56ec1999ecf8cabfbb36352d4db1d9bbdb6`.
-- **Locked AAAI environment created:** CPython 3.12.13 on macOS arm64 in ignored `.venv-aaai/` via `pip install -c constraints-aaai.txt -e '.[aaai]'`. Existing `.venv` was preserved and was not modified. `pip check` passes. Required imports succeed for openai, transformers, sentence_transformers, torch/torchvision, docling, ragas, wandb, label_studio, colpali_engine, plotly/kaleido, and symspellpy. Path-safe package listing is recorded at `results/environment/pip-freeze.txt` with the Git commit hash (raw `pip freeze` must not be committed because the editable install metadata embeds a personal GitHub URL).
-- **Locked-env test status:** `.venv-aaai/bin/python -m pytest -q` reports **6 failed, 78 passed**. All six failures are the same langgraph 0.3.18 collision: graph node name `"gate"` conflicts with a state key (`ValueError: 'gate' is already being used as a state key`). This is a remaining Phase 0 execution blocker under the locked pins; pins were not altered to hide it.
+- **Implementation complete:** all three dataset registration paths, shared-corpus retrieval, pinned model loaders, Docling adapter, visual baseline dispatch, OpenAI request accounting, four-metric evaluation, and model provenance are implemented. Graph construction under pinned `langgraph==0.3.18` uses node id `quality_gate` while keeping the GraphState/result key `"gate"` (fix commit `1dda8c81842090417610484231b3fb7727a23918`).
+- **Locked AAAI environment verified:** CPython 3.12.13 on macOS arm64 in ignored `.venv-aaai/` via `pip install -c constraints-aaai.txt -e '.[aaai]'`. Existing `.venv` preserved. `.venv-aaai/bin/python -m pip check` passes. Required imports succeed. Path-safe package listing is at `results/environment/pip-freeze.txt` with source-code commit `1dda8c81842090417610484231b3fb7727a23918` (raw `pip freeze` must not be committed because editable-install metadata embeds a personal GitHub URL).
+- **Locked-env test status:** focused graph/ablation/shared-corpus suite **10 passed**; full `.venv-aaai` suite **84 passed**; legacy `.venv` suite **84 passed**. No dependency pins were changed.
 - **Split protected:** `split.json` remains unchanged; SHA-256 is `64583a532c5db5aa31e4cbb5cd9c7d894c7a2d5e8aa49f1a7f6041f54e714f53`.
 - **Model preflight:** all six locked Hugging Face revisions resolve and are accessible; the selected OpenAI snapshot is fixed to `gpt-4o-2024-11-20`. No paid experiment or Phase 1 baseline was started.
-- **Still not paper-run ready:** complete OHR-Bench/MP-DocVQA/ArXivQA OCR and image manifests are absent, and the locked-environment pytest failures above must be resolved before Phase 1.
+- **Still not paper-run ready:** complete OHR-Bench/MP-DocVQA/ArXivQA OCR and image manifests are absent.
 
 ## Phase 1: Baselines
 

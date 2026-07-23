@@ -1,6 +1,6 @@
 # FAAR AAAI locked environment package versions
 # Generated with importlib.metadata (path-safe; no editable URLs).
-# Git commit: a715b56ec1999ecf8cabfbb36352d4db1d9bbdb6
+# Git commit: 1dda8c81842090417610484231b3fb7727a23918
 # Platform: macOS-26.5.1-arm64 / CPython 3.12.13
 # Install: python3.12 -m venv .venv-aaai && .venv-aaai/bin/python -m pip install --upgrade pip && .venv-aaai/bin/python -m pip install -c constraints-aaai.txt -e '.[aaai]'
 # Editable project install recorded as faar==0.1.0; source identity is the Git commit above.
@@ -71,7 +71,6 @@ easyocr==1.7.2
 editdistpy==0.4.0
 email-validator==2.3.0
 expiringdict==1.2.2
-faar==0.1.0
 faar==0.1.0
 faiss-cpu==1.9.0.post1
 Faker==40.35.0
