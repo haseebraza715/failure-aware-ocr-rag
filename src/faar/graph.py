@@ -225,7 +225,8 @@ def build_graph(settings: AppSettings, repo: Phase0Repository | Any | None = Non
     graph.add_node("load_example", load_example)
     graph.add_node("prepare_retrieval", prepare_retrieval)
     graph.add_node("retrieve", retrieve)
-    graph.add_node("gate", gate_node)
+    # Node id must differ from GraphState key "gate" under langgraph 0.3.x.
+    graph.add_node("quality_gate", gate_node)
     graph.add_node("diagnose", diagnose_node)
     graph.add_node("correct_text", word_level_recovery)
     graph.add_node("retry_retrieval", semantic_recovery)
@@ -236,9 +237,9 @@ def build_graph(settings: AppSettings, repo: Phase0Repository | Any | None = Non
     graph.add_edge(START, "load_example")
     graph.add_edge("load_example", "prepare_retrieval")
     graph.add_edge("prepare_retrieval", "retrieve")
-    graph.add_edge("retrieve", "gate")
+    graph.add_edge("retrieve", "quality_gate")
     graph.add_conditional_edges(
-        "gate",
+        "quality_gate",
         route_after_gate,
         {"answer_direct": "answer_direct", "diagnose": "diagnose", "invoke_vlm": "invoke_vlm"},
     )
