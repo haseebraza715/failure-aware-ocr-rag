@@ -11,7 +11,13 @@ from uuid import uuid4
 from openai import OpenAI
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
-from .api_logging import estimate_anthropic_cost_usd, estimate_openai_cost_usd, make_vlm_logger, new_record
+from .api_logging import (
+    estimate_anthropic_cost_usd,
+    estimate_openai_cost_usd,
+    make_vlm_logger,
+    new_record,
+    openai_cost_rates,
+)
 from .settings import AppSettings
 from .types import RetrievalHit
 
@@ -121,13 +127,22 @@ class VisualFallback:
                 timeout=self.settings.recovery.request_timeout_seconds,
             )
         except Exception as exc:  # pragma: no cover - external runtime dependent
+            completed_at_utc = datetime.now(UTC).isoformat()
+            cost_rates = openai_cost_rates()
             self.logger.log(
                 new_record(
                     provider="openai",
                     model=self.settings.recovery.openai_model,
                     operation="visual_fallback",
                     status="failed",
-                    metadata={"request_id": request_id, "error": type(exc).__name__},
+                    metadata={
+                        "request_id": request_id,
+                        "error": type(exc).__name__,
+                        "request_model": self.settings.recovery.openai_model,
+                        "response_model": None,
+                        "completed_at_utc": completed_at_utc,
+                        "cost_rates": cost_rates,
+                    },
                 )
             )
             return {
@@ -136,12 +151,17 @@ class VisualFallback:
                 "reason": f"openai_error:{type(exc).__name__}",
                 "answer": "",
                 "used_images": [str(path) for path in image_paths],
+                "request_model": self.settings.recovery.openai_model,
+                "response_model": None,
+                "completed_at_utc": completed_at_utc,
+                "cost_rates": cost_rates,
             }
         usage = getattr(response, "usage", None)
         prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
         completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
         response_model = getattr(response, "model", None) or self.settings.recovery.openai_model
         completed_at_utc = datetime.now(UTC).isoformat()
+        cost_rates = openai_cost_rates()
         self.logger.log(
             new_record(
                 provider="openai",
@@ -150,13 +170,14 @@ class VisualFallback:
                 status="succeeded",
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
-                cost_usd=estimate_openai_cost_usd(prompt_tokens, completion_tokens),
+                cost_usd=estimate_openai_cost_usd(prompt_tokens, completion_tokens, cost_rates),
                 metadata={
                     "request_id": request_id,
                     "image_count": len(image_paths),
                     "request_model": self.settings.recovery.openai_model,
                     "response_model": response_model,
                     "completed_at_utc": completed_at_utc,
+                    "cost_rates": cost_rates,
                 },
             )
         )
@@ -169,6 +190,7 @@ class VisualFallback:
             "request_model": self.settings.recovery.openai_model,
             "response_model": response_model,
             "completed_at_utc": completed_at_utc,
+            "cost_rates": cost_rates,
         }
 
     def _answer_with_anthropic(self, question: str, image_paths: list[Path], fallback_context: str) -> dict:
@@ -215,13 +237,20 @@ class VisualFallback:
                 timeout=self.settings.recovery.request_timeout_seconds,
             )
         except Exception as exc:  # pragma: no cover - external runtime dependent
+            completed_at_utc = datetime.now(UTC).isoformat()
             self.logger.log(
                 new_record(
                     provider="anthropic",
                     model=self.settings.recovery.anthropic_model,
                     operation="visual_fallback",
                     status="failed",
-                    metadata={"request_id": request_id, "error": type(exc).__name__},
+                    metadata={
+                        "request_id": request_id,
+                        "error": type(exc).__name__,
+                        "request_model": self.settings.recovery.anthropic_model,
+                        "response_model": None,
+                        "completed_at_utc": completed_at_utc,
+                    },
                 )
             )
             return {
@@ -230,6 +259,9 @@ class VisualFallback:
                 "reason": f"anthropic_error:{type(exc).__name__}",
                 "answer": "",
                 "used_images": [str(path) for path in image_paths],
+                "request_model": self.settings.recovery.anthropic_model,
+                "response_model": None,
+                "completed_at_utc": completed_at_utc,
             }
         usage = getattr(response, "usage", None)
         prompt_tokens = int(getattr(usage, "input_tokens", 0) or 0)

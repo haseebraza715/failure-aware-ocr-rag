@@ -6,9 +6,31 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from faar.api_logging import ApiCallLogger, new_record
+from faar.api_logging import ApiCallLogger, estimate_openai_cost_usd, new_record, openai_cost_rates
 from faar.recovery import VisualFallback
 from faar.settings import AppSettings
+
+
+def test_openai_standard_cost_defaults(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_INPUT_USD_PER_MTOK", raising=False)
+    monkeypatch.delenv("OPENAI_OUTPUT_USD_PER_MTOK", raising=False)
+
+    rates = openai_cost_rates()
+
+    assert rates["input_usd_per_million_tokens"] == 2.5
+    assert rates["output_usd_per_million_tokens"] == 10.0
+    assert estimate_openai_cost_usd(1_000_000, 1_000_000) == 12.5
+
+
+def test_openai_cost_environment_overrides(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_INPUT_USD_PER_MTOK", "1.25")
+    monkeypatch.setenv("OPENAI_OUTPUT_USD_PER_MTOK", "4.50")
+
+    rates = openai_cost_rates()
+
+    assert rates["input_usd_per_million_tokens"] == 1.25
+    assert rates["output_usd_per_million_tokens"] == 4.5
+    assert estimate_openai_cost_usd(1_000_000, 1_000_000) == 5.75
 
 
 def test_started_and_succeeded_events_count_as_one_api_request(tmp_path: Path) -> None:
@@ -81,5 +103,7 @@ def test_openai_request_is_logged_before_execution_and_usage_after(
     assert records[1]["cost_usd"] > 0
     assert records[1]["metadata"]["request_model"] == "gpt-4o-2024-11-20"
     assert records[1]["metadata"]["response_model"] == "gpt-4o-2024-11-20"
+    assert records[1]["metadata"]["cost_rates"]["input_usd_per_million_tokens"] == 2.5
+    assert records[1]["metadata"]["cost_rates"]["output_usd_per_million_tokens"] == 10.0
     assert result["response_model"] == "gpt-4o-2024-11-20"
     assert result["completed_at_utc"]

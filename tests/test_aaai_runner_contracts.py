@@ -137,3 +137,40 @@ def test_faar_and_ablations_compute_harm_against_supplied_matching_baseline(
 
     payload = json.loads(out_path.read_text())
     assert payload["summary"]["harm_rate"] == 1.0
+
+
+def test_saved_run_provenance_records_openai_cost_rates(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _isolate_cli(monkeypatch, tmp_path)
+    output_path = tmp_path / "b0.json"
+
+    def fake_profile_run(
+        settings: AppSettings,
+        profile: str,
+        out: Path,
+        label: str,
+        max_examples: int | None,
+        run_spec: dict[str, Any],
+        dataset: str,
+        split: str,
+    ) -> dict[str, Any]:
+        payload = _result(profile, [])
+        payload["run_spec"] = run_spec
+        out.write_text(json.dumps(payload))
+        return payload
+
+    monkeypatch.setattr(run, "_run_profile_to_result", fake_profile_run)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run.py", "--gate", "off", "--recovery", "off", "--out", str(output_path)],
+    )
+
+    run.main()
+
+    saved = json.loads(output_path.read_text())
+    rates = saved["run_spec"]["vlm_cost_rates"]
+    assert rates["input_usd_per_million_tokens"] == 2.5
+    assert rates["output_usd_per_million_tokens"] == 10.0

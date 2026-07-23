@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .api_logging import openai_cost_rates
 from .benchmarks import load_benchmark_repository
 from .data import Phase0Repository
 from .experiment_profiles import apply_profile
@@ -43,6 +44,7 @@ def run_profile(
         hit_image_paths = list(dict.fromkeys(hit.chunk.image_path for hit in result_hits if hit.chunk.image_path))
         gold = result["example"].correct_answer
         prediction = result.get("answer", "")
+        visual_result = result.get("visual_result") or {}
         row = {
             "profile": profile_name,
             "example_id": example_id,
@@ -53,6 +55,13 @@ def run_profile(
             "gate": result.get("gate", {}),
             "policy_action": result.get("policy_action", "answer_direct"),
             "action_outcome": result.get("action_outcome", {}),
+            "request_model": visual_result.get("request_model"),
+            "response_model": visual_result.get("response_model"),
+            "completed_at_utc": visual_result.get("completed_at_utc"),
+            "cost_rates": (
+                visual_result.get("cost_rates")
+                or (openai_cost_rates() if settings.recovery.vlm_backend == "openai" else None)
+            ),
             "metrics": {
                 "ndcg@5": ndcg_at_k(hit_texts, gold, k=5),
                 "recall@5": recall_at_k(hit_texts, gold, k=5),
@@ -71,6 +80,7 @@ def run_profile(
                 "api_enabled": settings.recovery.api_enabled,
                 "vlm_backend": settings.recovery.vlm_backend,
                 "openai_model": settings.recovery.openai_model,
+                "cost_rates": openai_cost_rates() if settings.recovery.vlm_backend == "openai" else None,
                 "evaluation_size": len(selected_ids),
                 "selection": selection or {"max_examples": max_examples},
                 "dataset": dataset or "phase0",

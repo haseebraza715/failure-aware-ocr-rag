@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,6 +17,32 @@ from faar.ocr import GOT_OCR_MODEL, extract_got_ocr
 from faar.settings import AppSettings
 
 
+IMMUTABLE_REVISION_RE = re.compile(r"[0-9a-f]{40}")
+MUTABLE_REVISION_NAMES = {"main", "master", "latest", "head"}
+
+
+def validate_locked_got_ocr(
+    model_name: str,
+    revision: str | None,
+    settings: AppSettings,
+) -> str:
+    candidate = (revision or "").strip()
+    if not candidate:
+        raise ValueError("GOT-OCR revision must not be empty.")
+    if candidate.lower() in MUTABLE_REVISION_NAMES:
+        raise ValueError(f"GOT-OCR revision must be an immutable commit SHA, not branch {candidate!r}.")
+    if not IMMUTABLE_REVISION_RE.fullmatch(candidate):
+        raise ValueError("GOT-OCR revision must be a lowercase 40-character hexadecimal commit SHA.")
+    locked = settings.model_provenance()["got_ocr"]
+    if model_name != locked["repository"]:
+        raise ValueError(
+            f"GOT-OCR model {model_name!r} does not match locked repository {locked['repository']!r}."
+        )
+    if candidate != locked["revision"]:
+        raise ValueError("GOT-OCR revision does not match config/model_revisions.json.")
+    return candidate
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Extract annotation-study OCR text with GOT-OCR 2.0.")
     parser.add_argument("--engine", required=True, choices=["got-ocr-2"])
@@ -26,13 +53,17 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = AppSettings(project_root=Path.cwd())
-    model_name = args.model or os.getenv("GOT_OCR_MODEL", settings.recovery.got_ocr_model or GOT_OCR_MODEL)
-    revision = args.revision or os.getenv("GOT_OCR_MODEL_REVISION", settings.recovery.got_ocr_revision)
-    if not revision:
-        raise SystemExit(
-            "GOT-OCR extraction requires an immutable 40-character revision. "
-            "Pass --revision or set GOT_OCR_MODEL_REVISION / config/model_revisions.json."
-        )
+    model_name = (
+        args.model
+        if args.model is not None
+        else os.getenv("GOT_OCR_MODEL", settings.recovery.got_ocr_model or GOT_OCR_MODEL)
+    )
+    revision = (
+        args.revision
+        if args.revision is not None
+        else os.getenv("GOT_OCR_MODEL_REVISION", settings.recovery.got_ocr_revision)
+    )
+    revision = validate_locked_got_ocr(model_name, revision, settings)
 
     payload = json.loads(args.samples.read_text())
     samples = payload.get("samples", payload)

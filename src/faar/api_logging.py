@@ -75,10 +75,25 @@ def estimate_anthropic_cost_usd(model: str, prompt_tokens: int, completion_token
     return (prompt_tokens / 1_000_000 * input_per_million) + (completion_tokens / 1_000_000 * output_per_million)
 
 
-def estimate_openai_cost_usd(prompt_tokens: int, completion_tokens: int) -> float:
-    input_per_million = float(os.getenv("OPENAI_INPUT_USD_PER_MTOK", "5.0"))
-    output_per_million = float(os.getenv("OPENAI_OUTPUT_USD_PER_MTOK", "15.0"))
-    return (prompt_tokens / 1_000_000 * input_per_million) + (completion_tokens / 1_000_000 * output_per_million)
+def openai_cost_rates() -> dict[str, float | str]:
+    return {
+        "provider": "openai",
+        "currency": "USD",
+        "input_usd_per_million_tokens": float(os.getenv("OPENAI_INPUT_USD_PER_MTOK", "2.50")),
+        "output_usd_per_million_tokens": float(os.getenv("OPENAI_OUTPUT_USD_PER_MTOK", "10.00")),
+    }
+
+
+def estimate_openai_cost_usd(
+    prompt_tokens: int,
+    completion_tokens: int,
+    rates: dict[str, float | str] | None = None,
+) -> float:
+    rates = rates or openai_cost_rates()
+    return (
+        prompt_tokens / 1_000_000 * float(rates["input_usd_per_million_tokens"])
+        + completion_tokens / 1_000_000 * float(rates["output_usd_per_million_tokens"])
+    )
 
 
 def _try_wandb_log(payload: dict[str, Any]) -> None:

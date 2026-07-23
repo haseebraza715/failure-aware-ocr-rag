@@ -4,8 +4,36 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 import extract_ocr
 from faar.settings import AppSettings
+
+
+@pytest.mark.parametrize(
+    ("revision", "message"),
+    [
+        ("", "must not be empty"),
+        ("main", "not branch"),
+        ("latest", "not branch"),
+        ("abc123", "40-character hexadecimal"),
+        ("g" * 40, "40-character hexadecimal"),
+        ("a" * 40, "does not match config/model_revisions.json"),
+    ],
+)
+def test_rejects_unlocked_got_ocr_revisions(
+    tmp_path: Path,
+    revision: str,
+    message: str,
+) -> None:
+    settings = AppSettings(project_root=tmp_path)
+
+    with pytest.raises(ValueError, match=message):
+        extract_ocr.validate_locked_got_ocr(
+            settings.recovery.got_ocr_model,
+            revision,
+            settings,
+        )
 
 
 def test_extract_ocr_cli_threads_locked_revision(monkeypatch, tmp_path: Path) -> None:

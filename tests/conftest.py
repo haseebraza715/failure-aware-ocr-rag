@@ -30,6 +30,8 @@ def isolate_model_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
         "BYT5_MODEL_REPO",
         "BYT5_MODEL_REVISION",
         "OPENAI_MODEL",
+        "OPENAI_INPUT_USD_PER_MTOK",
+        "OPENAI_OUTPUT_USD_PER_MTOK",
         "VLM_BACKEND",
     ):
         monkeypatch.delenv(name, raising=False)

@@ -6,6 +6,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
+from .api_logging import openai_cost_rates
 from .benchmarks import BenchmarkRepository
 from .metrics import exact_match, token_f1
 from .recovery import VisualFallback
@@ -174,6 +175,13 @@ def run_visual_baseline(
                 "predicted_answer": prediction,
                 "failure_type": "visual_retrieval",
                 "policy_action": "invoke_vlm",
+                "request_model": answer_result.get("request_model"),
+                "response_model": answer_result.get("response_model"),
+                "completed_at_utc": answer_result.get("completed_at_utc"),
+                "cost_rates": (
+                    answer_result.get("cost_rates")
+                    or (openai_cost_rates() if settings.recovery.vlm_backend == "openai" else None)
+                ),
                 "action_outcome": {
                     "action": "invoke_vlm",
                     "status": answer_result.get("status", "unknown"),
