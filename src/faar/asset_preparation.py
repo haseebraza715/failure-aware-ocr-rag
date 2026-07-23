@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .asset_paths import to_relative_project_path
-from .ocr import GOT_OCR_MODEL, extract_got_ocr
 from .ohr_inventory import resolve_ohr_inventory_path
 from .pdf_preprocessing import export_docling_markdown
 
@@ -247,7 +246,7 @@ def execute_document_preparation(
     pdf_root: Path | None = None,
     pdf_zip: Path | None = None,
     inventory_dir: Path | None = None,
-    extract_got_ocr_fn: Callable[..., str] = extract_got_ocr,
+    extract_got_ocr_fn: Callable[..., str] | None = None,
     export_docling_fn: Callable[[Path, Path], Path] = export_docling_markdown,
 ) -> PreparationResult:
     project_root = project_root.expanduser().resolve()
@@ -373,11 +372,12 @@ def execute_document_preparation(
         metrics["render_runtime_sec"] = float(render_meta.get("render_runtime_sec") or 0.0)
         metrics["render_scale"] = render_meta.get("render_scale", 2.0)
 
-        # Stage: GOT-OCR
-        model_name = locked["repository"] or GOT_OCR_MODEL
+        # Stage: GOT-OCR — repository/revision come only from committed lock file.
+        model_name = locked["repository"]
         revision = locked["revision"]
         ocr_total = 0.0
         pages_state = dict(existing.get("pages") or {})
+        ocr_fn = extract_got_ocr_fn
         for page_id in page_ids:
             image_path = image_paths[page_id]
             ocr_path = ocr_paths[page_id]
@@ -393,11 +393,16 @@ def execute_document_preparation(
             ):
                 metrics["skipped_pages"]["ocr"].append(page_id)
                 continue
+            # Lazy-import Torch/Transformers OCR only when a page actually needs OCR.
+            if ocr_fn is None:
+                from .ocr import extract_got_ocr
+
+                ocr_fn = extract_got_ocr
             partial = ocr_path.with_suffix(ocr_path.suffix + ".partial")
             _remove_quietly(partial)
             _remove_quietly(ocr_path)
             started = time.perf_counter()
-            text = extract_got_ocr_fn(image_path, model_name=model_name, revision=revision)
+            text = ocr_fn(image_path, model_name=model_name, revision=revision)
             runtime = time.perf_counter() - started
             ocr_total += runtime
             metrics["per_page_got_ocr_runtime_sec"][str(page_id)] = runtime

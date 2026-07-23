@@ -158,3 +158,31 @@ def test_cli_smoke_writes_plan_without_execution(tmp_path: Path) -> None:
     assert payload["mode"] == "plan_only"
     assert payload["page_ids"] == [0]
     assert (out_root / "prepare_checkpoint.json").is_file()
+
+
+def test_plan_imports_do_not_load_inference_runtime() -> None:
+    """Plan-only imports must not pull Torch, Transformers, or ColPali."""
+    repo_root = Path(__file__).resolve().parents[1]
+    probe = r"""
+import sys
+from pathlib import Path
+root = Path(%r)
+sys.path.insert(0, str(root / "src"))
+sys.path.insert(0, str(root))
+from faar.asset_preparation import load_locked_got_ocr, plan_document_work, page_image_name
+import prepare_benchmark_assets
+banned = {"torch", "transformers", "colpali_engine"}
+loaded = sorted({name.split(".")[0] for name in sys.modules if name.split(".")[0] in banned})
+assert not loaded, loaded
+assert page_image_name("doc", 0).endswith("_page_0.png")
+print("PLAN_IMPORTS_CLEAN")
+""" % (str(repo_root),)
+    completed = subprocess.run(
+        [sys.executable, "-c", probe],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=str(repo_root),
+    )
+    assert completed.returncode == 0, completed.stderr + completed.stdout
+    assert "PLAN_IMPORTS_CLEAN" in completed.stdout
