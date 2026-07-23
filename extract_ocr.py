@@ -19,13 +19,29 @@ from faar.settings import AppSettings
 
 IMMUTABLE_REVISION_RE = re.compile(r"[0-9a-f]{40}")
 MUTABLE_REVISION_NAMES = {"main", "master", "latest", "head"}
+MODEL_REVISIONS_PATH = Path(__file__).resolve().parent / "config" / "model_revisions.json"
+
+
+def _committed_got_ocr_lock() -> dict[str, str]:
+    """Read GOT-OCR lock from the committed config file (never env-overridable settings)."""
+    payload = json.loads(MODEL_REVISIONS_PATH.read_text(encoding="utf-8"))
+    models = payload.get("models", {})
+    locked = models.get("got_ocr") if isinstance(models, dict) else None
+    if not isinstance(locked, dict):
+        raise ValueError("config/model_revisions.json is missing models.got_ocr.")
+    repository = str(locked.get("repository") or "").strip()
+    revision = str(locked.get("revision") or "").strip()
+    if not repository or not revision:
+        raise ValueError("config/model_revisions.json got_ocr lock is incomplete.")
+    return {"repository": repository, "revision": revision}
 
 
 def validate_locked_got_ocr(
     model_name: str,
     revision: str | None,
-    settings: AppSettings,
+    settings: AppSettings | None = None,
 ) -> str:
+    _ = settings  # Kept for call-site compatibility; lock comes from committed JSON only.
     candidate = (revision or "").strip()
     if not candidate:
         raise ValueError("GOT-OCR revision must not be empty.")
@@ -33,7 +49,7 @@ def validate_locked_got_ocr(
         raise ValueError(f"GOT-OCR revision must be an immutable commit SHA, not branch {candidate!r}.")
     if not IMMUTABLE_REVISION_RE.fullmatch(candidate):
         raise ValueError("GOT-OCR revision must be a lowercase 40-character hexadecimal commit SHA.")
-    locked = settings.model_provenance()["got_ocr"]
+    locked = _committed_got_ocr_lock()
     if model_name != locked["repository"]:
         raise ValueError(
             f"GOT-OCR model {model_name!r} does not match locked repository {locked['repository']!r}."

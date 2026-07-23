@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 import extract_ocr
-from faar.settings import AppSettings
+from faar.settings import AppSettings, LOCKED_MODELS
 
 
 @pytest.mark.parametrize(
@@ -30,14 +30,62 @@ def test_rejects_unlocked_got_ocr_revisions(
 
     with pytest.raises(ValueError, match=message):
         extract_ocr.validate_locked_got_ocr(
-            settings.recovery.got_ocr_model,
+            LOCKED_MODELS["got_ocr"]["repository"],
             revision,
             settings,
         )
 
 
+def test_env_override_cannot_bypass_committed_got_ocr_lock(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Env-overridden AppSettings must still lose to config/model_revisions.json."""
+    wrong_sha = "b" * 40
+    assert wrong_sha != LOCKED_MODELS["got_ocr"]["revision"]
+    monkeypatch.setenv("GOT_OCR_MODEL_REVISION", wrong_sha)
+
+    image = tmp_path / "page.png"
+    image.write_bytes(b"image")
+    samples = tmp_path / "samples.json"
+    samples.write_text(
+        json.dumps(
+            {
+                "samples": [
+                    {
+                        "example_id": "e1",
+                        "question": "What is shown?",
+                        "gold_answer": "answer",
+                        "baseline_answer": "wrong",
+                        "image_paths": [str(image)],
+                    }
+                ]
+            }
+        )
+    )
+    out = tmp_path / "ocr_texts"
+    monkeypatch.setattr(extract_ocr, "extract_got_ocr", lambda *args, **kwargs: "OCR TEXT")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "extract_ocr.py",
+            "--engine",
+            "got-ocr-2",
+            "--samples",
+            str(samples),
+            "--out",
+            str(out),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="does not match config/model_revisions.json"):
+        extract_ocr.main()
+
+
 def test_extract_ocr_cli_threads_locked_revision(monkeypatch, tmp_path: Path) -> None:
-    settings = AppSettings(project_root=tmp_path)
+    locked_revision = LOCKED_MODELS["got_ocr"]["revision"]
+    locked_model = LOCKED_MODELS["got_ocr"]["repository"]
     image = tmp_path / "page.png"
     image.write_bytes(b"image")
     samples = tmp_path / "samples.json"
@@ -76,13 +124,13 @@ def test_extract_ocr_cli_threads_locked_revision(monkeypatch, tmp_path: Path) ->
             "--out",
             str(out),
             "--model",
-            settings.recovery.got_ocr_model,
+            locked_model,
             "--revision",
-            settings.recovery.got_ocr_revision or "",
+            locked_revision,
         ],
     )
     extract_ocr.main()
 
-    assert calls[0]["revision"] == settings.recovery.got_ocr_revision
+    assert calls[0]["revision"] == locked_revision
     manifest = json.loads((tmp_path / "label_studio/manifest.json").read_text())
-    assert manifest["revision"] == settings.recovery.got_ocr_revision
+    assert manifest["revision"] == locked_revision
