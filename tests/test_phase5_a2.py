@@ -29,7 +29,7 @@ class _FakeRetriever:
 
 
 class _FakeCorrector:
-    def __init__(self, _model_name: str) -> None:
+    def __init__(self, _model_name: str, _revision: str | None = None) -> None:
         pass
 
     def propose_correction(self, text: str) -> dict[str, str | bool]:

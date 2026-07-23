@@ -34,15 +34,15 @@ def _tokenize(text: str) -> list[str]:
 
 
 @lru_cache(maxsize=2)
-def _load_embedding_model(model_name: str) -> SentenceTransformer:
+def _load_embedding_model(model_name: str, revision: str | None) -> SentenceTransformer:
     resolved_name = MODEL_ALIASES.get(model_name, model_name)
-    return SentenceTransformer(resolved_name, trust_remote_code=True)
+    return SentenceTransformer(resolved_name, revision=revision, trust_remote_code=True)
 
 
 @lru_cache(maxsize=2)
-def _load_reranker(model_name: str) -> CrossEncoder:
+def _load_reranker(model_name: str, revision: str | None) -> CrossEncoder:
     resolved_name = MODEL_ALIASES.get(model_name, model_name)
-    return CrossEncoder(resolved_name, trust_remote_code=True)
+    return CrossEncoder(resolved_name, revision=revision, trust_remote_code=True)
 
 
 def _to_probability(score: float) -> float:
@@ -56,8 +56,8 @@ class HybridRetriever:
         self.settings = settings
         self._bm25_tokens = [_tokenize(chunk.text) for chunk in chunks]
         self._bm25 = BM25Okapi(self._bm25_tokens)
-        self._embedder = _load_embedding_model(settings.embedding_model)
-        self._reranker = _load_reranker(settings.reranker)
+        self._embedder = _load_embedding_model(settings.embedding_model, settings.embedding_revision)
+        self._reranker = _load_reranker(settings.reranker, settings.reranker_revision)
         corpus_embeddings = self._embedder.encode(
             [chunk.text for chunk in chunks],
             normalize_embeddings=True,

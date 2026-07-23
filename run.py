@@ -17,15 +17,17 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from evaluate import evaluate_results
+from faar.benchmarks import load_benchmark_repository
 from faar.experiment_runner import run_profile
 from faar.gate_tuning import load_locked_threshold
 from faar.results_aggregator import summarize_examples
 from faar.settings import AppSettings
+from faar.visual_baselines import run_visual_baseline
 
 
 BASELINE_MAP = {
     ("off", "off"): ("B0", "naive_rag", "Text-only RAG"),
-    ("off", "always_vlm"): ("B1", "faar_full", "Always-VLM"),
+    ("off", "always_vlm"): ("B1", "faar_always_vlm", "Always-VLM"),
     ("on", "random_type"): ("B2", "faar_no_diagnosis", "Random recovery"),
 }
 
@@ -42,10 +44,12 @@ def _settings_from_args(args: argparse.Namespace) -> AppSettings:
     settings.recovery.vlm_backend = args.vlm or os.getenv("VLM_BACKEND", settings.recovery.vlm_backend)
     if settings.recovery.vlm_backend.startswith("claude"):
         settings.recovery.anthropic_model = settings.recovery.vlm_backend
+    if settings.recovery.vlm_backend == "openai":
+        settings.recovery.openai_model = os.getenv("OPENAI_MODEL", settings.recovery.openai_model)
     settings.retrieval.embedding_model = args.embed or os.getenv("EMBED_MODEL", settings.retrieval.embedding_model)
     settings.retrieval.reranker = args.reranker or os.getenv("RERANKER", settings.retrieval.reranker)
     settings.recovery.ocr_engine = args.ocr or os.getenv("OCR_ENGINE", settings.recovery.ocr_engine)
-    settings.recovery.log_vlm_calls = os.getenv("LOG_VLM_CALLS", "false").lower() == "true"
+    settings.recovery.log_vlm_calls = True
     settings.experiment.random_seed = args.seed
     if args.wordlevel_fallback:
         settings.experiment.wordlevel_fallback = args.wordlevel_fallback
@@ -53,6 +57,8 @@ def _settings_from_args(args: argparse.Namespace) -> AppSettings:
     locked_threshold = load_locked_threshold(settings.gate_threshold_path)
     if locked_threshold is not None:
         settings.gate.quality_threshold = locked_threshold
+    settings.validate_openai_snapshot()
+    settings.validate_model_revisions(include_visual=args.mode if args.mode in {"colpali", "visrag"} else None)
     return settings
 
 
@@ -67,7 +73,8 @@ def _run_profile_to_result(
     split: str,
 ) -> dict[str, Any]:
     start = time.perf_counter()
-    start_cost = _read_vlm_cost(settings.project_root / "logs/vlm_calls.jsonl")
+    usage_path = settings.project_root / "logs/vlm_calls.jsonl"
+    start_usage = _read_vlm_usage(usage_path)
     rows = run_profile(
         settings,
         profile_name=profile,
@@ -77,6 +84,7 @@ def _run_profile_to_result(
         split=split,
     )
     summary = summarize_examples(rows)
+    end_usage = _read_vlm_usage(usage_path)
     payload = {
         "label": label,
         "profile": profile,
@@ -87,7 +95,10 @@ def _run_profile_to_result(
             "F1": summary["f1"],
             "vlm_rate": summary["vlm_rate"],
             "harm_rate": 0.0,
-            "cost_usd": round(_read_vlm_cost(settings.project_root / "logs/vlm_calls.jsonl") - start_cost, 6),
+            "api_requests": end_usage["api_requests"] - start_usage["api_requests"],
+            "prompt_tokens": end_usage["prompt_tokens"] - start_usage["prompt_tokens"],
+            "completion_tokens": end_usage["completion_tokens"] - start_usage["completion_tokens"],
+            "cost_usd": round(end_usage["cost_usd"] - start_usage["cost_usd"], 6),
             "runtime_sec": round(time.perf_counter() - start, 4),
         },
         "rows": rows,
@@ -97,21 +108,92 @@ def _run_profile_to_result(
     return payload
 
 
-def _read_vlm_cost(path: Path) -> float:
+def _read_vlm_usage(path: Path) -> dict[str, int | float]:
     if not path.exists():
-        return 0.0
-    total = 0.0
+        return {"api_requests": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost_usd": 0.0}
+    usage: dict[str, int | float] = {
+        "api_requests": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "cost_usd": 0.0,
+    }
     for line in path.read_text().splitlines():
         if line.strip():
-            total += float(json.loads(line).get("cost_usd", 0.0))
-    return round(total, 6)
+            record = json.loads(line)
+            if record.get("status") == "started":
+                usage["api_requests"] += 1
+            usage["prompt_tokens"] += int(record.get("prompt_tokens", 0))
+            usage["completion_tokens"] += int(record.get("completion_tokens", 0))
+            usage["cost_usd"] += float(record.get("cost_usd", 0.0))
+    usage["cost_usd"] = round(float(usage["cost_usd"]), 6)
+    return usage
 
 
-def _unsupported_external_runtime(args: argparse.Namespace) -> None:
-    raise SystemExit(
-        f"{args.mode or args.dataset} requires external assets/runtime not present locally. "
-        "Do not report placeholder numbers; add the required dataset/model dependencies and rerun."
-    )
+def _apply_baseline_harm(
+    payload: dict[str, Any],
+    output_path: Path,
+    baseline_path: Path | None,
+    *,
+    dataset: str,
+    split: str,
+) -> dict[str, Any]:
+    if baseline_path is None:
+        return payload
+    if not baseline_path.is_file():
+        raise SystemExit(f"Matching B0 result does not exist: {baseline_path}")
+    baseline_payload = json.loads(baseline_path.read_text())
+    baseline_spec = baseline_payload.get("run_spec", {}) if isinstance(baseline_payload, dict) else {}
+    for key, expected in (("dataset", dataset), ("split", split)):
+        observed = baseline_spec.get(key)
+        if observed is not None and observed != expected:
+            raise SystemExit(
+                f"Baseline mismatch: expected {key}={expected!r}, but {baseline_path} records {observed!r}."
+            )
+    payload["summary"]["harm_rate"] = evaluate_results(output_path, baseline_path=baseline_path)["harm_rate"]
+    output_path.write_text(json.dumps(payload, indent=2) + "\n")
+    return payload
+
+
+def _run_visual_baseline_to_result(
+    settings: AppSettings,
+    mode: str,
+    out: Path,
+    max_examples: int | None,
+    run_spec: dict[str, Any],
+    dataset: str,
+    split: str,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    usage_path = settings.project_root / "logs/vlm_calls.jsonl"
+    start_usage = _read_vlm_usage(usage_path)
+    repo = load_benchmark_repository(settings.project_root, dataset, split)
+    result = run_visual_baseline(settings, repo, mode, max_examples=max_examples)
+    if isinstance(result, dict):
+        payload = result
+    else:
+        summary = summarize_examples(result)
+        end_usage = _read_vlm_usage(usage_path)
+        payload = {
+            "label": mode,
+            "profile": mode,
+            "created_at_utc": datetime.now(UTC).isoformat(),
+            "run_spec": run_spec,
+            "summary": {
+                "EM": summary["em"],
+                "F1": summary["f1"],
+                "vlm_rate": summary["vlm_rate"],
+                "harm_rate": 0.0,
+                "api_requests": end_usage["api_requests"] - start_usage["api_requests"],
+                "prompt_tokens": end_usage["prompt_tokens"] - start_usage["prompt_tokens"],
+                "completion_tokens": end_usage["completion_tokens"] - start_usage["completion_tokens"],
+                "cost_usd": round(end_usage["cost_usd"] - start_usage["cost_usd"], 6),
+                "runtime_sec": round(time.perf_counter() - started, 4),
+            },
+            "rows": result,
+        }
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(payload, indent=2) + "\n")
+    return payload
 
 
 def main() -> None:
@@ -127,6 +209,7 @@ def main() -> None:
     parser.add_argument("--vlm")
     parser.add_argument("--ablate", choices=["no_gate", "no_diagnosis", "no_wordlevel_llm", "no_semantic_retry"])
     parser.add_argument("--wordlevel_fallback")
+    parser.add_argument("--baseline", type=Path, help="Matching B0 result used to compute harm_rate.")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--max-examples", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
@@ -145,16 +228,46 @@ def main() -> None:
         "reranker": settings.retrieval.reranker,
         "ocr_engine": settings.recovery.ocr_engine,
         "vlm_backend": settings.recovery.vlm_backend,
+        "vlm_model": (
+            settings.recovery.openai_model
+            if settings.recovery.vlm_backend == "openai"
+            else settings.recovery.anthropic_model
+        ),
+        "model_provenance": settings.model_provenance(),
     }
 
     if args.mode in {"colpali", "visrag"}:
         _require_key_for_paid_vlm(settings.recovery.vlm_backend)
-        _unsupported_external_runtime(args)
+        payload = _run_visual_baseline_to_result(
+            settings,
+            args.mode,
+            args.out,
+            args.max_examples,
+            run_spec,
+            args.dataset,
+            args.split,
+        )
+        payload = _apply_baseline_harm(
+            payload,
+            args.out,
+            args.baseline,
+            dataset=args.dataset,
+            split=args.split,
+        )
+        print(json.dumps(payload["summary"], indent=2))
+        return
 
     if args.mode == "faar":
         _require_key_for_paid_vlm(settings.recovery.vlm_backend)
         payload = _run_profile_to_result(
             settings, "faar_full", args.out, f"FAAR {args.dataset} {args.split}", args.max_examples, run_spec, args.dataset, args.split
+        )
+        payload = _apply_baseline_harm(
+            payload,
+            args.out,
+            args.baseline,
+            dataset=args.dataset,
+            split=args.split,
         )
         print(json.dumps(payload["summary"], indent=2))
         return
@@ -170,6 +283,13 @@ def main() -> None:
         payload = _run_profile_to_result(
             settings, ablation_profile, args.out, args.ablate, args.max_examples, run_spec, args.dataset, args.split
         )
+        payload = _apply_baseline_harm(
+            payload,
+            args.out,
+            args.baseline,
+            dataset=args.dataset,
+            split=args.split,
+        )
         print(json.dumps(payload["summary"], indent=2))
         return
 
@@ -180,9 +300,14 @@ def main() -> None:
     if baseline_id == "B1":
         _require_key_for_paid_vlm(settings.recovery.vlm_backend)
     payload = _run_profile_to_result(settings, profile, args.out, label, args.max_examples, run_spec, args.dataset, args.split)
-    if baseline_id == "B2" and Path("results/b0.json").exists():
-        payload["summary"]["harm_rate"] = evaluate_results(args.out, baseline_path=Path("results/b0.json"))["harm_rate"]
-        args.out.write_text(json.dumps(payload, indent=2) + "\n")
+    default_baseline = Path("results/b0.json") if baseline_id == "B2" and Path("results/b0.json").exists() else None
+    payload = _apply_baseline_harm(
+        payload,
+        args.out,
+        args.baseline or default_baseline,
+        dataset=args.dataset,
+        split=args.split,
+    )
     print(json.dumps(payload["summary"], indent=2))
 
 

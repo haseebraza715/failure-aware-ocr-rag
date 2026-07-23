@@ -5,6 +5,7 @@ import os
 import re
 from functools import lru_cache
 from pathlib import Path
+from uuid import uuid4
 
 from openai import OpenAI
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
@@ -15,15 +16,16 @@ from .types import RetrievalHit
 
 
 @lru_cache(maxsize=1)
-def _load_byt5(model_name: str):
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+def _load_byt5(model_name: str, revision: str | None):
+    tokenizer = AutoTokenizer.from_pretrained(model_name, revision=revision)
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_name, revision=revision)
     return tokenizer, model
 
 
 class ByT5Corrector:
-    def __init__(self, model_name: str) -> None:
+    def __init__(self, model_name: str, revision: str | None = None) -> None:
         self.model_name = model_name
+        self.revision = revision
 
     def correct(self, text: str, max_new_tokens: int = 128) -> str:
         return self.propose_correction(text, max_new_tokens=max_new_tokens)["text"]
@@ -46,7 +48,7 @@ class ByT5Corrector:
     def _generate_correction(self, text: str, max_new_tokens: int = 128) -> str:
         # Bound inference input to keep Phase 3 batch runs tractable.
         clipped = text[:512]
-        tokenizer, model = _load_byt5(self.model_name)
+        tokenizer, model = _load_byt5(self.model_name, self.revision)
         prompt = f"correct ocr noise: {clipped}"
         tokens = tokenizer(prompt, return_tensors="pt", truncation=True)
         output = model.generate(**tokens, max_new_tokens=min(max_new_tokens, 64))
@@ -92,6 +94,7 @@ class VisualFallback:
         if not os.getenv("OPENAI_API_KEY"):
             raise RuntimeError("OPENAI_API_KEY is required for VLM_BACKEND=openai.")
         client = OpenAI()
+        request_id = str(uuid4())
         content: list[dict] = [{"type": "text", "text": f"Answer the question using only the page image.\n\nQuestion: {question}"}]
         for path in image_paths:
             encoded = base64.b64encode(path.read_bytes()).decode("utf-8")
@@ -108,7 +111,7 @@ class VisualFallback:
                     model=self.settings.recovery.openai_model,
                     operation="visual_fallback",
                     status="started",
-                    metadata={"image_count": len(image_paths)},
+                    metadata={"request_id": request_id, "image_count": len(image_paths)},
                 )
             )
             response = client.chat.completions.create(
@@ -123,7 +126,7 @@ class VisualFallback:
                     model=self.settings.recovery.openai_model,
                     operation="visual_fallback",
                     status="failed",
-                    metadata={"error": type(exc).__name__},
+                    metadata={"request_id": request_id, "error": type(exc).__name__},
                 )
             )
             return {
@@ -145,7 +148,7 @@ class VisualFallback:
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 cost_usd=estimate_openai_cost_usd(prompt_tokens, completion_tokens),
-                metadata={"image_count": len(image_paths)},
+                metadata={"request_id": request_id, "image_count": len(image_paths)},
             )
         )
         return {
@@ -165,6 +168,7 @@ class VisualFallback:
             raise RuntimeError("The `anthropic` package is required for VLM_BACKEND=claude-sonnet-4-5.") from exc
 
         client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        request_id = str(uuid4())
         content: list[dict] = [
             {
                 "type": "text",
@@ -188,7 +192,7 @@ class VisualFallback:
                 model=self.settings.recovery.anthropic_model,
                 operation="visual_fallback",
                 status="started",
-                metadata={"image_count": len(image_paths)},
+                metadata={"request_id": request_id, "image_count": len(image_paths)},
             )
         )
         try:
@@ -205,7 +209,7 @@ class VisualFallback:
                     model=self.settings.recovery.anthropic_model,
                     operation="visual_fallback",
                     status="failed",
-                    metadata={"error": type(exc).__name__},
+                    metadata={"request_id": request_id, "error": type(exc).__name__},
                 )
             )
             return {
@@ -228,7 +232,7 @@ class VisualFallback:
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 cost_usd=estimate_anthropic_cost_usd(self.settings.recovery.anthropic_model, prompt_tokens, completion_tokens),
-                metadata={"image_count": len(image_paths)},
+                metadata={"request_id": request_id, "image_count": len(image_paths)},
             )
         )
         return {

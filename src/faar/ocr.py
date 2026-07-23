@@ -3,23 +3,27 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from transformers import AutoModelForImageTextToText, AutoProcessor
+
 
 GOT_OCR_MODEL = "stepfun-ai/GOT-OCR-2.0-hf"
 
 
 @lru_cache(maxsize=1)
-def _load_got_ocr(model_name: str):
-    from transformers import AutoModelForImageTextToText, AutoProcessor
-
-    processor = AutoProcessor.from_pretrained(model_name, use_fast=True)
-    model = AutoModelForImageTextToText.from_pretrained(model_name, device_map="auto")
+def _load_got_ocr(model_name: str, revision: str | None):
+    processor = AutoProcessor.from_pretrained(model_name, revision=revision, use_fast=True)
+    model = AutoModelForImageTextToText.from_pretrained(model_name, revision=revision, device_map="auto")
     return model.eval(), processor
 
 
-def extract_got_ocr(image_path: Path, model_name: str = GOT_OCR_MODEL) -> str:
+def extract_got_ocr(
+    image_path: Path,
+    model_name: str = GOT_OCR_MODEL,
+    revision: str | None = None,
+) -> str:
     if not image_path.exists():
         raise FileNotFoundError(f"GOT-OCR input image is missing: {image_path}")
-    model, processor = _load_got_ocr(model_name)
+    model, processor = _load_got_ocr(model_name, revision)
     inputs = processor(str(image_path), return_tensors="pt").to(model.device)
     generated = model.generate(
         **inputs,

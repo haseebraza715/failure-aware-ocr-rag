@@ -12,11 +12,18 @@ def test_benchmark_repository_requires_complete_ocr_and_images(tmp_path: Path) -
         "example_id": "e1",
         "question": "Q",
         "correct_answer": "A",
-        "ocr_text_path": str(tmp_path / "missing.txt"),
-        "image_paths": [],
     }
+    corpus_pages = [
+        {
+            "corpus_id": "doc:p1",
+            "doc_name": "doc",
+            "page_id": 1,
+            "ocr_text_path": str(tmp_path / "missing.txt"),
+            "image_path": "",
+        }
+    ]
     with pytest.raises(DatasetUnavailableError, match="not ready for a paper run"):
-        BenchmarkRepository([record], tmp_path, "ohrbench", "test")
+        BenchmarkRepository([record], corpus_pages, tmp_path, "ohrbench", "test")
 
 
 def test_ohr_manifest_uses_immutable_split(tmp_path: Path) -> None:
@@ -29,8 +36,9 @@ def test_ohr_manifest_uses_immutable_split(tmp_path: Path) -> None:
             [{"ID": "e1", "doc_name": "doc", "questions": "Q", "answers": "A", "evidence_page_no": 2}]
         )
     )
-    (tmp_path / "ocr/e1.txt").write_text("OCR")
-    (tmp_path / "images/e1_2.png").write_text("image")
-    records = build_ohr_asset_manifest(tmp_path, "test", tmp_path / "ocr", tmp_path / "images")
-    assert records[0]["example_id"] == "e1"
-    assert records[0]["ocr_text_path"].endswith("ocr/e1.txt")
+    (tmp_path / "ocr/doc_p2.txt").write_text("OCR")
+    (tmp_path / "images/doc_p2.png").write_text("image")
+    manifest = build_ohr_asset_manifest(tmp_path, "test", tmp_path / "ocr", tmp_path / "images")
+    assert manifest["records"][0]["example_id"] == "e1"
+    assert manifest["records"][0]["corpus_ids"] == ["doc:p2"]
+    assert manifest["corpus_pages"][0]["ocr_text_path"].endswith("ocr/doc_p2.txt")

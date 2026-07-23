@@ -38,7 +38,9 @@ def run_profile(
     rows: list[dict[str, Any]] = []
     for example_id in selected_ids:
         result = graph.invoke({"example_id": example_id})
-        hit_texts = [hit.chunk.text for hit in result.get("corrected_hits") or result.get("retrieved_hits", [])]
+        result_hits = result.get("corrected_hits") or result.get("retrieved_hits", [])
+        hit_texts = [hit.chunk.text for hit in result_hits]
+        hit_image_paths = list(dict.fromkeys(hit.chunk.image_path for hit in result_hits if hit.chunk.image_path))
         gold = result["example"].correct_answer
         prediction = result.get("answer", "")
         row = {
@@ -61,7 +63,7 @@ def run_profile(
             "top_reranker_score": (result.get("gate") or {}).get("top_reranker_score", 0.0),
             "source_assets": {
                 "ocr_text_path": str(getattr(result["example"], "ocr_text_path", "")),
-                "image_paths": [str(path) for path in getattr(result["example"], "image_paths", [])],
+                "image_paths": hit_image_paths,
             },
             "run_metadata": {
                 "profile": profile_name,

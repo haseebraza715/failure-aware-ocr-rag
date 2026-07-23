@@ -23,17 +23,17 @@ def main() -> None:
     args = parser.parse_args()
 
     root = Path.cwd()
-    records = build_ohr_asset_manifest(root, args.split, args.ocr_dir, args.image_dir)
+    manifest = build_ohr_asset_manifest(root, args.split, args.ocr_dir, args.image_dir)
     out = args.out or root / "data/benchmark_assets/ohrbench" / f"{args.split}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "dataset": "ohrbench",
         "split": args.split,
         "created_at_utc": datetime.now(UTC).isoformat(),
-        "records": records,
+        **manifest,
     }
     out.write_text(json.dumps(payload, indent=2) + "\n")
-    print(json.dumps({"out": str(out), "records": len(records)}, indent=2))
+    print(json.dumps({"out": str(out), "records": len(manifest["records"]), "corpus_pages": len(manifest["corpus_pages"])}, indent=2))
 
 
 if __name__ == "__main__":

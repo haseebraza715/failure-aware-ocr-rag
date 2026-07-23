@@ -30,6 +30,7 @@ class Chunk:
     doc_name: str
     page_id: int
     text: str
+    image_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

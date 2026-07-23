@@ -1,9 +1,42 @@
 from __future__ import annotations
 
+import json
 import os
+import re
 from pathlib import Path
 
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
+
+
+# Local credentials live in an ignored .env file; explicit shell exports win.
+load_dotenv(override=False)
+
+
+def _load_locked_model_config() -> dict[str, dict[str, str]]:
+    path = Path(__file__).resolve().parents[2] / "config/model_revisions.json"
+    if not path.is_file():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    models = payload.get("models", {})
+    return models if isinstance(models, dict) else {}
+
+
+LOCKED_MODELS = _load_locked_model_config()
+MODEL_REPOSITORY_ALIASES = {
+    "NV-Embed-v2": "nvidia/NV-Embed-v2",
+    "bge-reranker-v2-m3": "BAAI/bge-reranker-v2-m3",
+}
+
+
+def _locked_model_value(role: str, key: str, fallback: str | None = None) -> str | None:
+    model = LOCKED_MODELS.get(role, {})
+    value = model.get(key) if isinstance(model, dict) else None
+    return str(value) if value else fallback
+
+
+def _canonical_model_repository(repository: str) -> str:
+    return MODEL_REPOSITORY_ALIASES.get(repository, repository)
 
 
 class RetrievalSettings(BaseModel):
@@ -11,9 +44,59 @@ class RetrievalSettings(BaseModel):
     chunk_overlap_words: int = 40
     top_k: int = 5
     semantic_backtrack_top_k: int = 8
-    embedding_model: str = Field(default_factory=lambda: os.getenv("EMBED_MODEL", "NV-Embed-v2"))
-    reranker: str = Field(default_factory=lambda: os.getenv("RERANKER", "bge-reranker-v2-m3"))
+    embedding_model: str = Field(
+        default_factory=lambda: os.getenv(
+            "EMBED_MODEL",
+            os.getenv("EMBED_MODEL_REPO", _locked_model_value("embedding", "repository", "NV-Embed-v2")),
+        )
+    )
+    embedding_revision: str | None = Field(
+        default_factory=lambda: os.getenv(
+            "EMBED_MODEL_REVISION",
+            _locked_model_value("embedding", "revision"),
+        )
+    )
+    reranker: str = Field(
+        default_factory=lambda: os.getenv(
+            "RERANKER",
+            os.getenv("RERANKER_MODEL_REPO", _locked_model_value("reranker", "repository", "bge-reranker-v2-m3")),
+        )
+    )
+    reranker_revision: str | None = Field(
+        default_factory=lambda: os.getenv(
+            "RERANKER_MODEL_REVISION",
+            _locked_model_value("reranker", "revision"),
+        )
+    )
     visual_rag_base: str = Field(default_factory=lambda: os.getenv("VISUAL_RAG_BASE", "colpali"))
+    colpali_model: str = Field(
+        default_factory=lambda: os.getenv(
+            "COLPALI_MODEL",
+            os.getenv(
+                "COLPALI_MODEL_REPO",
+                _locked_model_value("colpali", "repository", "vidore/colpali-v1.2-hf"),
+            ),
+        )
+    )
+    colpali_revision: str | None = Field(
+        default_factory=lambda: os.getenv(
+            "COLPALI_MODEL_REVISION",
+            _locked_model_value("colpali", "revision"),
+        )
+    )
+    visrag_model: str = Field(
+        default_factory=lambda: os.getenv(
+            "VISRAG_MODEL",
+            os.getenv("VISRAG_MODEL_REPO", _locked_model_value("visrag", "repository", "openbmb/VisRAG-Ret")),
+        )
+    )
+    visrag_revision: str | None = Field(
+        default_factory=lambda: os.getenv(
+            "VISRAG_MODEL_REVISION",
+            _locked_model_value("visrag", "revision"),
+        )
+    )
+    visual_batch_size: int = 4
 
 
 class GateSettings(BaseModel):
@@ -26,17 +109,40 @@ class GateSettings(BaseModel):
 
 
 class RecoverySettings(BaseModel):
-    byt5_model: str = "google/byt5-small"
+    byt5_model: str = Field(
+        default_factory=lambda: os.getenv(
+            "BYT5_MODEL_REPO",
+            _locked_model_value("byt5", "repository", "google/byt5-small"),
+        )
+    )
+    byt5_revision: str | None = Field(
+        default_factory=lambda: os.getenv("BYT5_MODEL_REVISION", _locked_model_value("byt5", "revision"))
+    )
     enable_backtracking: bool = True
-    vlm_backend: str = Field(default_factory=lambda: os.getenv("VLM_BACKEND", "claude-sonnet-4-5"))
-    openai_model: str = "gpt-4o"
+    vlm_backend: str = Field(default_factory=lambda: os.getenv("VLM_BACKEND", "openai"))
+    openai_model: str = Field(default_factory=lambda: os.getenv("OPENAI_MODEL", "gpt-4o-2024-11-20"))
     anthropic_model: str = "claude-sonnet-4-5"
     ocr_engine: str = Field(default_factory=lambda: os.getenv("OCR_ENGINE", "got-ocr-2"))
+    got_ocr_model: str = Field(
+        default_factory=lambda: os.getenv(
+            "GOT_OCR_MODEL",
+            os.getenv(
+                "GOT_OCR_MODEL_REPO",
+                _locked_model_value("got_ocr", "repository", "stepfun-ai/GOT-OCR-2.0-hf"),
+            ),
+        )
+    )
+    got_ocr_revision: str | None = Field(
+        default_factory=lambda: os.getenv(
+            "GOT_OCR_MODEL_REVISION",
+            _locked_model_value("got_ocr", "revision"),
+        )
+    )
     pdf_preprocessor: str = Field(default_factory=lambda: os.getenv("PDF_PREPROCESSOR", "docling"))
     enable_vlm: bool = True
     api_enabled: bool = True
     request_timeout_seconds: int = 60
-    log_vlm_calls: bool = Field(default_factory=lambda: os.getenv("LOG_VLM_CALLS", "false").lower() == "true")
+    log_vlm_calls: bool = Field(default_factory=lambda: os.getenv("LOG_VLM_CALLS", "true").lower() == "true")
     wordlevel_fallback: str | None = None
 
 
@@ -47,6 +153,7 @@ class ExperimentSettings(BaseModel):
     disable_vlm: bool = False
     force_direct_answer: bool = False
     force_recovery: bool = False
+    force_vlm: bool = False
     random_recovery: bool = False
     random_seed: int = 42
     wordlevel_fallback: str | None = None
@@ -96,6 +203,69 @@ class AppSettings(BaseModel):
                 "Set FAAR_PROJECT_ROOT or pass --project-root to point at the repository root.\n"
                 f"Missing paths:\n{details}"
             )
+
+    def validate_openai_snapshot(self) -> None:
+        if self.recovery.vlm_backend == "openai" and self.recovery.openai_model != "gpt-4o-2024-11-20":
+            raise ValueError(
+                "AAAI runs require the pinned OpenAI snapshot gpt-4o-2024-11-20; "
+                f"received {self.recovery.openai_model!r}."
+            )
+
+    def validate_model_revisions(self, *, include_visual: str | None = None) -> None:
+        models = {
+            "embedding": (self.retrieval.embedding_model, self.retrieval.embedding_revision),
+            "reranker": (self.retrieval.reranker, self.retrieval.reranker_revision),
+            "got_ocr": (self.recovery.got_ocr_model, self.recovery.got_ocr_revision),
+            "byt5": (self.recovery.byt5_model, self.recovery.byt5_revision),
+        }
+        if include_visual == "colpali":
+            models["colpali"] = (self.retrieval.colpali_model, self.retrieval.colpali_revision)
+        elif include_visual == "visrag":
+            models["visrag"] = (self.retrieval.visrag_model, self.retrieval.visrag_revision)
+        invalid = [
+            name
+            for name, (_, revision) in models.items()
+            if not revision or not re.fullmatch(r"[0-9a-f]{40}", revision)
+        ]
+        if invalid:
+            raise ValueError(
+                "Paper runs require immutable 40-character Hugging Face commit revisions for: "
+                + ", ".join(invalid)
+                + ". Resolve and export the corresponding *_MODEL_REVISION values before inference."
+            )
+        mismatched = []
+        for name, (repository, revision) in models.items():
+            locked_repository = _locked_model_value(name, "repository")
+            locked_revision = _locked_model_value(name, "revision")
+            if (
+                locked_repository is None
+                or _canonical_model_repository(repository) != locked_repository
+                or revision != locked_revision
+            ):
+                mismatched.append(name)
+        if mismatched:
+            raise ValueError(
+                "Model repository/revision pairs differ from config/model_revisions.json for: "
+                + ", ".join(mismatched)
+                + ". Resolve the intended commits and update the lock file before inference."
+            )
+
+    def model_provenance(self) -> dict[str, dict[str, str | None]]:
+        return {
+            "embedding": {
+                "repository": _canonical_model_repository(self.retrieval.embedding_model),
+                "revision": self.retrieval.embedding_revision,
+            },
+            "reranker": {
+                "repository": _canonical_model_repository(self.retrieval.reranker),
+                "revision": self.retrieval.reranker_revision,
+            },
+            "got_ocr": {"repository": self.recovery.got_ocr_model, "revision": self.recovery.got_ocr_revision},
+            "byt5": {"repository": self.recovery.byt5_model, "revision": self.recovery.byt5_revision},
+            "colpali": {"repository": self.retrieval.colpali_model, "revision": self.retrieval.colpali_revision},
+            "visrag": {"repository": self.retrieval.visrag_model, "revision": self.retrieval.visrag_revision},
+            "vlm": {"repository": self.recovery.openai_model, "revision": self.recovery.openai_model},
+        }
 
 
 def _default_project_root() -> Path:

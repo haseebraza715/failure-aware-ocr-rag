@@ -8,7 +8,7 @@ This plan mirrors the fixed Phase 0-7 experimental plan. Each phase is a checkpo
 - Treat `split.json` as immutable after creation.
 - Add dataset registry entries for OHR-Bench, MP-DocVQA val, and ArXivQA val.
 - Wire the recommended stack through the existing interfaces:
-  - VLM: `claude-sonnet-4-5`
+  - VLM: `gpt-4o-2024-11-20` (user-approved Alternate A)
   - Embeddings: `NV-Embed-v2`
   - Reranker: `bge-reranker-v2-m3`
   - OCR: `GOT-OCR 2.0`
@@ -20,7 +20,14 @@ This plan mirrors the fixed Phase 0-7 experimental plan. Each phase is a checkpo
 - Add API call counting and cost logging before any paid VLM call.
 - Add `evaluate.py`, which always emits `EM`, `F1`, `vlm_rate`, and `harm_rate`.
 - Verify the setup commands and required outputs.
-- Commit as `phase0: setup`.
+- Commit as `phase0: complete protocol setup`.
+
+Status (2026-07-23):
+- **Implementation complete:** all three dataset registration paths, shared-corpus retrieval, pinned model loaders, Docling adapter, visual baseline dispatch, OpenAI request accounting, four-metric evaluation, and model provenance are implemented.
+- **Locally verified:** focused protocol tests and the full suite pass (`72 passed`); Python compilation, editable package build/import, and `git diff --check` pass.
+- **Split protected:** `split.json` remains unchanged, its deterministic rewrite guard accepts the existing split, and SHA-256 is `64583a532c5db5aa31e4cbb5cd9c7d894c7a2d5e8aa49f1a7f6041f54e714f53`.
+- **Model preflight:** all six locked Hugging Face revisions resolve and are accessible; the selected OpenAI snapshot is fixed to `gpt-4o-2024-11-20`. No paid experiment was run.
+- **Not execution-ready:** complete OHR-Bench/MP-DocVQA/ArXivQA OCR and image manifests are absent. The current `.venv` is also not the locked AAAI environment: final `pip check` reports missing packages and version mismatches, including absent Docling, RAGAS, W&B, and Label Studio. Phase 0 must not be reported as a completed paper run until a fresh environment installs `constraints-aaai.txt` successfully and the external assets are available.
 
 ## Phase 1: Baselines
 

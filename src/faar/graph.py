@@ -38,8 +38,14 @@ class GraphState(TypedDict, total=False):
 def build_graph(settings: AppSettings, repo: Phase0Repository | Any | None = None):
     repo = repo or Phase0Repository(settings)
     wordlevel_fallback = settings.experiment.wordlevel_fallback or settings.recovery.wordlevel_fallback
-    corrector = None if wordlevel_fallback == "symspell" else ByT5Corrector(settings.recovery.byt5_model)
+    corrector = (
+        None
+        if wordlevel_fallback == "symspell"
+        else ByT5Corrector(settings.recovery.byt5_model, settings.recovery.byt5_revision)
+    )
     visual_fallback = VisualFallback(settings)
+    shared_chunks = repo.get_corpus_chunks(settings.retrieval) if hasattr(repo, "get_corpus_chunks") else None
+    shared_retriever = HybridRetriever(shared_chunks, settings.retrieval) if shared_chunks is not None else None
 
     def load_example(state: GraphState) -> GraphState:
         example = repo.get_example(state["example_id"])
@@ -48,8 +54,8 @@ def build_graph(settings: AppSettings, repo: Phase0Repository | Any | None = Non
 
     def prepare_retrieval(state: GraphState) -> GraphState:
         example = state["example"]
-        chunks = build_chunks(example, settings.retrieval)
-        retriever = HybridRetriever(chunks, settings.retrieval)
+        chunks = shared_chunks if shared_chunks is not None else build_chunks(example, settings.retrieval)
+        retriever = shared_retriever if shared_retriever is not None else HybridRetriever(chunks, settings.retrieval)
         return {"chunks": chunks, "retriever": retriever}
 
     def retrieve(state: GraphState) -> GraphState:
@@ -63,6 +69,8 @@ def build_graph(settings: AppSettings, repo: Phase0Repository | Any | None = Non
     def route_after_gate(state: GraphState) -> str:
         if settings.experiment.force_direct_answer:
             return "answer_direct"
+        if settings.experiment.force_vlm:
+            return "invoke_vlm"
         if settings.experiment.force_recovery:
             return "diagnose"
         return "answer_direct" if state["gate"]["pass_gate"] else "diagnose"
@@ -128,6 +136,7 @@ def build_graph(settings: AppSettings, repo: Phase0Repository | Any | None = Non
                         doc_name=hit.chunk.doc_name,
                         page_id=hit.chunk.page_id,
                         text=corrected_text,
+                        image_path=hit.chunk.image_path,
                     ),
                     bm25_score=hit.bm25_score,
                     dense_score=hit.dense_score,
@@ -176,9 +185,11 @@ def build_graph(settings: AppSettings, repo: Phase0Repository | Any | None = Non
                     "reason": "vlm_disabled_by_profile",
                 },
             }
-        example = state["example"]
         fallback_context = "\n".join(hit.chunk.text for hit in state["retrieved_hits"])
-        result = visual_fallback.answer(example.question, example.image_paths, fallback_context)
+        image_paths = list(
+            dict.fromkeys(Path(hit.chunk.image_path) for hit in state["retrieved_hits"] if hit.chunk.image_path)
+        )
+        result = visual_fallback.answer(state["question"], image_paths, fallback_context)
         return {
             "visual_result": result,
             "action_outcome": {
@@ -226,7 +237,11 @@ def build_graph(settings: AppSettings, repo: Phase0Repository | Any | None = Non
     graph.add_edge("load_example", "prepare_retrieval")
     graph.add_edge("prepare_retrieval", "retrieve")
     graph.add_edge("retrieve", "gate")
-    graph.add_conditional_edges("gate", route_after_gate, {"answer_direct": "answer_direct", "diagnose": "diagnose"})
+    graph.add_conditional_edges(
+        "gate",
+        route_after_gate,
+        {"answer_direct": "answer_direct", "diagnose": "diagnose", "invoke_vlm": "invoke_vlm"},
+    )
     graph.add_conditional_edges(
         "diagnose",
         route_after_diagnosis,

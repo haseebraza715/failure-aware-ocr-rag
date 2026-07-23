@@ -22,6 +22,9 @@ If compute is limited use this stack, fully open, zero API cost, fully reproduci
 
 ## Phase 0: Setup
 
+Selected VLM decision for this repository: OpenAI Alternate A using the dated
+`gpt-4o-2024-11-20` snapshot. Do not use the floating `gpt-4o` alias.
+
 - Fix train/val/test split on OHR-Bench, save indices to `split.json`, never change again.
 - Add second dataset: MP-DocVQA val set.
 - Add third dataset: ArXivQA.
@@ -33,7 +36,8 @@ Commands:
 
 ```bash
 python split_dataset.py --seed 42 --out split.json
-export VLM_BACKEND=claude-sonnet-4-5
+export VLM_BACKEND=openai
+export OPENAI_MODEL=gpt-4o-2024-11-20
 export EMBED_MODEL=NV-Embed-v2
 export RERANKER=bge-reranker-v2-m3
 export LOG_VLM_CALLS=true
@@ -74,7 +78,7 @@ Load `annotation/ocr_texts/` into Label Studio. Two people independently label e
 ## Phase 4: Main FAAR Runs
 
 ```bash
-python run.py --mode faar --dataset ohrbench --split test --ocr got-ocr-2 --embed NV-Embed-v2 --reranker bge-reranker-v2-m3 --vlm claude-sonnet-4-5 --out results/faar_ohr.json
+python run.py --mode faar --dataset ohrbench --split test --ocr got-ocr-2 --embed NV-Embed-v2 --reranker bge-reranker-v2-m3 --vlm openai --out results/faar_ohr.json
 python run.py --mode faar --dataset mpdocvqa --split val --out results/faar_mpdocvqa.json
 python run.py --mode faar --dataset arxivqa --split val --out results/faar_arxivqa.json
 ```
@@ -130,7 +134,7 @@ Checklist:
 
 | Role | Recommended |
 | --- | --- |
-| VLM | claude-sonnet-4-5 |
+| VLM | gpt-4o-2024-11-20 |
 | Embeddings | NV-Embed-v2 |
 | Reranker | bge-reranker-v2-m3 |
 | OCR | GOT-OCR 2.0 |

@@ -29,7 +29,8 @@ class ApiCallLogger:
         self.total_cost_usd = 0.0
 
     def log(self, record: ApiCallRecord) -> None:
-        self.call_count += 1
+        if record.status == "started":
+            self.call_count += 1
         self.total_cost_usd += record.cost_usd
         if not self.enabled:
             return
@@ -90,7 +91,7 @@ def _try_wandb_log(payload: dict[str, Any]) -> None:
             wandb.init(project=os.getenv("WANDB_PROJECT"), mode=os.getenv("WANDB_MODE", "offline"))
         wandb.log(
             {
-                "vlm/call_count": 1,
+                "vlm/call_count": 1 if payload.get("status") == "started" else 0,
                 "vlm/cost_usd": payload.get("cost_usd", 0.0),
                 "vlm/prompt_tokens": payload.get("prompt_tokens", 0),
                 "vlm/completion_tokens": payload.get("completion_tokens", 0),

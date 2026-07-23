@@ -30,7 +30,7 @@ Use the recommended column from the fixed experimental plan unless the user expl
 
 | Component | Selected Stack |
 | --- | --- |
-| VLM | `claude-sonnet-4-5` |
+| VLM | `gpt-4o-2024-11-20` (user-approved Alternate A) |
 | Embeddings | `NV-Embed-v2` |
 | Reranker | `BGE-reranker-v2-m3` |
 | OCR | `GOT-OCR 2.0` |
@@ -46,7 +46,7 @@ Put these in the paper implementation section.
 
 | Role | Pin |
 | --- | --- |
-| VLM | `claude-sonnet-4-5` |
+| VLM | `gpt-4o-2024-11-20` |
 | Embeddings | `NV-Embed-v2` |
 | Reranker | `bge-reranker-v2-m3` |
 | OCR | `GOT-OCR 2.0` |
