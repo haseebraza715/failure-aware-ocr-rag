@@ -31,7 +31,8 @@ Status (2026-07-23):
 - **Asset integrity contracts enforced:** manifests must use project-relative paths; loaders reject path traversal; shared corpora require a complete `document_inventory` (evidence pages cannot define retrieval). `prepare_benchmark_assets.py` can plan/execute one OHR document (PDF extract → Docling audit → PNG → pinned GOT-OCR) with resumable provenance.
 - **OHR inventory gaps resolved as naming mismatches:** `textbook_needrop_en_*` ↔ `jiaocai_needrop_en_*`; one Springer title is Unicode spelling drift. No fabricated page counts; inventories load from real gt JSON after alias resolution.
 - **One-document smoke validated** on val doc `academic/DUDE_157911e3080d18f4d799a122aaeb33fb` (1 page, MPS). GOT-OCR ≈ 24.7 min/page in this run — full val/test prep is compute-bound (~2.9k / ~2.8k OCR-hours at that rate).
-- **Still not paper-run ready:** complete OHR val/test page assets not built; MP-DocVQA val must be downloaded from the RRC DocVQA Task 4 portal; ArXivQA source decision still required; no Phase 1 started.
+- **Still not paper-run ready:** complete OHR val/test page assets not built; MP-DocVQA val must be downloaded from the RRC DocVQA Task 4 portal; ArXivQA requires the supervisor-approved full-paper remapping inputs; no Phase 1 started.
+- **Supervisor correction recorded:** ArXivQA is evaluated by remapping figure-level QA to the original full paper. `remap_arxivqa_full_papers.py` requires explicit QA-to-paper/page mappings and emits a complete-paper source; it rejects missing mappings and never makes evidence pages the retrieval corpus.
 
 ## Phase 1: Baselines
 

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from faar.benchmarks import BenchmarkRepository
+from faar.arxivqa_remap import ArXivQARemapError, build_full_paper_source
 from faar.external_assets import ExternalAssetError, build_external_asset_manifest
 from faar.settings import RetrievalSettings
 
@@ -180,6 +181,44 @@ def test_normalizes_nested_arxiv_pages_with_inventory(tmp_path: Path) -> None:
     assert manifest["records"][0]["page_ids"] == [2]
     assert manifest["records"][0]["corpus_ids"] == ["paper-7:p1", "paper-7:p2"]
     assert len(manifest["corpus_pages"]) == 2
+
+
+def test_full_paper_arxivqa_remap_keeps_all_pages_in_inventory(tmp_path: Path) -> None:
+    _asset_files(tmp_path, range(1, 4))
+    qa = tmp_path / "qa.json"
+    qa.write_text(json.dumps({"val": [{"id": "q1", "question": "Where?", "answer": "page two"}]}))
+    inventory = tmp_path / "papers.json"
+    inventory.write_text(json.dumps({"papers": [{"paper_id": "paper-1", "pages": [
+        {"page_id": 1, "image_path": "assets/page-1.png", "ocr_text_path": "assets/page-1.txt"},
+        {"page_id": 2, "image_path": "assets/page-2.png", "ocr_text_path": "assets/page-2.txt"},
+        {"page_id": 3, "image_path": "assets/page-3.png", "ocr_text_path": "assets/page-3.txt"},
+    ]}]}))
+    mapping = tmp_path / "mapping.json"
+    mapping.write_text(json.dumps({"data": [{"qa_id": "q1", "paper_id": "paper-1", "evidence_page_ids": [2]}]}))
+
+    source = build_full_paper_source(qa, inventory, mapping)
+    remapped = tmp_path / "remapped.json"
+    remapped.write_text(json.dumps(source))
+    manifest = build_external_asset_manifest(remapped, "arxivqa", project_root=tmp_path)
+    assert source["remapping"]["method"] == "full_paper"
+    assert source["data"][0]["evidence_page_ids"] == [2]
+    assert [page["page_id"] for page in source["documents"][0]["pages"]] == [1, 2, 3]
+    assert manifest["records"][0]["page_ids"] == [2]
+    assert [page["page_id"] for page in manifest["corpus_pages"]] == [1, 2, 3]
+
+
+def test_full_paper_arxivqa_remap_rejects_missing_mapping(tmp_path: Path) -> None:
+    _asset_files(tmp_path, range(1, 2))
+    qa = tmp_path / "qa.json"
+    qa.write_text(json.dumps({"val": [{"id": "q1", "question": "Where?", "answer": "x"}]}))
+    inventory = tmp_path / "papers.json"
+    inventory.write_text(json.dumps({"papers": [{"paper_id": "paper-1", "pages": [
+        {"page_id": 1, "image_path": "assets/page-1.png", "ocr_text_path": "assets/page-1.txt"},
+    ]}]}))
+    mapping = tmp_path / "mapping.json"
+    mapping.write_text(json.dumps({"data": []}))
+    with pytest.raises(ArXivQARemapError, match="figure mapping must contain"):
+        build_full_paper_source(qa, inventory, mapping)
 
 
 @pytest.mark.parametrize(
