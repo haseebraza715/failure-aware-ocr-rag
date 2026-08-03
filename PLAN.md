@@ -33,6 +33,7 @@ Status (2026-07-23):
 - **One-document smoke validated** on val doc `academic/DUDE_157911e3080d18f4d799a122aaeb33fb` (1 page, MPS). GOT-OCR ≈ 24.7 min/page in this run — full val/test prep is compute-bound (~2.9k / ~2.8k OCR-hours at that rate).
 - **Still not paper-run ready:** complete OHR val/test page assets not built; MP-DocVQA val must be downloaded from the RRC DocVQA Task 4 portal; ArXivQA requires the supervisor-approved full-paper remapping inputs; no Phase 1 started.
 - **Supervisor correction recorded:** ArXivQA is evaluated by remapping figure-level QA to the original full paper. `remap_arxivqa_full_papers.py` requires explicit QA-to-paper/page mappings and emits a complete-paper source; it rejects missing mappings and never makes evidence pages the retrieval corpus.
+- **One-document B0 end-to-end smoke (post asset-prep):** `run_b0_one_doc_smoke.py` loads prepared smoke PDF/OCR/image assets through `BenchmarkRepository`, runs B0 (`naive_rag`: gate off, recovery off), exercises retrieval → quality gate → diagnosis/recovery routing probe → answer generation → serialization, and writes a clearly marked non-paper payload with `EM`, `F1`, `vlm_rate`, `harm_rate`, `cost_usd`, and `runtime_sec`. Default retrieval is a local lexical mock (no HF download, no paid VLM). `--use-pinned-models` loads locked NV-Embed-v2 + bge-reranker-v2-m3 when available. Not a Phase 1 baseline.
 
 ## Phase 1: Baselines
 

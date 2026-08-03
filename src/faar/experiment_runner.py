@@ -23,9 +23,12 @@ def run_profile(
     selection: dict[str, Any] | None = None,
     dataset: str | None = None,
     split: str | None = None,
+    repo: Any | None = None,
 ) -> list[dict[str, Any]]:
     settings = apply_profile(settings, profile_name)
-    if dataset and split:
+    if repo is not None:
+        graph = build_graph(settings, repo=repo)
+    elif dataset and split:
         repo = load_benchmark_repository(settings.project_root, dataset, split)
         graph = build_graph(settings, repo=repo)
     else:

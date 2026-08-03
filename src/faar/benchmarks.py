@@ -162,16 +162,22 @@ class BenchmarkRepository:
         return [Path(page["image_path"]) for page in self._corpus_pages]
 
 
-def load_benchmark_repository(project_root: Path, dataset: str, split: str) -> BenchmarkRepository:
-    dataset_key = _normalise_dataset(dataset)
+def load_benchmark_repository_from_manifest(
+    project_root: Path,
+    manifest_path: Path | str,
+    *,
+    dataset: str | None = None,
+    split: str | None = None,
+) -> BenchmarkRepository:
+    """Load a BenchmarkRepository from an explicit manifest path (including smoke manifests)."""
     project_root = project_root.expanduser().resolve()
-    manifest_path = project_root / "data/benchmark_assets" / dataset_key / f"{split}.json"
-    if not manifest_path.exists():
-        raise DatasetUnavailableError(
-            f"Missing benchmark asset manifest: {manifest_path}. "
-            "Create it with register_benchmark_assets.py after GOT-OCR and page rendering are complete."
-        )
-    payload = json.loads(manifest_path.read_text())
+    manifest_path = Path(manifest_path)
+    if not manifest_path.is_absolute():
+        manifest_path = project_root / manifest_path
+    manifest_path = manifest_path.expanduser().resolve()
+    if not manifest_path.is_file():
+        raise DatasetUnavailableError(f"Missing benchmark asset manifest: {manifest_path}")
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     records = payload.get("records") if isinstance(payload, dict) else None
     corpus_pages = payload.get("corpus_pages") if isinstance(payload, dict) else None
     inventory = payload.get("document_inventory") if isinstance(payload, dict) else None
@@ -184,13 +190,32 @@ def load_benchmark_repository(project_root: Path, dataset: str, split: str) -> B
         }
     else:
         document_inventory = None
+    dataset_key = _normalise_dataset(str(dataset or (payload.get("dataset") if isinstance(payload, dict) else None) or "unknown"))
+    split_key = str(split or (payload.get("split") if isinstance(payload, dict) else None) or "unknown")
     return BenchmarkRepository(
         records,
         corpus_pages,
         project_root,
         dataset_key,
-        split,
+        split_key,
         document_inventory=document_inventory,
+    )
+
+
+def load_benchmark_repository(project_root: Path, dataset: str, split: str) -> BenchmarkRepository:
+    dataset_key = _normalise_dataset(dataset)
+    project_root = project_root.expanduser().resolve()
+    manifest_path = project_root / "data/benchmark_assets" / dataset_key / f"{split}.json"
+    if not manifest_path.exists():
+        raise DatasetUnavailableError(
+            f"Missing benchmark asset manifest: {manifest_path}. "
+            "Create it with register_benchmark_assets.py after GOT-OCR and page rendering are complete."
+        )
+    return load_benchmark_repository_from_manifest(
+        project_root,
+        manifest_path,
+        dataset=dataset_key,
+        split=split,
     )
 
 
