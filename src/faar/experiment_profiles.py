@@ -57,9 +57,7 @@ def apply_profile(settings: AppSettings, profile_name: str) -> AppSettings:
     settings.experiment.force_recovery = profile.force_recovery
     settings.experiment.force_vlm = profile.force_vlm
     settings.experiment.random_recovery = profile.random_recovery
-    if profile.wordlevel_fallback is not None:
-        settings.experiment.wordlevel_fallback = profile.wordlevel_fallback
-        settings.recovery.wordlevel_fallback = profile.wordlevel_fallback
-    if settings.experiment.disable_vlm:
-        settings.recovery.enable_vlm = False
+    settings.experiment.wordlevel_fallback = profile.wordlevel_fallback
+    settings.recovery.wordlevel_fallback = profile.wordlevel_fallback
+    settings.recovery.enable_vlm = not profile.disable_vlm
     return settings
