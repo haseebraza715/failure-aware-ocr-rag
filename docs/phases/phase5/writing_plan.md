@@ -21,13 +21,13 @@ Turn Phases 0 through 4 into a supervisor-ready draft while keeping the narrativ
 
 ## Required Inputs
 
-- [README.md](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/README.md)
-- [ARCHITECTURE.md](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/ARCHITECTURE.md)
-- [docs/phases/phase2/methodology_formalization.md](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/phases/phase2/methodology_formalization.md)
-- [docs/reports/phase3_report.md](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/reports/phase3_report.md)
-- [docs/reports/phase4_report.md](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/docs/reports/phase4_report.md)
-- [artifacts/phase3/metrics_summary.json](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase3/metrics_summary.json)
-- [artifacts/phase4/claim_assessment.json](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase4/claim_assessment.json)
+- [README.md](https://github.com/haseebraza715/FailSafeRAG/blob/main/README.md)
+- [ARCHITECTURE.md](https://github.com/haseebraza715/FailSafeRAG/blob/main/ARCHITECTURE.md)
+- [docs/phases/phase2/methodology_formalization.md](https://github.com/haseebraza715/FailSafeRAG/blob/main/docs/phases/phase2/methodology_formalization.md)
+- [docs/reports/phase3_report.md](https://github.com/haseebraza715/FailSafeRAG/blob/main/docs/reports/phase3_report.md)
+- [docs/reports/phase4_report.md](https://github.com/haseebraza715/FailSafeRAG/blob/main/docs/reports/phase4_report.md)
+- [artifacts/phase3/metrics_summary.json](https://github.com/haseebraza715/FailSafeRAG/blob/main/artifacts/phase3/metrics_summary.json)
+- [artifacts/phase4/claim_assessment.json](https://github.com/haseebraza715/FailSafeRAG/blob/main/artifacts/phase4/claim_assessment.json)
 
 ## Section Guidance
 
