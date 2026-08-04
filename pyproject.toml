@@ -6,20 +6,26 @@ build-backend = "setuptools.build_meta"
 name = "faar"
 version = "0.1.0"
 description = "Phase 1 prototype for Failure-Aware Agentic Recovery for OCR-RAG"
-readme = "docs/faar_execution_plan.md"
+readme = "README.md"
 requires-python = ">=3.12"
+# faiss-cpu stays in the base install: the deterministic offline retriever
+# uses a FAISS index even with the default local-hash embedding backend.
 dependencies = [
-  "faiss-cpu",
-  "langchain-core",
-  "langgraph",
-  "openai",
-  "pandas",
-  "pydantic",
-  "python-dotenv",
-  "rank-bm25",
-  "sentence-transformers",
-  "transformers",
-  "typer",
+  "faiss-cpu>=1.8",
+  "langgraph>=0.2",
+  "numpy>=1.24",
+  "openai>=1.0",
+  "pydantic>=2.0",
+  "rank-bm25>=0.2.2",
+  "typer>=0.9",
+]
+
+[project.optional-dependencies]
+# Neural components: sentence-transformers embeddings and ByT5 correction.
+# The default demo path (local-hash embeddings, mock VLM) does not need these.
+ml = [
+  "sentence-transformers>=3.0",
+  "transformers>=4.40",
 ]
 
 [project.scripts]
@@ -30,3 +36,11 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+exclude = ["OHR-Bench"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
