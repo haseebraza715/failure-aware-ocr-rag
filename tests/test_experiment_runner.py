@@ -6,8 +6,7 @@ from faar.settings import AppSettings
 
 
 class FakeGraph:
-    def invoke(self, state):
-        example_id = state["example_id"]
+    def invoke(self, _state):
         return {
             "question": "What is required?",
             "example": type("Ex", (), {"correct_answer": "certified engineers"})(),
