@@ -4,14 +4,14 @@ import re
 from statistics import mean
 
 from .settings import GateSettings
+from .textnoise import GATE_ALLOWED_PUNCTUATION, char_noise_ratio
 from .types import RetrievalHit
 
 
 def weird_char_ratio(text: str) -> float:
     if not text:
         return 0.0
-    weird_chars = sum(1 for ch in text if not (ch.isalnum() or ch.isspace() or ch in ".,:%$()-/=+"))
-    char_ratio = weird_chars / max(len(text), 1)
+    char_ratio = char_noise_ratio(text, GATE_ALLOWED_PUNCTUATION)
     tokens = re.findall(r"\S+", text)
     weird_tokens = 0
     for token in tokens:

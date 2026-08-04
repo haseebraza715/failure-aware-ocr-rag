@@ -12,6 +12,10 @@ class RetrievalSettings(BaseModel):
     top_k: int = 5
     semantic_backtrack_top_k: int = 8
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_revision: str = "8b3219a92973c328a8e22fadcfa821b5dc75636a"
+    embedding_backend: str = "local-hash-v1"
+    embedding_batch_size: int = Field(default=64, gt=0, le=1024)
+    max_chunks: int = Field(default=10_000, gt=0)
 
 
 class GateSettings(BaseModel):
@@ -22,7 +26,22 @@ class GateSettings(BaseModel):
     dense_floor: float = 0.20
 
 
+class CorrectionSettings(BaseModel):
+    """Experimental parameters of the ByT5 correction gate.
+
+    The defaults reproduce the Phase 3 batch-run behavior; runs that vary them
+    should record the values alongside their artifacts.
+    """
+
+    min_weird_char_ratio: float = 0.08
+    min_length_ratio: float = 0.6
+    max_length_ratio: float = 1.4
+    min_token_overlap: float = 0.5
+    max_noise_increase: float = 0.01
+
+
 class RecoverySettings(BaseModel):
+    correction: CorrectionSettings = Field(default_factory=CorrectionSettings)
     byt5_model: str = "google/byt5-small"
     enable_backtracking: bool = True
     vlm_backend: str = "mock"

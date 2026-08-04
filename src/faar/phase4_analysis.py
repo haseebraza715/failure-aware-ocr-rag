@@ -3,10 +3,11 @@ from __future__ import annotations
 import csv
 import json
 from collections import Counter
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from statistics import mean
-from typing import Any, Iterable
+from typing import Any
 
 from .results_aggregator import summarize_examples
 

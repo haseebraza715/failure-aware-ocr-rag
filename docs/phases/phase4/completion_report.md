@@ -13,10 +13,10 @@ Phase 4 was completed as a dedicated claim-refinement phase based on existing be
 - `faar-demo run-phase4`
 
 3. Generated artifacts:
-- [phase4_summary.json](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase4/phase4_summary.json)
-- [claim_assessment.json](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase4/claim_assessment.json)
-- [case_studies.json](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase4/case_studies.json)
-- [profile_deltas_vs_baseline.csv](https://github.com/haseebraza715/failure-aware-ocr-rag/blob/main/artifacts/phase4/profile_deltas_vs_baseline.csv)
+- [phase4_summary.json](https://github.com/haseebraza715/FailSafeRAG/blob/main/artifacts/phase4/phase4_summary.json)
+- [claim_assessment.json](https://github.com/haseebraza715/FailSafeRAG/blob/main/artifacts/phase4/claim_assessment.json)
+- [case_studies.json](https://github.com/haseebraza715/FailSafeRAG/blob/main/artifacts/phase4/case_studies.json)
+- [profile_deltas_vs_baseline.csv](https://github.com/haseebraza715/FailSafeRAG/blob/main/artifacts/phase4/profile_deltas_vs_baseline.csv)
 
 4. Verification:
 - dedicated tests for Phase 4 module and CLI
