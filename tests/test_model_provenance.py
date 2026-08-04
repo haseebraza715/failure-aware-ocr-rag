@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
+from faar import settings as settings_module
 from faar.settings import AppSettings
 
 
@@ -40,3 +44,11 @@ def test_hugging_face_revisions_must_be_immutable_commit_shas(tmp_path) -> None:
     settings.retrieval.embedding_revision = "a" * 40
     with pytest.raises(ValueError, match="model_revisions.json"):
         settings.validate_model_revisions(include_visual="colpali")
+
+
+def test_model_revision_lock_is_available_as_a_package_resource() -> None:
+    package_path = Path(settings_module.__file__).with_name("model_revisions.json")
+    repository_path = Path(__file__).resolve().parents[1] / "config/model_revisions.json"
+
+    assert package_path.is_file()
+    assert json.loads(package_path.read_text()) == json.loads(repository_path.read_text())
