@@ -30,23 +30,6 @@ def correct_text(text: str, dictionary_path: Path | None = None) -> str:
     return re.sub(r"[A-Za-z]{3,}", correct_token, text)
 
 
-class SymSpellCorrector:
-    """Local word-level recovery used only by the A3 ablation."""
-
-    def __init__(self, dictionary_path: Path | None = None) -> None:
-        self.dictionary_path = dictionary_path
-
-    def propose_correction(self, text: str, max_new_tokens: int = 128) -> dict[str, str | bool]:
-        del max_new_tokens
-        corrected = correct_text(text, self.dictionary_path)
-        return {
-            "text": corrected,
-            "candidate": corrected,
-            "applied": corrected != text,
-            "reason": "symspell_correction_applied" if corrected != text else "symspell_no_change",
-        }
-
-
 def _dictionary_path_from_env() -> Path | None:
     value = os.getenv("SYMSPELL_DICTIONARY")
     if not value:

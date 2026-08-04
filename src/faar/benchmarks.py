@@ -25,12 +25,6 @@ def _listify(value: Any) -> list[str]:
     return [str(value)]
 
 
-def _resolve_page_asset(path_value: str | Path | None, project_root: Path) -> Path | None:
-    if path_value is None or str(path_value).strip() == "":
-        return None
-    return resolve_project_asset(path_value, project_root)
-
-
 class BenchmarkRepository:
     """Loads the complete, explicitly registered assets required for a paper run."""
 
