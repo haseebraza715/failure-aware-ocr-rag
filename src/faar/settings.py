@@ -14,12 +14,17 @@ load_dotenv(override=False)
 
 
 def _load_locked_model_config() -> dict[str, dict[str, str]]:
-    path = Path(__file__).resolve().parents[2] / "config/model_revisions.json"
-    if not path.is_file():
-        return {}
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    models = payload.get("models", {})
-    return models if isinstance(models, dict) else {}
+    paths = (
+        Path(__file__).resolve().parents[2] / "config/model_revisions.json",
+        Path(__file__).with_name("model_revisions.json"),
+    )
+    for path in paths:
+        if not path.is_file():
+            continue
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        models = payload.get("models", {})
+        return models if isinstance(models, dict) else {}
+    return {}
 
 
 LOCKED_MODELS = _load_locked_model_config()
