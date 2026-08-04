@@ -13,7 +13,11 @@ from .data import Phase0Repository
 from .experiment_profiles import PROFILES
 from .experiment_runner import run_profile
 from .graph import build_graph
-from .phase4_analysis import build_phase4_report, load_phase3_rows, write_phase4_comparison_csv
+from .phase4_analysis import (
+    build_phase4_report,
+    load_phase3_rows,
+    write_phase4_comparison_csv,
+)
 from .results_aggregator import summarize_by_profile
 from .results_export import write_json, write_metrics_csv
 from .settings import AppSettings
@@ -90,7 +94,9 @@ def run_example(
             "logs_dir": str(settings.logs_dir),
         },
         "model_config": {
+            "embedding_backend": settings.retrieval.embedding_backend,
             "embedding_model": settings.retrieval.embedding_model,
+            "embedding_revision": settings.retrieval.embedding_revision,
             "byt5_model": settings.recovery.byt5_model,
             "vlm_backend": settings.recovery.vlm_backend,
             "openai_model": settings.recovery.openai_model,

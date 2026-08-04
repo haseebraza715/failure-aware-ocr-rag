@@ -3,11 +3,12 @@ from __future__ import annotations
 import math
 import re
 from functools import lru_cache
+from hashlib import blake2b
+from typing import Protocol
 
 import faiss
 import numpy as np
 from rank_bm25 import BM25Okapi
-from sentence_transformers import SentenceTransformer
 
 from .settings import RetrievalSettings
 from .types import Chunk, RetrievalHit
@@ -28,25 +29,84 @@ def _tokenize(text: str) -> list[str]:
 
 
 @lru_cache(maxsize=2)
-def _load_embedding_model(model_name: str) -> SentenceTransformer:
+def _load_embedding_model(model_name: str) -> "_Embedder":
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError as exc:
+        raise ImportError(
+            "The 'sentence-transformers' embedding backend needs the ml extra: "
+            "pip install 'faar[ml]'. The default 'local-hash-v1' backend does not."
+        ) from exc
     return SentenceTransformer(model_name)
+
+
+class _Embedder(Protocol):
+    def encode(
+        self,
+        sentences: list[str],
+        *,
+        normalize_embeddings: bool,
+        convert_to_numpy: bool,
+        batch_size: int | None = None,
+    ) -> np.ndarray: ...
+
+
+class LocalHashEmbedder:
+    """Deterministic dependency-free feature hashing for offline demos/tests."""
+
+    dimensions = 256
+
+    def encode(
+        self,
+        sentences: list[str],
+        *,
+        normalize_embeddings: bool,
+        convert_to_numpy: bool,
+        batch_size: int | None = None,
+    ) -> np.ndarray:
+        del convert_to_numpy, batch_size
+        matrix = np.zeros((len(sentences), self.dimensions), dtype=np.float32)
+        for row, sentence in enumerate(sentences):
+            for token in _tokenize(sentence):
+                digest = blake2b(token.encode("utf-8"), digest_size=8).digest()
+                index = int.from_bytes(digest[:4], "big") % self.dimensions
+                sign = 1.0 if digest[4] & 1 else -1.0
+                matrix[row, index] += sign
+        if normalize_embeddings:
+            norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+            matrix = matrix / np.where(norms == 0, 1.0, norms)
+        return matrix
+
+
+def _build_embedder(settings: RetrievalSettings) -> _Embedder:
+    if settings.embedding_backend == "local-hash-v1":
+        return LocalHashEmbedder()
+    if settings.embedding_backend == "sentence-transformers":
+        return _load_embedding_model(settings.embedding_model)
+    raise ValueError(f"Unsupported embedding backend: {settings.embedding_backend}")
 
 
 class HybridRetriever:
     def __init__(self, chunks: list[Chunk], settings: RetrievalSettings) -> None:
+        if not chunks:
+            raise ValueError("HybridRetriever requires at least one chunk")
+        if len(chunks) > settings.max_chunks:
+            raise ValueError(
+                f"chunk count {len(chunks)} exceeds configured max_chunks={settings.max_chunks}"
+            )
         self.chunks = chunks
         self.settings = settings
         self._bm25_tokens = [_tokenize(chunk.text) for chunk in chunks]
         self._bm25 = BM25Okapi(self._bm25_tokens)
-        self._embedder = _load_embedding_model(settings.embedding_model)
+        self._embedder = _build_embedder(settings)
         corpus_embeddings = self._embedder.encode(
             [chunk.text for chunk in chunks],
             normalize_embeddings=True,
             convert_to_numpy=True,
+            batch_size=settings.embedding_batch_size,
         ).astype("float32")
         self._dense_index = faiss.IndexFlatIP(corpus_embeddings.shape[1])
         self._dense_index.add(corpus_embeddings)
-        self._corpus_embeddings = corpus_embeddings
 
     def retrieve(self, query: str, top_k: int | None = None) -> list[RetrievalHit]:
         k = top_k or self.settings.top_k
@@ -55,6 +115,7 @@ class HybridRetriever:
             [query],
             normalize_embeddings=True,
             convert_to_numpy=True,
+            batch_size=self.settings.embedding_batch_size,
         ).astype("float32")
         dense_scores, dense_indices = self._dense_index.search(query_embedding, k=min(k, len(self.chunks)))
         dense_scores = dense_scores[0]
