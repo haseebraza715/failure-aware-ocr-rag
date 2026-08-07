@@ -26,3 +26,29 @@ def test_propose_correction_skips_clean_text() -> None:
     proposal = corrector.propose_correction("installation requires certified engineers")
     assert proposal["applied"] is False
     assert proposal["reason"] == "source_not_noisy_enough"
+
+
+def test_propose_correction_degrades_when_byt5_unavailable_offline(monkeypatch) -> None:
+    corrector = ByT5Corrector("google/byt5-small")
+
+    def _unavailable(self, text, max_new_tokens=128) -> str:
+        raise OSError("offline: model not in cache")
+
+    monkeypatch.setattr(ByT5Corrector, "_generate_correction", _unavailable)
+    proposal = corrector.propose_correction("invoice t0tal $98 due on receipt")
+    assert proposal["applied"] is False
+    assert proposal["reason"] == "byt5_model_unavailable"
+    assert proposal["text"] == "invoice t0tal $98 due on receipt"
+
+
+def test_propose_correction_degrades_when_ml_extra_missing(monkeypatch) -> None:
+    corrector = ByT5Corrector("google/byt5-small")
+
+    def _missing(self, text, max_new_tokens=128) -> str:
+        raise ImportError("transformers not installed")
+
+    monkeypatch.setattr(ByT5Corrector, "_generate_correction", _missing)
+    proposal = corrector.propose_correction("invoice t0tal $98 due on receipt")
+    assert proposal["applied"] is False
+    assert proposal["reason"] == "byt5_ml_extra_missing"
+    assert proposal["text"] == "invoice t0tal $98 due on receipt"

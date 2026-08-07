@@ -50,3 +50,35 @@ def test_graph_routes_to_semantic_retry(monkeypatch, tmp_path: Path) -> None:
     assert result["policy_action"] == "retry_retrieval"
     assert result["action_outcome"]["action"] == "retry_retrieval"
     assert result["answer"]
+
+
+def test_word_level_recovery_does_not_crash_when_byt5_unavailable(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A missing ByT5 model (offline, uncached) degrades to a guarded skip."""
+    from faar.recovery import ByT5Corrector
+
+    _prepare_phase0(tmp_path)
+    (tmp_path / "artifacts/phase0/ocr_text/ex1.txt").write_text(
+        "===== PAGE 0 =====\ninstallati0n requires cert1fied engineers t0tal"
+    )
+
+    def _unavailable(self, text: str, max_new_tokens: int = 128) -> str:
+        raise OSError("offline: model not in cache")
+
+    monkeypatch.setattr(ByT5Corrector, "_generate_correction", _unavailable)
+    settings = AppSettings(project_root=tmp_path)
+    settings.gate.quality_threshold = 0.95
+    settings.gate.lexical_floor = 0.5
+    settings.gate.structural_threshold = 99
+    settings.gate.weird_char_threshold = 0.01
+    graph = build_graph(settings)
+    result = graph.invoke({"example_id": "ex1"})
+    assert result["failure_type"] == "word_level"
+    assert result["policy_action"] == "correct_text"
+    assert result["action_outcome"]["status"] == "skipped"
+    assert any(
+        decision["reason"] == "byt5_model_unavailable"
+        for decision in result["action_outcome"]["decisions"]
+    )
+    assert result["answer"]
