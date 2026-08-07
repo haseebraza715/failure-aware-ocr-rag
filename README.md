@@ -5,7 +5,9 @@ RAG that detects its own OCR failures and recovers, paying for the expensive vis
 [![License: none](https://img.shields.io/badge/license-none-yellow)](https://github.com/haseebraza715/FailSafeRAG)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 
-![FailSafeRAG demo](docs/demo.gif)
+<video controls autoplay muted loop playsinline width="100%" src="https://github.com/haseebraza715/FailSafeRAG/raw/main/docs/demo.mp4"></video>
+
+Prefer a GIF? [docs/demo.gif](docs/demo.gif)
 
 ## Try it in 60 seconds
 
