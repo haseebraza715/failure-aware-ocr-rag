@@ -1,6 +1,6 @@
 # FailSafeRAG
 
-RAG that detects its own OCR failures and recovers — only paying for the expensive visual path when needed.
+RAG that detects its own OCR failures and recovers, paying for the expensive visual path only when needed.
 
 [![License: none](https://img.shields.io/badge/license-none-yellow)](https://github.com/haseebraza715/FailSafeRAG)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
@@ -22,17 +22,17 @@ Fully offline and deterministic: local-hash embeddings, a mock VLM, and ByT5 fro
 **What you'll see:**
 
 - The quality gate fires on **low lexical evidence** → semantic recovery re-queries → the correct answer at **0 multimodal tokens**.
-- A **clean example passes the gate** and answers directly — no recovery, no multimodal spend.
-- A **routing table** shows word-level and structural routes; only the structural case would invoke a VLM (mock here — zero spend).
+- A **clean example passes the gate** and answers directly, with no recovery and no multimodal spend.
+- A **routing table** shows word-level and structural routes; only the structural case would invoke a VLM (mock here, zero spend).
 
 ## What it does
 
-- **Text-first retrieval** — hybrid BM25 + dense retrieval over OCR text; images are never touched on the default path.
-- **Quality gate** — scores evidence for OCR word noise, layout damage, and weak lexical evidence before trusting an answer.
-- **Semantic recovery** — re-queries with context-anchored evidence when retrieval is empty or mismatched.
-- **Word-level recovery** — corrects OCR noise (ByT5); degrades to a guarded skip when the model is unavailable offline.
-- **Structural recovery** — a *selective* visual fallback for layout-heavy failures, routed to a VLM only when text cannot answer.
-- **Cost control** — multimodal tokens are spent only on gated failures; clean questions cost nothing.
+- **Text-first retrieval**: hybrid BM25 + dense retrieval over OCR text; images are never touched on the default path.
+- **Quality gate**: scores evidence for OCR word noise, layout damage, and weak lexical evidence before trusting an answer.
+- **Semantic recovery**: re-queries with context-anchored evidence when retrieval is empty or mismatched.
+- **Word-level recovery**: corrects OCR noise (ByT5); degrades to a guarded skip when the model is unavailable offline.
+- **Structural recovery**: a *selective* visual fallback for layout-heavy failures, routed to a VLM only when text cannot answer.
+- **Cost control**: multimodal tokens are spent only on gated failures; clean questions cost nothing.
 
 ## How it works
 
@@ -42,7 +42,7 @@ Text-first retrieval → the quality gate scores the evidence (lexical, OCR corr
 | --- | --- |
 | Language | Python 3.12+ |
 | Dependencies | faiss-cpu, langgraph, pydantic, rank-bm25, typer; `[ml]` extra adds sentence-transformers, transformers |
-| Offline? | Yes — demo runs with `HF_HUB_OFFLINE=1`, mock VLM, no API keys |
+| Offline? | Yes. Demo runs with `HF_HUB_OFFLINE=1`, mock VLM, no API keys |
 | Status | Research prototype, phased |
 | License | None specified |
 
