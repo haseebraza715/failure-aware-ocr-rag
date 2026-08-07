@@ -43,7 +43,12 @@ class ByT5Corrector:
         should_attempt, skip_reason = _should_attempt_correction(text, self.correction_settings)
         if not should_attempt:
             return {"text": text, "candidate": text, "applied": False, "reason": skip_reason}
-        corrected = self._generate_correction(text, max_new_tokens=max_new_tokens)
+        try:
+            corrected = self._generate_correction(text, max_new_tokens=max_new_tokens)
+        except ImportError:
+            return {"text": text, "candidate": text, "applied": False, "reason": "byt5_ml_extra_missing"}
+        except OSError:
+            return {"text": text, "candidate": text, "applied": False, "reason": "byt5_model_unavailable"}
         accepted, reason = _should_accept_correction(text, corrected, self.correction_settings)
         return {
             "text": corrected if accepted else text,
