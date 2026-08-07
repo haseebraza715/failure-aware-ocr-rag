@@ -66,6 +66,10 @@ class Phase0Repository:
         return sorted(self._manifest)
 
     def get_example_record(self, example_id: str) -> dict[str, str]:
+        if example_id not in self._manifest:
+            raise FileNotFoundError(
+                f"Example {example_id!r} not found in phase 0 manifest: {self.settings.phase0_manifest}"
+            )
         row = dict(self._manifest[example_id])
         manual = self._manual_labels.get(example_id, {})
         row["manual_failure_type"] = manual.get("failure_type", "").strip()
@@ -126,9 +130,18 @@ class Phase0Repository:
         ocr_text_path = Path(summary.get("ocr_text_path", self.settings.phase0_ocr_dir / f"{example_id}.txt"))
         if not ocr_text_path.exists():
             ocr_text_path = self.settings.phase0_ocr_dir / f"{example_id}.txt"
+        if not ocr_text_path.exists():
+            raise FileNotFoundError(
+                f"OCR text artifact missing for example {example_id}: {ocr_text_path}. "
+                "Restore artifacts/phase0/ocr_text from the repository before running."
+            )
         gt_text_path = Path(summary["gt_text_path"]) if summary.get("gt_text_path") else None
         image_paths = [Path(p) for p in summary.get("image_paths", []) if Path(p).exists()]
         ocr_text = ocr_text_path.read_text(errors="ignore")
+        if not ocr_text.strip():
+            raise ValueError(
+                f"OCR text artifact is empty for example {example_id}: {ocr_text_path}"
+            )
         return Phase0Example(
             example_id=example_id,
             doc_name=row["doc_name"],
