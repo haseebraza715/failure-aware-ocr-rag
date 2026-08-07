@@ -85,7 +85,7 @@ class VisualFallback:
         return {
             "backend": "mock",
             "status": "skipped",
-            "reason": "vlm_backend_not_configured",
+            "reason": "mock_backend_noop",
             "answer": "",
             "used_images": [str(path) for path in image_paths],
             "fallback_context": fallback_context[:500],
