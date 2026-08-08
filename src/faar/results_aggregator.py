@@ -13,6 +13,7 @@ def summarize_examples(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "em": 0.0,
             "f1": 0.0,
             "visual_fallback_rate": 0.0,
+            "vlm_rate": 0.0,
         }
     ndcg = mean(row["metrics"]["ndcg@5"] for row in rows)
     recall = mean(row["metrics"]["recall@5"] for row in rows)

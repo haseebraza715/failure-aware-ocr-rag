@@ -5,6 +5,7 @@ def test_summarize_examples_empty() -> None:
     out = summarize_examples([])
     assert out["count"] == 0
     assert out["em"] == 0.0
+    assert out["vlm_rate"] == 0.0
 
 
 def test_summarize_by_profile() -> None:

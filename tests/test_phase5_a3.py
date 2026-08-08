@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -61,11 +62,18 @@ def test_a3_cli_configures_symspell_wordlevel_fallback(monkeypatch, tmp_path: Pa
     def fake_run(settings: AppSettings, profile: str, out: Path, *args, **kwargs) -> dict:
         captured["settings"] = settings
         assert profile == "faar_symspell"
-        return {"summary": {"EM": 0.0, "F1": 0.0, "vlm_rate": 0.0, "harm_rate": 0.0}}
+        payload = {"summary": {"EM": 0.0, "F1": 0.0, "vlm_rate": 0.0, "harm_rate": 0.0}}
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(payload))
+        return payload
 
     monkeypatch.setattr(run.AppSettings, "validate_runtime_paths", lambda self: None)
     monkeypatch.setattr(run, "_require_key_for_paid_vlm", lambda backend: None)
+    monkeypatch.setattr(run, "_validate_baseline", lambda *args, **kwargs: None)
+    monkeypatch.setattr(run, "_apply_baseline_harm", lambda payload, *args, **kwargs: payload)
     monkeypatch.setattr(run, "_run_profile_to_result", fake_run)
+    baseline_path = tmp_path / "b0.json"
+    baseline_path.write_text(json.dumps({"summary": {"EM": 0.0, "F1": 0.0, "vlm_rate": 0.0, "harm_rate": 0.0}, "rows": []}))
     monkeypatch.setattr(
         sys,
         "argv",
@@ -75,6 +83,8 @@ def test_a3_cli_configures_symspell_wordlevel_fallback(monkeypatch, tmp_path: Pa
             "no_wordlevel_llm",
             "--wordlevel_fallback",
             "symspell",
+            "--baseline",
+            str(baseline_path),
             "--out",
             str(tmp_path / "a3.json"),
         ],

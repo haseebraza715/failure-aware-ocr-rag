@@ -16,11 +16,11 @@ SRC = Path(__file__).resolve().parent / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from evaluate import evaluate_results
+from evaluate import evaluate_results, load_rows
 from faar.api_logging import openai_cost_rates
 from faar.benchmarks import load_benchmark_repository
 from faar.experiment_runner import run_profile
-from faar.gate_tuning import load_locked_threshold
+from faar.gate_tuning import require_paper_gate_threshold
 from faar.results_aggregator import summarize_examples
 from faar.run_io import atomic_write_text, select_shard, shard_label
 from faar.settings import AppSettings
@@ -33,12 +33,74 @@ BASELINE_MAP = {
     ("on", "random_type"): ("B2", "faar_no_diagnosis", "Random recovery"),
 }
 
+GATE_BYPASS_PROFILES = {"naive_rag", "faar_always_vlm", "faar_no_gate"}
+BASELINE_MATCH_KEYS = (
+    "dataset",
+    "split",
+    "seed",
+    "max_examples",
+    "shard_index",
+    "num_shards",
+    "embedding_model",
+    "reranker",
+    "ocr_engine",
+    "model_provenance",
+)
+
+
+def _require_gate_threshold(settings: AppSettings, profile: str) -> float | None:
+    if profile in GATE_BYPASS_PROFILES:
+        return None
+    try:
+        payload = require_paper_gate_threshold(settings.gate_threshold_path)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    threshold = float(payload["threshold"])
+    settings.gate.quality_threshold = threshold
+    return threshold
+
+
+def _validate_baseline(
+    baseline_path: Path | None,
+    *,
+    label: str,
+    run_spec: dict[str, Any],
+) -> None:
+    if baseline_path is None:
+        raise SystemExit(
+            f"Missing required --baseline: {label} needs a matching B0 result to define harm_rate."
+        )
+    if not baseline_path.is_file():
+        raise SystemExit(f"Matching B0 result does not exist: {baseline_path}")
+    try:
+        baseline_payload = json.loads(baseline_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Matching B0 result is unreadable: {baseline_path}") from exc
+    if not isinstance(baseline_payload, dict) or baseline_payload.get("profile") != "naive_rag":
+        raise SystemExit(f"Matching baseline must be a B0 naive_rag result: {baseline_path}")
+    baseline_spec = baseline_payload.get("run_spec")
+    if not isinstance(baseline_spec, dict):
+        raise SystemExit(f"Matching B0 result has no run_spec provenance: {baseline_path}")
+    for key in BASELINE_MATCH_KEYS:
+        if key not in baseline_spec:
+            raise SystemExit(f"Matching B0 result is missing run_spec.{key}: {baseline_path}")
+        expected = run_spec.get(key)
+        observed = baseline_spec[key]
+        if observed != expected:
+            raise SystemExit(
+                f"Baseline mismatch: expected {key}={expected!r}, but {baseline_path} records {observed!r}."
+            )
+
 
 def _require_key_for_paid_vlm(vlm_backend: str) -> None:
-    if vlm_backend in {"claude-sonnet-4-5", "anthropic", "claude"} and not os.getenv("ANTHROPIC_API_KEY"):
+    if vlm_backend in {"claude-sonnet-4-5", "anthropic", "claude"} and not (
+        os.getenv("ANTHROPIC_API_KEY") or ""
+    ).strip():
         raise SystemExit("Missing required key: ANTHROPIC_API_KEY for VLM_BACKEND=claude-sonnet-4-5.")
-    if vlm_backend == "openai" and not os.getenv("OPENAI_API_KEY"):
+    if vlm_backend == "openai" and not (os.getenv("OPENAI_API_KEY") or "").strip():
         raise SystemExit("Missing required key: OPENAI_API_KEY for VLM_BACKEND=openai.")
+    if vlm_backend not in {"openai", "claude-sonnet-4-5", "anthropic", "claude"}:
+        raise SystemExit(f"Unsupported paid VLM backend for paper runs: {vlm_backend!r}.")
 
 
 def _settings_from_args(args: argparse.Namespace) -> AppSettings:
@@ -56,9 +118,6 @@ def _settings_from_args(args: argparse.Namespace) -> AppSettings:
     if args.wordlevel_fallback:
         settings.experiment.wordlevel_fallback = args.wordlevel_fallback
         settings.recovery.wordlevel_fallback = args.wordlevel_fallback
-    locked_threshold = load_locked_threshold(settings.gate_threshold_path)
-    if locked_threshold is not None:
-        settings.gate.quality_threshold = locked_threshold
     settings.validate_openai_snapshot()
     settings.validate_model_revisions(include_visual=args.mode if args.mode in {"colpali", "visrag"} else None)
     return settings
@@ -78,6 +137,7 @@ def _run_profile_to_result(
     shard_index: int | None = None,
     num_shards: int | None = None,
 ) -> dict[str, Any]:
+    run_spec["gate_threshold"] = _require_gate_threshold(settings, profile)
     start = time.perf_counter()
     usage_path = settings.project_root / "logs/vlm_calls.jsonl"
     start_usage = _read_vlm_usage(usage_path)
@@ -103,7 +163,7 @@ def _run_profile_to_result(
             "EM": summary["em"],
             "F1": summary["f1"],
             "vlm_rate": summary["vlm_rate"],
-            "harm_rate": 0.0,
+            "harm_rate": 0.0 if profile == "naive_rag" else None,
             "api_requests": end_usage["api_requests"] - start_usage["api_requests"],
             "prompt_tokens": end_usage["prompt_tokens"] - start_usage["prompt_tokens"],
             "completion_tokens": end_usage["completion_tokens"] - start_usage["completion_tokens"],
@@ -143,24 +203,36 @@ def _apply_baseline_harm(
     output_path: Path,
     baseline_path: Path | None,
     *,
-    dataset: str,
-    split: str,
+    run_spec: dict[str, Any],
 ) -> dict[str, Any]:
     if baseline_path is None:
         return payload
-    if not baseline_path.is_file():
-        raise SystemExit(f"Matching B0 result does not exist: {baseline_path}")
-    baseline_payload = json.loads(baseline_path.read_text())
-    baseline_spec = baseline_payload.get("run_spec", {}) if isinstance(baseline_payload, dict) else {}
-    for key, expected in (("dataset", dataset), ("split", split)):
-        observed = baseline_spec.get(key)
-        if observed is not None and observed != expected:
-            raise SystemExit(
-                f"Baseline mismatch: expected {key}={expected!r}, but {baseline_path} records {observed!r}."
-            )
+    _validate_baseline(
+        baseline_path,
+        label=str(payload.get("label") or "run"),
+        run_spec=run_spec,
+    )
+    result_ids = _validated_example_ids(load_rows(output_path), output_path)
+    baseline_ids = _validated_example_ids(load_rows(baseline_path), baseline_path)
+    missing = sorted(result_ids - baseline_ids)
+    if missing:
+        preview = ", ".join(missing[:10])
+        raise SystemExit(
+            f"Baseline {baseline_path} does not cover every result example ID; "
+            f"missing {len(missing)} IDs: {preview}."
+        )
     payload["summary"]["harm_rate"] = evaluate_results(output_path, baseline_path=baseline_path)["harm_rate"]
     atomic_write_text(output_path, json.dumps(payload, indent=2) + "\n")
     return payload
+
+
+def _validated_example_ids(rows: list[dict[str, Any]], path: Path) -> set[str]:
+    values = [str(row.get("example_id") or "").strip() for row in rows]
+    if any(not value for value in values):
+        raise SystemExit(f"Result contains a missing example_id: {path}")
+    if len(values) != len(set(values)):
+        raise SystemExit(f"Result contains duplicate example_id values: {path}")
+    return set(values)
 
 
 def _run_visual_baseline_to_result(
@@ -191,7 +263,7 @@ def _run_visual_baseline_to_result(
                 "EM": summary["em"],
                 "F1": summary["f1"],
                 "vlm_rate": summary["vlm_rate"],
-                "harm_rate": 0.0,
+                "harm_rate": None,
                 "api_requests": end_usage["api_requests"] - start_usage["api_requests"],
                 "prompt_tokens": end_usage["prompt_tokens"] - start_usage["prompt_tokens"],
                 "completion_tokens": end_usage["completion_tokens"] - start_usage["completion_tokens"],
@@ -200,6 +272,8 @@ def _run_visual_baseline_to_result(
             },
             "rows": result,
         }
+    payload["run_spec"] = run_spec
+    payload.setdefault("summary", {})["harm_rate"] = None
     out.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(out, json.dumps(payload, indent=2) + "\n")
     return payload
@@ -259,7 +333,10 @@ def main() -> None:
         "dataset": args.dataset,
         "split": args.split,
         "seed": args.seed,
-        "gate_threshold": settings.gate.quality_threshold,
+        "gate_threshold": None,
+        "max_examples": args.max_examples,
+        "shard_index": args.shard_index,
+        "num_shards": args.num_shards,
         "embedding_model": settings.retrieval.embedding_model,
         "reranker": settings.retrieval.reranker,
         "ocr_engine": settings.recovery.ocr_engine,
@@ -276,6 +353,11 @@ def main() -> None:
     if args.mode in {"colpali", "visrag"}:
         if args.resume or args.shard_index is not None or args.num_shards is not None:
             raise SystemExit("--resume and shard flags are not supported for visual modes yet.")
+        _validate_baseline(
+            args.baseline,
+            label=f"--mode {args.mode}",
+            run_spec=run_spec,
+        )
         _require_key_for_paid_vlm(settings.recovery.vlm_backend)
         payload = _run_visual_baseline_to_result(
             settings,
@@ -290,8 +372,7 @@ def main() -> None:
             payload,
             args.out,
             args.baseline,
-            dataset=args.dataset,
-            split=args.split,
+            run_spec=run_spec,
         )
         print(json.dumps(payload["summary"], indent=2))
         return
@@ -300,6 +381,11 @@ def main() -> None:
     text_kwargs = _text_run_kwargs(args.resume, args.shard_index, args.num_shards)
 
     if args.mode == "faar":
+        _validate_baseline(
+            args.baseline,
+            label="--mode faar",
+            run_spec=run_spec,
+        )
         _require_key_for_paid_vlm(settings.recovery.vlm_backend)
         payload = _run_profile_to_result(
             settings, "faar_full", text_out, f"FAAR {args.dataset} {args.split}", args.max_examples, run_spec, args.dataset, args.split, **text_kwargs
@@ -308,8 +394,7 @@ def main() -> None:
             payload,
             text_out,
             args.baseline,
-            dataset=args.dataset,
-            split=args.split,
+            run_spec=run_spec,
         )
         print(json.dumps(payload["summary"], indent=2))
         return
@@ -321,6 +406,11 @@ def main() -> None:
             "no_wordlevel_llm": "faar_symspell",
             "no_semantic_retry": "faar_no_backtrack",
         }[args.ablate]
+        _validate_baseline(
+            args.baseline,
+            label=f"--ablate {args.ablate}",
+            run_spec=run_spec,
+        )
         _require_key_for_paid_vlm(settings.recovery.vlm_backend)
         payload = _run_profile_to_result(
             settings, ablation_profile, text_out, args.ablate, args.max_examples, run_spec, args.dataset, args.split, **text_kwargs
@@ -329,8 +419,7 @@ def main() -> None:
             payload,
             text_out,
             args.baseline,
-            dataset=args.dataset,
-            split=args.split,
+            run_spec=run_spec,
         )
         print(json.dumps(payload["summary"], indent=2))
         return
@@ -339,16 +428,21 @@ def main() -> None:
     if key not in BASELINE_MAP:
         raise SystemExit(f"Unsupported baseline combination: gate={args.gate}, recovery={args.recovery}")
     baseline_id, profile, label = BASELINE_MAP[key]
-    if baseline_id == "B1":
+    if baseline_id == "B0" and args.baseline is not None:
+        raise SystemExit("B0 defines harm_rate and does not accept --baseline.")
+    if baseline_id in {"B1", "B2"}:
+        _validate_baseline(
+            args.baseline,
+            label=label,
+            run_spec=run_spec,
+        )
         _require_key_for_paid_vlm(settings.recovery.vlm_backend)
     payload = _run_profile_to_result(settings, profile, text_out, label, args.max_examples, run_spec, args.dataset, args.split, **text_kwargs)
-    default_baseline = Path("results/b0.json") if baseline_id == "B2" and Path("results/b0.json").exists() else None
     payload = _apply_baseline_harm(
         payload,
         text_out,
-        args.baseline or default_baseline,
-        dataset=args.dataset,
-        split=args.split,
+        args.baseline,
+        run_spec=run_spec,
     )
     print(json.dumps(payload["summary"], indent=2))
 

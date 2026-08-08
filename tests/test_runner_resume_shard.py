@@ -180,6 +180,22 @@ def _isolate_cli(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(run, "_settings_from_args", lambda args: settings)
     monkeypatch.setattr(AppSettings, "validate_runtime_paths", lambda self: None)
     monkeypatch.setattr(run, "_require_key_for_paid_vlm", lambda backend: None)
+    monkeypatch.setattr(run, "_validate_baseline", lambda *args, **kwargs: None)
+    monkeypatch.setattr(run, "_apply_baseline_harm", lambda payload, *args, **kwargs: payload)
+
+
+def _write_baseline(tmp_path: Path) -> Path:
+    baseline_path = tmp_path / "b0.json"
+    baseline_path.write_text(
+        json.dumps(
+            {
+                "run_spec": {"dataset": "ohrbench", "split": "test", "seed": 42},
+                "summary": {"EM": 0.0, "F1": 0.0, "vlm_rate": 0.0, "harm_rate": 0.0},
+                "rows": [{"example_id": "ex1"}],
+            }
+        )
+    )
+    return baseline_path
 
 
 def _capture_profile_run(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
@@ -199,10 +215,11 @@ def _capture_profile_run(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 def test_cli_resume_flag_reaches_text_profile_path(monkeypatch, tmp_path: Path) -> None:
     _isolate_cli(monkeypatch, tmp_path)
     captured = _capture_profile_run(monkeypatch)
+    baseline_path = _write_baseline(tmp_path)
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--mode", "faar", "--resume", "--out", str(tmp_path / "faar.json")],
+        ["run.py", "--mode", "faar", "--resume", "--baseline", str(baseline_path), "--out", str(tmp_path / "faar.json")],
     )
     run.main()
     assert captured["kwargs"] == {"resume": True}
@@ -211,10 +228,11 @@ def test_cli_resume_flag_reaches_text_profile_path(monkeypatch, tmp_path: Path) 
 def test_cli_shard_flags_suffix_output_and_flow_to_runner(monkeypatch, tmp_path: Path) -> None:
     _isolate_cli(monkeypatch, tmp_path)
     captured = _capture_profile_run(monkeypatch)
+    baseline_path = _write_baseline(tmp_path)
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--mode", "faar", "--shard-index", "0", "--num-shards", "2", "--out", str(tmp_path / "faar.json")],
+        ["run.py", "--mode", "faar", "--shard-index", "0", "--num-shards", "2", "--baseline", str(baseline_path), "--out", str(tmp_path / "faar.json")],
     )
     run.main()
     assert captured["kwargs"] == {"shard_index": 0, "num_shards": 2}
@@ -224,10 +242,11 @@ def test_cli_shard_flags_suffix_output_and_flow_to_runner(monkeypatch, tmp_path:
 def test_cli_defaults_unchanged_without_flags(monkeypatch, tmp_path: Path) -> None:
     _isolate_cli(monkeypatch, tmp_path)
     captured = _capture_profile_run(monkeypatch)
+    baseline_path = _write_baseline(tmp_path)
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--mode", "faar", "--out", str(tmp_path / "faar.json")],
+        ["run.py", "--mode", "faar", "--baseline", str(baseline_path), "--out", str(tmp_path / "faar.json")],
     )
     run.main()
     assert captured["kwargs"] == {}

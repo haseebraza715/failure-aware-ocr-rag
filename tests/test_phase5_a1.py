@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 from pathlib import Path
 
@@ -58,17 +59,24 @@ def test_a1_cli_uses_the_no_gate_profile(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(runner, "_settings_from_args", lambda args: settings)
     monkeypatch.setattr(AppSettings, "validate_runtime_paths", lambda self: None)
     monkeypatch.setattr(runner, "_require_key_for_paid_vlm", lambda backend: None)
+    monkeypatch.setattr(runner, "_validate_baseline", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runner, "_apply_baseline_harm", lambda payload, *args, **kwargs: payload)
 
     def fake_run_profile_to_result(settings, profile, out, label, max_examples, run_spec, dataset, split):
         captured["profile"] = profile
         captured["label"] = label
-        return {"summary": {}}
+        payload = {"summary": {"EM": 0.0, "F1": 0.0, "vlm_rate": 0.0, "harm_rate": 0.0}}
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(payload))
+        return payload
 
     monkeypatch.setattr(runner, "_run_profile_to_result", fake_run_profile_to_result)
+    baseline_path = tmp_path / "b0.json"
+    baseline_path.write_text(json.dumps({"summary": {"EM": 0.0, "F1": 0.0, "vlm_rate": 0.0, "harm_rate": 0.0}, "rows": []}))
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--ablate", "no_gate", "--out", str(tmp_path / "a1.json")],
+        ["run.py", "--ablate", "no_gate", "--baseline", str(baseline_path), "--out", str(tmp_path / "a1.json")],
     )
 
     runner.main()

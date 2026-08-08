@@ -25,7 +25,7 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
         return list(payload["rows"])
     if "examples" in payload:
         return list(payload["examples"])
-    if "summary" in payload and all(key in payload["summary"] for key in REQUIRED_KEYS):
+    if "summary" in payload:
         return []
     return [payload]
 
@@ -33,17 +33,15 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
 def evaluate_results(results_path: Path, baseline_path: Path | None = None) -> dict[str, float]:
     payload = json.loads(results_path.read_text())
     summary = payload.get("summary") if isinstance(payload, dict) else None
-    if isinstance(summary, dict) and all(key in summary for key in REQUIRED_KEYS) and baseline_path is None:
-        return {key: float(summary[key]) for key in REQUIRED_KEYS}
 
     rows = load_rows(results_path)
     baseline_by_id = {}
-    if baseline_path and baseline_path.exists():
+    if baseline_path is not None and not baseline_path.is_file():
+        raise ValueError(f"Baseline result does not exist: {baseline_path}")
+    if baseline_path is not None:
         baseline_by_id = {row.get("example_id"): row for row in load_rows(baseline_path)}
 
-    if not rows:
-        metrics = {"EM": 0.0, "F1": 0.0, "vlm_rate": 0.0, "harm_rate": 0.0}
-    else:
+    if rows:
         em_values = []
         f1_values = []
         vlm_values = []
@@ -60,10 +58,17 @@ def evaluate_results(results_path: Path, baseline_path: Path | None = None) -> d
             baseline = baseline_by_id.get(row.get("example_id"))
             baseline_f1 = None
             if baseline:
-                baseline_f1 = float((baseline.get("metrics") or {}).get("f1", 0.0))
+                baseline_metrics = baseline.get("metrics") or {}
+                baseline_prediction = baseline.get("predicted_answer", baseline.get("answer", ""))
+                baseline_gold = baseline.get("gold_answer", baseline.get("correct_answer", ""))
+                baseline_f1 = float(
+                    baseline_metrics.get("f1", token_f1(baseline_prediction, baseline_gold))
+                )
             em_values.append(em)
             f1_values.append(f1)
             vlm_values.append(1.0 if used_vlm else 0.0)
+            if baseline_path is not None and baseline_f1 is None:
+                raise ValueError(f"Baseline result does not cover example_id={row.get('example_id')!r}.")
             harm_values.append(1.0 if baseline_f1 is not None and f1 < baseline_f1 else 0.0)
         metrics = {
             "EM": mean(em_values),
@@ -71,7 +76,18 @@ def evaluate_results(results_path: Path, baseline_path: Path | None = None) -> d
             "vlm_rate": mean(vlm_values),
             "harm_rate": mean(harm_values),
         }
-    return {key: round(float(metrics[key]), 4) for key in REQUIRED_KEYS}
+        return {key: round(float(metrics[key]), 4) for key in REQUIRED_KEYS}
+
+    if not isinstance(summary, dict):
+        raise ValueError(f"{results_path} contains no evaluable rows and no summary object.")
+    if baseline_path is not None:
+        raise ValueError("harm_rate cannot be recomputed against a baseline without per-example rows.")
+    nullish = [key for key in REQUIRED_KEYS if key not in summary or summary.get(key) is None]
+    if nullish:
+        raise ValueError(
+            f"{results_path} summary is missing or null for required metrics: {', '.join(nullish)}."
+        )
+    return {key: float(summary[key]) for key in REQUIRED_KEYS}
 
 
 def main() -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -9,6 +10,9 @@ from .metrics import exact_match
 
 
 THETA_GRID = (0.3, 0.4, 0.5, 0.6, 0.7)
+
+GATE_PRECISION_MIN = 0.75
+GATE_RECALL_MIN = 0.70
 
 
 @dataclass(frozen=True)
@@ -96,6 +100,8 @@ def require_validation_payload(path: Path) -> None:
 
 
 def write_locked_threshold(path: Path, search: dict[str, Any]) -> None:
+    if not bool((search.get("pass_criteria") or {}).get("passed")):
+        raise ValueError("Gate threshold cannot be locked because validation precision/recall did not pass.")
     winner = search["winner"]
     payload = {
         "source_split": "val",
@@ -116,3 +122,31 @@ def load_locked_threshold(path: Path) -> float | None:
     if payload.get("source_split") != "val":
         raise ValueError(f"Locked threshold at {path} does not declare a validation-only source.")
     return float(payload["threshold"])
+
+
+def require_paper_gate_threshold(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise ValueError(
+            f"Gate-dependent paper runs require a locked gate threshold at {path}; run tune_gate.py on validation results first."
+        )
+    payload = json.loads(path.read_text())
+    if not isinstance(payload, dict):
+        raise ValueError(f"Locked gate threshold at {path} must be a JSON object.")
+    if payload.get("source_split") != "val":
+        raise ValueError(
+            f"Locked gate threshold at {path} must declare source_split='val'; test data cannot tune the gate."
+        )
+    try:
+        threshold = float(payload["threshold"])
+        precision = float(payload["precision"])
+        recall = float(payload["recall"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"Locked gate threshold at {path} has missing or invalid numeric fields.") from exc
+    if not all(math.isfinite(value) and 0.0 <= value <= 1.0 for value in (threshold, precision, recall)):
+        raise ValueError(f"Locked gate threshold at {path} must contain finite values in [0, 1].")
+    if precision < GATE_PRECISION_MIN or recall < GATE_RECALL_MIN:
+        raise ValueError(
+            f"Locked gate threshold at {path} fails the paper bar: precision={precision} (>= {GATE_PRECISION_MIN}) "
+            f"and recall={recall} (>= {GATE_RECALL_MIN}) are required."
+        )
+    return payload
