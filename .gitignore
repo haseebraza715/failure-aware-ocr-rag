@@ -11,6 +11,7 @@ __pycache__/
 
 src/*.egg-info/
 src/**/*.egg-info/
+build/
 
 data/ohr_bench_raw/
 data/benchmark_prep/
