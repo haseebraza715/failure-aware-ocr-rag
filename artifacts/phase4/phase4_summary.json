@@ -1,100 +1,129 @@
 {
-  "generated_at_utc": "2026-04-21T15:25:54.399308+00:00",
+  "generated_at_utc": "2026-08-08T22:55:11.782175+00:00",
   "baseline_profile": "naive_rag",
   "profile_summaries": {
     "faar_full": {
       "count": 40,
-      "ndcg@5": 0.4789,
-      "recall@5": 0.525,
-      "em": 0.125,
+      "ndcg@5": 0.4533,
+      "recall@5": 0.5,
+      "em": 0.15,
       "f1": 0.2036,
-      "visual_fallback_rate": 0.075,
-      "non_pass_rate": 0.475,
+      "visual_fallback_rate": 0.025,
+      "recovery_outcomes": {
+        "reviewed_count": 15,
+        "changed_answer_count": 0,
+        "changed_answer_rate": 0.0,
+        "em_effect_distribution": {
+          "equal": 15
+        },
+        "f1_effect_distribution": {
+          "equal": 15
+        }
+      },
+      "non_pass_rate": 0.375,
       "action_distribution": {
         "answer_direct": {
-          "count": 21,
-          "rate": 0.525
+          "count": 25,
+          "rate": 0.625
         },
         "correct_text": {
-          "count": 14,
-          "rate": 0.35
+          "count": 11,
+          "rate": 0.275
         },
         "invoke_vlm": {
-          "count": 3,
-          "rate": 0.075
+          "count": 1,
+          "rate": 0.025
         },
         "retry_retrieval": {
-          "count": 2,
-          "rate": 0.05
+          "count": 3,
+          "rate": 0.075
         }
       },
       "failure_distribution": {
         "pass": {
-          "count": 21,
-          "rate": 0.525
+          "count": 25,
+          "rate": 0.625
         },
         "semantic": {
-          "count": 2,
-          "rate": 0.05
-        },
-        "structural": {
           "count": 3,
           "rate": 0.075
         },
+        "structural": {
+          "count": 1,
+          "rate": 0.025
+        },
         "word_level": {
-          "count": 14,
-          "rate": 0.35
+          "count": 11,
+          "rate": 0.275
         }
       }
     },
     "faar_no_backtrack": {
       "count": 40,
-      "ndcg@5": 0.4789,
-      "recall@5": 0.525,
-      "em": 0.125,
+      "ndcg@5": 0.4533,
+      "recall@5": 0.5,
+      "em": 0.15,
       "f1": 0.2036,
-      "visual_fallback_rate": 0.075,
-      "non_pass_rate": 0.475,
+      "visual_fallback_rate": 0.025,
+      "recovery_outcomes": {
+        "reviewed_count": 12,
+        "changed_answer_count": 0,
+        "changed_answer_rate": 0.0,
+        "em_effect_distribution": {
+          "equal": 12
+        },
+        "f1_effect_distribution": {
+          "equal": 12
+        }
+      },
+      "non_pass_rate": 0.375,
       "action_distribution": {
         "answer_direct": {
-          "count": 23,
-          "rate": 0.575
+          "count": 28,
+          "rate": 0.7
         },
         "correct_text": {
-          "count": 14,
-          "rate": 0.35
+          "count": 11,
+          "rate": 0.275
         },
         "invoke_vlm": {
-          "count": 3,
-          "rate": 0.075
+          "count": 1,
+          "rate": 0.025
         }
       },
       "failure_distribution": {
         "pass": {
-          "count": 21,
-          "rate": 0.525
+          "count": 25,
+          "rate": 0.625
         },
         "semantic": {
-          "count": 2,
-          "rate": 0.05
-        },
-        "structural": {
           "count": 3,
           "rate": 0.075
         },
+        "structural": {
+          "count": 1,
+          "rate": 0.025
+        },
         "word_level": {
-          "count": 14,
-          "rate": 0.35
+          "count": 11,
+          "rate": 0.275
         }
       }
     },
     "faar_no_diagnosis": {
       "count": 40,
-      "ndcg@5": 0.4789,
-      "recall@5": 0.525,
-      "em": 0.125,
+      "ndcg@5": 0.4533,
+      "recall@5": 0.5,
+      "em": 0.15,
       "f1": 0.2036,
       "visual_fallback_rate": 0.0,
+      "recovery_outcomes": {
+        "reviewed_count": 0,
+        "changed_answer_count": 0,
+        "changed_answer_rate": 0.0,
+        "em_effect_distribution": {},
+        "f1_effect_distribution": {}
+      },
       "non_pass_rate": 0.0,
       "action_distribution": {
         "answer_direct": {
@@ -111,52 +140,70 @@
     },
     "faar_no_vlm": {
       "count": 40,
-      "ndcg@5": 0.4789,
-      "recall@5": 0.525,
-      "em": 0.125,
+      "ndcg@5": 0.4533,
+      "recall@5": 0.5,
+      "em": 0.15,
       "f1": 0.2036,
       "visual_fallback_rate": 0.0,
-      "non_pass_rate": 0.475,
+      "recovery_outcomes": {
+        "reviewed_count": 14,
+        "changed_answer_count": 0,
+        "changed_answer_rate": 0.0,
+        "em_effect_distribution": {
+          "equal": 14
+        },
+        "f1_effect_distribution": {
+          "equal": 14
+        }
+      },
+      "non_pass_rate": 0.375,
       "action_distribution": {
         "answer_direct": {
-          "count": 24,
-          "rate": 0.6
+          "count": 26,
+          "rate": 0.65
         },
         "correct_text": {
-          "count": 14,
-          "rate": 0.35
+          "count": 11,
+          "rate": 0.275
         },
         "retry_retrieval": {
-          "count": 2,
-          "rate": 0.05
+          "count": 3,
+          "rate": 0.075
         }
       },
       "failure_distribution": {
         "pass": {
-          "count": 21,
-          "rate": 0.525
+          "count": 25,
+          "rate": 0.625
         },
         "semantic": {
-          "count": 2,
-          "rate": 0.05
-        },
-        "structural": {
           "count": 3,
           "rate": 0.075
         },
+        "structural": {
+          "count": 1,
+          "rate": 0.025
+        },
         "word_level": {
-          "count": 14,
-          "rate": 0.35
+          "count": 11,
+          "rate": 0.275
         }
       }
     },
     "naive_rag": {
       "count": 40,
-      "ndcg@5": 0.4789,
-      "recall@5": 0.525,
-      "em": 0.125,
+      "ndcg@5": 0.4533,
+      "recall@5": 0.5,
+      "em": 0.15,
       "f1": 0.2036,
       "visual_fallback_rate": 0.0,
+      "recovery_outcomes": {
+        "reviewed_count": 0,
+        "changed_answer_count": 0,
+        "changed_answer_rate": 0.0,
+        "em_effect_distribution": {},
+        "f1_effect_distribution": {}
+      },
       "non_pass_rate": 0.0,
       "action_distribution": {
         "answer_direct": {
@@ -176,11 +223,11 @@
     {
       "profile": "faar_full",
       "count": 40,
-      "em": 0.125,
+      "em": 0.15,
       "f1": 0.2036,
-      "ndcg@5": 0.4789,
-      "recall@5": 0.525,
-      "visual_fallback_rate": 0.075,
+      "ndcg@5": 0.4533,
+      "recall@5": 0.5,
+      "visual_fallback_rate": 0.025,
       "delta_em_vs_baseline": 0.0,
       "delta_f1_vs_baseline": 0.0,
       "delta_ndcg@5_vs_baseline": 0.0,
@@ -189,11 +236,11 @@
     {
       "profile": "faar_no_backtrack",
       "count": 40,
-      "em": 0.125,
+      "em": 0.15,
       "f1": 0.2036,
-      "ndcg@5": 0.4789,
-      "recall@5": 0.525,
-      "visual_fallback_rate": 0.075,
+      "ndcg@5": 0.4533,
+      "recall@5": 0.5,
+      "visual_fallback_rate": 0.025,
       "delta_em_vs_baseline": 0.0,
       "delta_f1_vs_baseline": 0.0,
       "delta_ndcg@5_vs_baseline": 0.0,
@@ -202,10 +249,10 @@
     {
       "profile": "faar_no_diagnosis",
       "count": 40,
-      "em": 0.125,
+      "em": 0.15,
       "f1": 0.2036,
-      "ndcg@5": 0.4789,
-      "recall@5": 0.525,
+      "ndcg@5": 0.4533,
+      "recall@5": 0.5,
       "visual_fallback_rate": 0.0,
       "delta_em_vs_baseline": 0.0,
       "delta_f1_vs_baseline": 0.0,
@@ -215,10 +262,10 @@
     {
       "profile": "faar_no_vlm",
       "count": 40,
-      "em": 0.125,
+      "em": 0.15,
       "f1": 0.2036,
-      "ndcg@5": 0.4789,
-      "recall@5": 0.525,
+      "ndcg@5": 0.4533,
+      "recall@5": 0.5,
       "visual_fallback_rate": 0.0,
       "delta_em_vs_baseline": 0.0,
       "delta_f1_vs_baseline": 0.0,
@@ -228,10 +275,10 @@
     {
       "profile": "naive_rag",
       "count": 40,
-      "em": 0.125,
+      "em": 0.15,
       "f1": 0.2036,
-      "ndcg@5": 0.4789,
-      "recall@5": 0.525,
+      "ndcg@5": 0.4533,
+      "recall@5": 0.5,
       "visual_fallback_rate": 0.0,
       "delta_em_vs_baseline": 0.0,
       "delta_f1_vs_baseline": 0.0,
@@ -242,40 +289,60 @@
   "claim_assessment": {
     "q1_quality_gate_reduces_expensive_recovery": {
       "status": "supported",
-      "faar_full_visual_fallback_rate": 0.075,
-      "estimated_cost_savings_vs_always_on_visual": 0.925
+      "faar_full_visual_fallback_rate": 0.025,
+      "estimated_cost_savings_vs_always_on_visual": 0.975
     },
     "q2_typed_recovery_outperforms_naive_fallback": {
       "status": "not_supported",
       "delta_f1_vs_naive_rag": 0.0,
-      "delta_em_vs_naive_rag": 0.0
+      "delta_em_vs_naive_rag": 0.0,
+      "measured_recovery_outcome": {
+        "reviewed_count": 15,
+        "changed_answer_count": 0,
+        "em_effect_distribution": {
+          "equal": 15
+        },
+        "f1_effect_distribution": {
+          "equal": 15
+        }
+      }
     },
     "q3_selective_visual_fallback_trades_accuracy_for_cost": {
       "status": "not_supported",
       "delta_f1_vs_faar_no_vlm": 0.0,
       "delta_em_vs_faar_no_vlm": 0.0,
-      "faar_full_visual_fallback_rate": 0.075
+      "faar_full_visual_fallback_rate": 0.025,
+      "measured_recovery_outcome": {
+        "reviewed_count": 15,
+        "changed_answer_count": 0,
+        "em_effect_distribution": {
+          "equal": 15
+        },
+        "f1_effect_distribution": {
+          "equal": 15
+        }
+      }
     },
     "q4_diagnostic_categories_match_observed_errors": {
       "status": "supported",
       "diagnosis_policy_consistency": 1.0,
-      "non_pass_rate": 0.475,
+      "non_pass_rate": 0.375,
       "failure_distribution": {
         "pass": {
-          "count": 21,
-          "rate": 0.525
+          "count": 25,
+          "rate": 0.625
         },
         "semantic": {
-          "count": 2,
-          "rate": 0.05
-        },
-        "structural": {
           "count": 3,
           "rate": 0.075
         },
+        "structural": {
+          "count": 1,
+          "rate": 0.025
+        },
         "word_level": {
-          "count": 14,
-          "rate": 0.35
+          "count": 11,
+          "rate": 0.275
         }
       }
     }
@@ -290,9 +357,9 @@
         "gold_answer": "$1,716 million",
         "focus_predicted_answer": "4",
         "baseline_predicted_answer": "4",
-        "focus_failure_type": "word_level",
-        "focus_policy_action": "correct_text",
-        "focus_action_outcome": "correct_text",
+        "focus_failure_type": "pass",
+        "focus_policy_action": "answer_direct",
+        "focus_action_outcome": "answer_direct",
         "focus_f1": 0.0,
         "baseline_f1": 0.0,
         "f1_delta": 0.0,
