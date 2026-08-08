@@ -138,10 +138,15 @@ def run_benchmark(
     vlm_backend: str = typer.Option("openai", help="Visual fallback backend"),
     seed: int = typer.Option(42, help="Random seed"),
     api_enabled: bool = typer.Option(True, help="Enable API-backed runtime features"),
+    enable_byt5: bool = typer.Option(
+        True, help="Enable ByT5 word-level correction (disable for offline reproducibility)"
+    ),
     doc_types: str = typer.Option("", help="Comma-separated doc_type filter"),
     evidence_sources: str = typer.Option("", help="Comma-separated evidence_source filter"),
     manual_failure_types: str = typer.Option("", help="Comma-separated manual failure labels"),
-    stratify_by: str | None = typer.Option(None, help="Optional stratification key: doc_type, evidence_source, manual_failure_type"),
+    stratify_by: str | None = typer.Option(
+        None, help="Optional stratification key: doc_type, evidence_source, manual_failure_type"
+    ),
     examples_per_stratum: int | None = typer.Option(None, help="Optional cap per stratum when stratifying"),
 ) -> None:
     random.seed(seed)
@@ -149,6 +154,7 @@ def run_benchmark(
     settings = AppSettings(project_root=project_root) if project_root else AppSettings()
     settings.recovery.vlm_backend = vlm_backend
     settings.recovery.api_enabled = api_enabled
+    settings.recovery.enable_byt5 = enable_byt5
     settings.validate_runtime_paths()
     settings.logs_dir = (settings.project_root / "logs/phase3").resolve()
     settings.artifacts_dir = (settings.project_root / "artifacts/phase3").resolve()
@@ -169,6 +175,7 @@ def run_benchmark(
         max_examples=max_examples,
         example_ids=example_ids,
         selection=selection,
+        seed=seed,
     )
     profile_summaries = summarize_by_profile(rows)
     summary = profile_summaries.get(
@@ -188,10 +195,15 @@ def run_benchmark_all(
     vlm_backend: str = typer.Option("openai", help="Visual fallback backend"),
     seed: int = typer.Option(42, help="Random seed"),
     api_enabled: bool = typer.Option(True, help="Enable API-backed runtime features"),
+    enable_byt5: bool = typer.Option(
+        True, help="Enable ByT5 word-level correction (disable for offline reproducibility)"
+    ),
     doc_types: str = typer.Option("", help="Comma-separated doc_type filter"),
     evidence_sources: str = typer.Option("", help="Comma-separated evidence_source filter"),
     manual_failure_types: str = typer.Option("", help="Comma-separated manual failure labels"),
-    stratify_by: str | None = typer.Option(None, help="Optional stratification key: doc_type, evidence_source, manual_failure_type"),
+    stratify_by: str | None = typer.Option(
+        None, help="Optional stratification key: doc_type, evidence_source, manual_failure_type"
+    ),
     examples_per_stratum: int | None = typer.Option(None, help="Optional cap per stratum when stratifying"),
 ) -> None:
     random.seed(seed)
@@ -199,6 +211,7 @@ def run_benchmark_all(
     settings = AppSettings(project_root=project_root) if project_root else AppSettings()
     settings.recovery.vlm_backend = vlm_backend
     settings.recovery.api_enabled = api_enabled
+    settings.recovery.enable_byt5 = enable_byt5
     settings.validate_runtime_paths()
     settings.logs_dir = (settings.project_root / "logs/phase3").resolve()
     settings.artifacts_dir = (settings.project_root / "artifacts/phase3").resolve()
@@ -223,6 +236,7 @@ def run_benchmark_all(
             max_examples=max_examples,
             example_ids=example_ids,
             selection=selection,
+            seed=seed,
         )
         all_rows.extend(profile_rows)
         profile_summaries = summarize_by_profile(profile_rows)
@@ -231,12 +245,17 @@ def run_benchmark_all(
             {"count": 0, "ndcg@5": 0.0, "recall@5": 0.0, "em": 0.0, "f1": 0.0, "visual_fallback_rate": 0.0},
         )
         full_summary[profile_name] = per_profile
-        write_json(settings.artifacts_dir / f"{profile_name}_summary.json", {"profile": profile_name, "summary": per_profile})
+        write_json(
+            settings.artifacts_dir / f"{profile_name}_summary.json", {"profile": profile_name, "summary": per_profile}
+        )
 
     summary = summarize_by_profile(all_rows)
     if not summary:
         summary = full_summary
-    write_json(settings.artifacts_dir / "metrics_summary.json", {"profiles": summary, "generated_at_utc": datetime.now(UTC).isoformat()})
+    write_json(
+        settings.artifacts_dir / "metrics_summary.json",
+        {"profiles": summary, "generated_at_utc": datetime.now(UTC).isoformat()},
+    )
     csv_rows = [{"profile": name, **values} for name, values in summary.items()]
     write_metrics_csv(settings.artifacts_dir / "qa_metrics.csv", csv_rows)
     write_metrics_csv(settings.artifacts_dir / "retrieval_metrics.csv", csv_rows)
@@ -269,7 +288,9 @@ def aggregate_phase3(
         for path in sorted(profile_dir.glob("*.json")):
             all_rows.append(json.loads(path.read_text()))
     summary = summarize_by_profile(all_rows)
-    write_json(artifacts_dir / "metrics_summary.json", {"profiles": summary, "generated_at_utc": datetime.now(UTC).isoformat()})
+    write_json(
+        artifacts_dir / "metrics_summary.json", {"profiles": summary, "generated_at_utc": datetime.now(UTC).isoformat()}
+    )
     csv_rows = [{"profile": name, **values} for name, values in summary.items()]
     write_metrics_csv(artifacts_dir / "qa_metrics.csv", csv_rows)
     write_metrics_csv(artifacts_dir / "retrieval_metrics.csv", csv_rows)

@@ -44,6 +44,10 @@ class RecoverySettings(BaseModel):
     correction: CorrectionSettings = Field(default_factory=CorrectionSettings)
     byt5_model: str = "google/byt5-small"
     enable_backtracking: bool = True
+    # Word-level correction uses a local ByT5 model. Offline reproducibility runs
+    # disable it so results do not depend on whether the model is cached locally;
+    # the committed evidence therefore reflects guarded-skip word-level recovery.
+    enable_byt5: bool = True
     vlm_backend: str = "mock"
     openai_model: str = "gpt-4o"
     enable_vlm: bool = True
@@ -75,8 +79,12 @@ class AppSettings(BaseModel):
     def model_post_init(self, __context: object) -> None:
         self.project_root = self.project_root.resolve()
         self.phase0_manifest = (self.phase0_manifest or self.project_root / "data/phase0/sample_manifest.csv").resolve()
-        self.phase0_summary = (self.phase0_summary or self.project_root / "data/phase0/phase0_asset_summary.json").resolve()
-        self.phase0_manual_labels = (self.phase0_manual_labels or self.project_root / "data/phase0/manual_labels.csv").resolve()
+        self.phase0_summary = (
+            self.phase0_summary or self.project_root / "data/phase0/phase0_asset_summary.json"
+        ).resolve()
+        self.phase0_manual_labels = (
+            self.phase0_manual_labels or self.project_root / "data/phase0/manual_labels.csv"
+        ).resolve()
         self.phase0_ocr_dir = (self.phase0_ocr_dir or self.project_root / "artifacts/phase0/ocr_text").resolve()
         self.logs_dir = (self.logs_dir or self.project_root / "logs/phase1").resolve()
         self.artifacts_dir = (self.artifacts_dir or self.project_root / "artifacts/phase1").resolve()
