@@ -5,6 +5,8 @@ from pathlib import Path
 
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
+from .resource_limits import enforce_memory_budget
+
 
 GOT_OCR_MODEL = "stepfun-ai/GOT-OCR-2.0-hf"
 
@@ -24,13 +26,17 @@ def extract_got_ocr(
     if not image_path.exists():
         raise FileNotFoundError(f"GOT-OCR input image is missing: {image_path}")
     model, processor = _load_got_ocr(model_name, revision)
+    enforce_memory_budget("GOT-OCR inference")
     inputs = processor(str(image_path), return_tensors="pt").to(model.device)
-    generated = model.generate(
-        **inputs,
-        do_sample=False,
-        tokenizer=processor.tokenizer,
-        stop_strings="<|im_end|>",
-        max_new_tokens=4096,
-    )
+    import torch
+
+    with torch.inference_mode():
+        generated = model.generate(
+            **inputs,
+            do_sample=False,
+            tokenizer=processor.tokenizer,
+            stop_strings="<|im_end|>",
+            max_new_tokens=4096,
+        )
     prompt_length = inputs["input_ids"].shape[1]
     return processor.decode(generated[0, prompt_length:], skip_special_tokens=True).strip()

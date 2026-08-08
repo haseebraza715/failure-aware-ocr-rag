@@ -10,6 +10,7 @@ from .api_logging import openai_cost_rates
 from .benchmarks import BenchmarkRepository
 from .metrics import exact_match, token_f1
 from .recovery import VisualFallback
+from .resource_limits import enforce_memory_budget
 from .settings import AppSettings
 
 
@@ -42,6 +43,7 @@ class ColPaliRetriever:
         processor_class = transformers.ColPaliProcessor
 
         self.image_paths = image_paths
+        batch_size = max(1, batch_size)
         self.device = _torch_device()
         dtype = torch.bfloat16 if self.device.type in {"cuda", "mps"} else torch.float32
         self.model = (
@@ -49,13 +51,22 @@ class ColPaliRetriever:
             .to(self.device)
             .eval()
         )
+        enforce_memory_budget("ColPali model load", torch)
         self.processor = processor_class.from_pretrained(model_name, revision=revision)
         embeddings = []
         for start in range(0, len(image_paths), batch_size):
-            images = [image_module.open(path).convert("RGB") for path in image_paths[start : start + batch_size]]
-            inputs = self.processor(images=images).to(self.device)
-            with torch.no_grad():
-                embeddings.append(self.model(**inputs).embeddings.detach().cpu())
+            images = []
+            try:
+                for path in image_paths[start : start + batch_size]:
+                    with image_module.open(path) as source:
+                        images.append(source.convert("RGB"))
+                enforce_memory_budget("ColPali batch", torch)
+                inputs = self.processor(images=images).to(self.device)
+                with torch.inference_mode():
+                    embeddings.append(self.model(**inputs).embeddings.detach().cpu())
+            finally:
+                for image in images:
+                    image.close()
         self.image_embeddings = torch.cat(embeddings, dim=0)
 
     def retrieve(self, query: str, top_k: int) -> list[tuple[Path, float]]:
@@ -83,8 +94,8 @@ class VisRAGRetriever:
         image_module = import_module("PIL.Image")
         transformers = import_module("transformers")
 
-        del batch_size
         self.image_paths = image_paths
+        self.batch_size = max(1, batch_size)
         self.device = _torch_device()
         dtype = torch.bfloat16 if self.device.type in {"cuda", "mps"} else torch.float32
         self.tokenizer = transformers.AutoTokenizer.from_pretrained(
@@ -102,7 +113,20 @@ class VisRAGRetriever:
             .to(self.device)
             .eval()
         )
-        self.image_embeddings = self._encode([image_module.open(path).convert("RGB") for path in image_paths])
+        enforce_memory_budget("VisRAG model load", torch)
+        chunks = []
+        for start in range(0, len(image_paths), self.batch_size):
+            images = []
+            try:
+                for path in image_paths[start : start + self.batch_size]:
+                    with image_module.open(path) as source:
+                        images.append(source.convert("RGB"))
+                enforce_memory_budget("VisRAG batch", torch)
+                chunks.append(self._encode(images))
+            finally:
+                for image in images:
+                    image.close()
+        self.image_embeddings = np.concatenate(chunks, axis=0)
 
     def _encode(self, values: list[Any]) -> np.ndarray:
         torch = import_module("torch")
@@ -114,7 +138,7 @@ class VisRAGRetriever:
             "image": [None] * len(values) if is_text else values,
             "tokenizer": self.tokenizer,
         }
-        with torch.no_grad():
+        with torch.inference_mode():
             outputs = self.model(**inputs)
             mask = outputs.attention_mask
             weighted_mask = mask * mask.cumsum(dim=1)

@@ -44,6 +44,19 @@ def _canonical_model_repository(repository: str) -> str:
     return MODEL_REPOSITORY_ALIASES.get(repository, repository)
 
 
+def _positive_int_env(name: str, fallback: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return fallback
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive integer; received {raw!r}.") from exc
+    if value < 1:
+        raise ValueError(f"{name} must be a positive integer; received {value}.")
+    return value
+
+
 class RetrievalSettings(BaseModel):
     chunk_size_words: int = 180
     chunk_overlap_words: int = 40
@@ -101,7 +114,9 @@ class RetrievalSettings(BaseModel):
             _locked_model_value("visrag", "revision"),
         )
     )
-    visual_batch_size: int = 4
+    visual_batch_size: int = Field(
+        default_factory=lambda: _positive_int_env("FAAR_VISUAL_BATCH_SIZE", 1)
+    )
 
 
 class GateSettings(BaseModel):
