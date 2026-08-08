@@ -111,3 +111,27 @@ def test_build_phase4_report_contains_required_sections() -> None:
     assert "claim_assessment" in report
     assert "case_studies" in report
     assert summarize_profile(rows_by_profile["faar_full"])["count"] == 1
+
+
+def test_phase4_claims_expose_measured_recovery_outcome() -> None:
+    rows_by_profile = {
+        "faar_full": [
+            _row(
+                example_id="ex1",
+                profile="faar_full",
+                failure_type="structural",
+                policy_action="invoke_vlm",
+                action="invoke_vlm",
+                f1=0.10,
+                em=0.0,
+            )
+        ],
+        "naive_rag": [_row(example_id="ex1", profile="naive_rag", f1=0.10)],
+        "faar_no_vlm": [_row(example_id="ex1", profile="faar_no_vlm", f1=0.10)],
+    }
+    claims = assess_phase4_claims(rows_by_profile)
+    q2 = claims["q2_typed_recovery_outperforms_naive_fallback"]
+    assert "measured_recovery_outcome" in q2
+    assert q2["measured_recovery_outcome"]["changed_answer_count"] == 0
+    q3 = claims["q3_selective_visual_fallback_trades_accuracy_for_cost"]
+    assert "measured_recovery_outcome" in q3
