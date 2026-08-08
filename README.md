@@ -23,7 +23,7 @@ Fully offline and deterministic: local-hash embeddings, a mock VLM, and ByT5 fro
 
 **What you'll see:**
 
-- The quality gate fires on **low lexical evidence** → semantic recovery re-queries → the correct answer at **0 multimodal tokens**.
+- The quality gate fires on **low lexical evidence** → semantic recovery re-queries → the answer (a single demo example; not a benchmark result).
 - A **clean example passes the gate** and answers directly, with no recovery and no multimodal spend.
 - A **routing table** shows word-level and structural routes; only the structural case would invoke a VLM (mock here, zero spend).
 
@@ -50,7 +50,14 @@ Text-first retrieval → the quality gate scores the evidence (lexical, OCR corr
 
 ## Honest research stance
 
-This is an in-progress research prototype. The checked-in tables describe an offline fixture run and are **not** evidence of live multimodal model quality.
+This is an in-progress research prototype. The checked-in tables describe an
+offline fixture run and are **not** evidence of live multimodal model quality.
+
+On the committed 40-example offline slice, the typed-recovery profiles are at
+**parity** with the naive baseline: measured recovery changed `0/15` routed
+recovery cases (EM/F1 effect `equal` in all 15). The mock VLM is a no-op, so **real-VLM answer
+quality is untested**. Claims here are limited to routing and cost control, not
+answer-quality improvement.
 
 ## Links
 

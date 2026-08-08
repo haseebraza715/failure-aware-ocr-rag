@@ -7,6 +7,13 @@
 **Branch:** `main`  
 **Purpose:** Provide a supervisor-ready, evidence-based summary of what has been built, what was updated in the latest cycle, and what the current results show.
 
+> **Note (2026-08-09):** The numbers in this dated report are superseded by the
+> refreshed offline aggregation in [results.md](../phases/phase3/results.md) and
+> `artifacts/phase3/metrics_summary.json` (EM 0.15, F1 0.2036, Recall@5 0.5,
+> NDCG@5 0.4533 across all profiles). The conclusions are unchanged: typed
+> recovery is at **parity** with the naive baseline (measured recovery changed
+> `0/15` routed recovery cases) and real-VLM answer quality is **untested**.
+
 ---
 
 ## 1. Executive Summary
