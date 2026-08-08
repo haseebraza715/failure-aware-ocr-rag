@@ -2,10 +2,21 @@
   "profile": "faar_no_vlm",
   "summary": {
     "count": 40,
-    "ndcg@5": 0.4789,
-    "recall@5": 0.525,
-    "em": 0.125,
+    "ndcg@5": 0.4533,
+    "recall@5": 0.5,
+    "em": 0.15,
     "f1": 0.2036,
-    "visual_fallback_rate": 0.0
+    "visual_fallback_rate": 0.0,
+    "recovery_outcomes": {
+      "reviewed_count": 14,
+      "changed_answer_count": 0,
+      "changed_answer_rate": 0.0,
+      "em_effect_distribution": {
+        "equal": 14
+      },
+      "f1_effect_distribution": {
+        "equal": 14
+      }
+    }
   }
 }
