@@ -9,31 +9,74 @@ python3 cluster/preflight.py --out cluster/preflight.json
 
 Send `cluster/preflight.json` back with the GPU model and available VRAM, CPU
 RAM or scheduler limit, free disk, CUDA version, and scheduler name. Do not
-send `.env` files, API keys, or model caches.
+send `.env` files, API keys, or model caches. The preflight reads only an
+explicit whitelist of environment variables and redacts secret-shaped strings
+before printing or writing the report; the `--out` write is atomic.
 
-Until the preflight is known, use conservative environment values for any
-visual smoke run:
+Beyond the basics, the report now carries:
+
+- parsed Slurm metadata (job id/name, partition, QOS, CPUs, memory, walltime,
+  and requested/on-node GPU counts) and PBS metadata (job id/name, queue, CPU
+  count, memory, GPU count, walltime);
+- cgroup v1/v2 current, peak, and limit memory;
+- `ulimit` soft/hard limits;
+- scratch (`TMPDIR`, `TMP`, `SCRATCH`, ...) and cache (`HF_HOME`,
+  `TRANSFORMERS_CACHE`, `TORCH_HOME`, `XDG_CACHE_HOME`) paths with
+  existence, writability, and free-space checks.
+
+## Launcher
+
+`cluster/launcher.py` is the generic entry point for one bounded job. It is
+pure-stdlib, never installs packages, never copies datasets, and never
+overrides `CUDA_VISIBLE_DEVICES`.
 
 ```bash
-export CUDA_VISIBLE_DEVICES=0
-export FAAR_VISUAL_BATCH_SIZE=1
-export OMP_NUM_THREADS=4
-export MKL_NUM_THREADS=4
-# Fill these in after preflight; they are fail-fast guards, not replacements
-# for the scheduler's hard memory limit.
-# export FAAR_MAX_RSS_GB=<agreed CPU-RAM budget in GiB>
-# export FAAR_MIN_GPU_FREE_GB=<GPU reserve in GiB>
+./.venv/bin/python cluster/launcher.py \
+  --project-root "$PWD" \
+  --gate on --recovery off --split test \
+  --out results/b1.json
 ```
 
-Run one process on one GPU. Do not launch B0--B4 in parallel. The visual
-retrievers process images in bounded chunks and keep the default batch size at
-one so the first job is safe on an unknown shared machine.
+It runs preflight, then:
 
-`FAAR_MAX_RSS_GB` stops the process before another inference step when recorded
-peak CPU memory is already above the configured budget. `FAAR_MIN_GPU_FREE_GB`
-stops before a batch when the requested GPU reserve is unavailable. Replace the
-example values with limits agreed with the lab; do not guess them for a paper
-run.
+1. Requires exactly one logical GPU unless `--cpu-only` is passed; a
+   multi-GPU or GPU-less allocation is rejected with exit code 2.
+2. Derives conservative guards only when absent:
+   - `FAAR_MAX_RSS_GB` (90% of the scheduler/cgroup CPU-RAM budget, else 50%
+     of physical memory),
+   - `FAAR_MIN_GPU_FREE_GB` (a 20% co-tenant reserve),
+   - `FAAR_MAX_GPU_MEMORY_FRACTION` (at most 50%, reduced by the reserve when the GPU is partly occupied),
+   - `OMP_NUM_THREADS` / `MKL_NUM_THREADS` (half the allocated CPUs).
+3. Refuses a GPU with less than 30% free VRAM. It validates the Hugging Face
+   cache and, only for a run that can invoke a VLM, a non-empty key required by
+   `VLM_BACKEND` (`OPENAI_API_KEY` for OpenAI or `ANTHROPIC_API_KEY` for
+   Claude). B0 does not require either key. Key values are never printed.
+4. Spawns `run.py` with a plain argv list (no shell interpolation) and
+   forwards `SIGTERM`/`SIGINT` to the child, propagating its exit code.
+
+Every launch writes a redacted, job-namespaced report under
+`results/environment/`; override this with `--preflight-out`.
+For deliberate reuse of an already-recorded preflight, set
+`FAAR_PREFLIGHT_JSON` to the report path; the launcher will not re-probe the
+host. `FAAR_PYTHON` overrides the interpreter used for `run.py`.
+
+## Scheduler templates
+
+Editable one-GPU templates call the launcher directly:
+
+- `cluster/templates/slurm_one_gpu.sbatch` — `--gpus=1`, bounded `--mem` and
+  `--time`, and `--signal=TERM@120` so Slurm delivers SIGTERM 120 s before
+  walltime.
+- `cluster/templates/pbs_one_gpu.pbs` — `ngpus=1` and bounded `ncpus`/`mem`/
+  `walltime`; its optional TORQUE `softwalltime` directive is disabled until
+  the target cluster confirms support.
+
+Both templates allocate exactly one GPU and never set `CUDA_VISIBLE_DEVICES`
+(Slurm and PBS manage the allocation themselves). Edit the budget knobs and
+the `run.py` arguments; do not guess paper values.
+
+Credentials are read from the submit environment or a `.env` at the repository
+root. Never write keys into a template file.
 
 ## Staged execution
 

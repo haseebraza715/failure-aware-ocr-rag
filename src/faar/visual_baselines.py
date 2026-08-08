@@ -11,6 +11,7 @@ from .benchmarks import BenchmarkRepository
 from .metrics import exact_match, token_f1
 from .recovery import VisualFallback
 from .resource_limits import (
+    enforce_gpu_memory_fraction,
     enforce_memory_budget,
     release_cuda_cache,
     select_dtype,
@@ -46,6 +47,7 @@ class ColPaliRetriever:
         self.score_batch_size = score_batch_size
         self.device = torch_device(torch)
         dtype = select_dtype(self.device, torch)
+        enforce_gpu_memory_fraction(torch)
         self.model = (
             model_class.from_pretrained(
                 model_name,
@@ -127,6 +129,7 @@ class VisRAGRetriever:
         self.batch_size = max(1, batch_size)
         self.device = torch_device(torch)
         dtype = select_dtype(self.device, torch)
+        enforce_gpu_memory_fraction(torch)
         self.tokenizer = transformers.AutoTokenizer.from_pretrained(
             model_name,
             revision=revision,

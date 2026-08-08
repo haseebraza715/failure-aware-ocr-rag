@@ -11,6 +11,9 @@ if str(SRC) not in sys.path:
 
 @pytest.fixture(autouse=True)
 def isolate_model_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    from faar import resource_limits
+
+    monkeypatch.setattr(resource_limits, "_GPU_MEMORY_FRACTION_APPLIED", False)
     for name in (
         "EMBED_MODEL",
         "EMBED_MODEL_REPO",
@@ -37,5 +40,8 @@ def isolate_model_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
         "FAAR_VISUAL_SCORE_BATCH_SIZE",
         "FAAR_MAX_RSS_GB",
         "FAAR_MIN_GPU_FREE_GB",
+        "FAAR_MAX_GPU_MEMORY_FRACTION",
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
     ):
         monkeypatch.delenv(name, raising=False)

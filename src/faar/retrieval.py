@@ -10,7 +10,7 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder, SentenceTransformer
 
-from .resource_limits import select_dtype, torch_device
+from .resource_limits import enforce_gpu_memory_fraction, select_dtype, torch_device
 from .settings import RetrievalSettings
 from .types import Chunk, RetrievalHit
 
@@ -41,6 +41,7 @@ def _load_embedding_model(model_name: str, revision: str | None) -> SentenceTran
     torch = import_module("torch")
     device = torch_device(torch)
     dtype = select_dtype(device, torch)
+    enforce_gpu_memory_fraction(torch)
     return SentenceTransformer(
         resolved_name,
         revision=revision,
@@ -56,6 +57,7 @@ def _load_reranker(model_name: str, revision: str | None) -> CrossEncoder:
     torch = import_module("torch")
     device = torch_device(torch)
     dtype = select_dtype(device, torch)
+    enforce_gpu_memory_fraction(torch)
     return CrossEncoder(
         resolved_name,
         revision=revision,

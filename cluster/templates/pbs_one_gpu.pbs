@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#PBS -N faar-one-gpu
+#PBS -l select=1:ncpus=8:mem=32gb:ngpus=1
+#PBS -l walltime=08:00:00
+#PBS -q gpu
+#PBS -o logs/faar-$PBS_JOBID.out
+#PBS -e logs/faar-$PBS_JOBID.err
+
+# Edit the resource directives for the confirmed lab allocation.
+# Configure the lab's supported pre-walltime signal option before long runs.
+
+set -euo pipefail
+cd "${PBS_O_WORKDIR:-$PWD}"
+mkdir -p logs
+
+export VLM_BACKEND="${VLM_BACKEND:-openai}"
+export FAAR_PYTHON="${FAAR_PYTHON:-$PWD/.venv/bin/python}"
+
+"${FAAR_PYTHON}" cluster/launcher.py \
+  --project-root "${PBS_O_WORKDIR:-$PWD}" \
+  --gate off \
+  --recovery off \
+  --split test \
+  --out "results/b0_pbs_${PBS_JOBID}.json"

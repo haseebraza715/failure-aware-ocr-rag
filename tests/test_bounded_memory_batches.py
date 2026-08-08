@@ -463,6 +463,102 @@ def test_build_visual_retriever_empty_corpus_fails_clearly(monkeypatch, tmp_path
         visual_baselines.build_visual_retriever("visrag", _FakeRepository([]), settings)
 
 
+def test_optional_fraction_validates_open_interval(monkeypatch) -> None:
+    monkeypatch.delenv("FAAR_MAX_GPU_MEMORY_FRACTION", raising=False)
+    assert resource_limits._optional_fraction("FAAR_MAX_GPU_MEMORY_FRACTION") is None
+    monkeypatch.setenv("FAAR_MAX_GPU_MEMORY_FRACTION", "0.5")
+    assert resource_limits._optional_fraction("FAAR_MAX_GPU_MEMORY_FRACTION") == 0.5
+    for bad in ("0", "1.5", "-0.1", "abc"):
+        monkeypatch.setenv("FAAR_MAX_GPU_MEMORY_FRACTION", bad)
+        with pytest.raises(ValueError, match="positive fraction in \\(0, 1\\]"):
+            resource_limits._optional_fraction("FAAR_MAX_GPU_MEMORY_FRACTION")
+    monkeypatch.setenv("FAAR_MAX_GPU_MEMORY_FRACTION", " ")
+    assert resource_limits._optional_fraction("FAAR_MAX_GPU_MEMORY_FRACTION") is None
+
+
+def test_enforce_gpu_memory_fraction_sets_once_with_mock(monkeypatch) -> None:
+    calls: list[tuple[float, int]] = []
+
+    class FakeCuda:
+        @staticmethod
+        def is_available() -> bool:
+            return True
+
+        @staticmethod
+        def set_per_process_memory_fraction(fraction: float, device: int) -> None:
+            calls.append((fraction, device))
+
+    resource_limits._GPU_MEMORY_FRACTION_APPLIED = False
+    monkeypatch.setenv("FAAR_MAX_GPU_MEMORY_FRACTION", "0.6")
+    resource_limits.enforce_gpu_memory_fraction(SimpleNamespace(cuda=FakeCuda))
+    resource_limits.enforce_gpu_memory_fraction(SimpleNamespace(cuda=FakeCuda))
+    assert calls == [(0.6, 0)]
+
+
+def test_enforce_gpu_memory_fraction_noop_without_env(monkeypatch) -> None:
+    monkeypatch.delenv("FAAR_MAX_GPU_MEMORY_FRACTION", raising=False)
+    resource_limits._GPU_MEMORY_FRACTION_APPLIED = False
+
+    class FakeCuda:
+        @staticmethod
+        def is_available() -> bool:
+            return True
+
+        @staticmethod
+        def set_per_process_memory_fraction(fraction, device) -> None:
+            raise AssertionError("must not cap without a configured fraction")
+
+    resource_limits.enforce_gpu_memory_fraction(SimpleNamespace(cuda=FakeCuda))
+
+
+def test_enforce_gpu_memory_fraction_noop_without_cuda(monkeypatch) -> None:
+    monkeypatch.setenv("FAAR_MAX_GPU_MEMORY_FRACTION", "0.5")
+    resource_limits._GPU_MEMORY_FRACTION_APPLIED = False
+
+    class FakeCuda:
+        @staticmethod
+        def is_available() -> bool:
+            return False
+
+        @staticmethod
+        def set_per_process_memory_fraction(fraction, device) -> None:
+            raise AssertionError("must not cap without CUDA")
+
+    resource_limits.enforce_gpu_memory_fraction(SimpleNamespace(cuda=FakeCuda))
+
+
+def test_enforce_gpu_memory_fraction_raises_when_api_unavailable(monkeypatch) -> None:
+    class FakeCuda:
+        @staticmethod
+        def is_available() -> bool:
+            return True
+
+    resource_limits._GPU_MEMORY_FRACTION_APPLIED = False
+    monkeypatch.setenv("FAAR_MAX_GPU_MEMORY_FRACTION", "0.5")
+    with pytest.raises(RuntimeError, match="set_per_process_memory_fraction is unavailable"):
+        resource_limits.enforce_gpu_memory_fraction(SimpleNamespace(cuda=FakeCuda))
+
+
+def test_retrieval_model_loads_call_gpu_fraction_guard(monkeypatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        retrieval,
+        "enforce_gpu_memory_fraction",
+        lambda torch_module: calls.append("fraction"),
+    )
+    monkeypatch.setattr(retrieval, "torch_device", lambda torch_module: SimpleNamespace(type="cpu"))
+    monkeypatch.setattr(retrieval, "select_dtype", lambda device, torch_module: "fp32")
+    monkeypatch.setattr(retrieval, "SentenceTransformer", lambda *args, **kwargs: object())
+    monkeypatch.setattr(retrieval, "CrossEncoder", lambda *args, **kwargs: object())
+    retrieval._load_embedding_model.cache_clear()
+    retrieval._load_reranker.cache_clear()
+    retrieval._load_embedding_model("mock-embed", None)
+    retrieval._load_reranker("mock-rerank", None)
+    assert calls == ["fraction", "fraction"]
+    retrieval._load_embedding_model.cache_clear()
+    retrieval._load_reranker.cache_clear()
+
+
 def test_hybrid_retriever_drops_corpus_embedding_array(monkeypatch, tmp_path: Path) -> None:
     chunks = [
         Chunk(chunk_id="c0", example_id="e0", doc_name="doc", page_id=1, text="the quick brown fox"),

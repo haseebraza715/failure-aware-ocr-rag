@@ -23,6 +23,19 @@ def _optional_gb(name: str) -> float | None:
     return value
 
 
+def _optional_fraction(name: str) -> float | None:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive fraction in (0, 1]; received {raw!r}.") from exc
+    if not 0 < value <= 1:
+        raise ValueError(f"{name} must be a positive fraction in (0, 1]; received {value}.")
+    return value
+
+
 def _peak_rss_bytes() -> int | None:
     if resource is None:
         return None
@@ -105,6 +118,32 @@ def release_cuda_cache(torch_module: Any | None = None) -> None:
     except RuntimeError:
         if not active_exception:
             raise
+
+
+_GPU_MEMORY_FRACTION_APPLIED = False
+
+
+def enforce_gpu_memory_fraction(torch_module: Any | None = None) -> None:
+    global _GPU_MEMORY_FRACTION_APPLIED
+    fraction = _optional_fraction("FAAR_MAX_GPU_MEMORY_FRACTION")
+    if fraction is None:
+        return
+    if torch_module is None:
+        torch_module = _import_torch()
+        if torch_module is None:
+            return
+    if not torch_module.cuda.is_available():
+        return
+    if _GPU_MEMORY_FRACTION_APPLIED:
+        return
+    try:
+        torch_module.cuda.set_per_process_memory_fraction(fraction, 0)
+    except AttributeError as exc:
+        raise RuntimeError(
+            "torch.cuda.set_per_process_memory_fraction is unavailable; "
+            "cannot enforce FAAR_MAX_GPU_MEMORY_FRACTION."
+        ) from exc
+    _GPU_MEMORY_FRACTION_APPLIED = True
 
 
 def enforce_memory_budget(stage: str, torch_module: Any | None = None) -> None:

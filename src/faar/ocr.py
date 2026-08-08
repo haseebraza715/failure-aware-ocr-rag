@@ -5,7 +5,13 @@ from pathlib import Path
 
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
-from .resource_limits import enforce_memory_budget, release_cuda_cache, select_dtype, torch_device
+from .resource_limits import (
+    enforce_gpu_memory_fraction,
+    enforce_memory_budget,
+    release_cuda_cache,
+    select_dtype,
+    torch_device,
+)
 
 
 GOT_OCR_MODEL = "stepfun-ai/GOT-OCR-2.0-hf"
@@ -18,6 +24,7 @@ def _load_got_ocr(model_name: str, revision: str | None):
     processor = AutoProcessor.from_pretrained(model_name, revision=revision, use_fast=True)
     device = torch_device(torch)
     dtype = select_dtype(device, torch)
+    enforce_gpu_memory_fraction(torch)
     model = AutoModelForImageTextToText.from_pretrained(
         model_name,
         revision=revision,
