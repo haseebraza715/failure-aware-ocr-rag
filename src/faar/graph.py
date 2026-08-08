@@ -86,7 +86,15 @@ def build_graph(settings: AppSettings):
         applied = 0
         decisions: list[dict[str, str | bool]] = []
         for hit in state["retrieved_hits"]:
-            proposal = corrector.propose_correction(hit.chunk.text)
+            if not settings.recovery.enable_byt5:
+                proposal = {
+                    "text": hit.chunk.text,
+                    "candidate": hit.chunk.text,
+                    "applied": False,
+                    "reason": "byt5_disabled_by_profile",
+                }
+            else:
+                proposal = corrector.propose_correction(hit.chunk.text)
             corrected_text = str(proposal["text"]) or hit.chunk.text
             decisions.append(
                 {
@@ -111,12 +119,18 @@ def build_graph(settings: AppSettings):
                     fused_score=hit.fused_score,
                 )
             )
+        if not settings.recovery.enable_byt5:
+            outcome_reason = "byt5_disabled_by_profile"
+        elif applied:
+            outcome_reason = "byt5_correction_applied"
+        else:
+            outcome_reason = "byt5_correction_guarded"
         return {
             "corrected_hits": updated_hits,
             "action_outcome": {
                 "action": "correct_text",
                 "status": "succeeded" if applied else "skipped",
-                "reason": "byt5_correction_applied" if applied else "byt5_correction_guarded",
+                "reason": outcome_reason,
                 "applied_count": applied,
                 "reviewed_count": len(state["retrieved_hits"]),
                 "decisions": decisions,
