@@ -1,0 +1,425 @@
+\documentclass[10pt]{article}
+
+\usepackage[margin=0.72in]{geometry}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{longtable}
+\usepackage{microtype}
+\usepackage{tabularx}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+\hypersetup{
+  pdftitle={FAAR to AAAI: Verified Findings and Execution Status},
+  pdfauthor={FAAR repository evidence report}
+}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\setlength{\tabcolsep}{4pt}
+\emergencystretch=2em
+\setlist{nosep,leftmargin=*}
+\renewcommand{\arraystretch}{1.15}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcommand{\pending}{\textit{pending}}
+\newcommand{\notrun}{\textit{not run}}
+\newcommand{\paperfalse}{\textbf{not paper eligible}}
+
+\title{FAAR to AAAI\\Verified Findings and Execution Status}
+\author{Evidence report generated from the FAAR repository}
+\date{8 August 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{quote}
+\textbf{Scope warning.} This is a FAAR report for the repository under review. It is not the unrelated ACOM paper. All numbers below are copied from repository artifacts or the run log. A number is not treated as a paper result unless the underlying run is a real planned experiment with a saved result artifact.
+\end{quote}
+
+\section{Executive summary}
+
+The repository is on branch \texttt{faar-aaai-experiments}. It contains two related but different evidence layers:
+
+\begin{enumerate}
+  \item The prototype layer contains a reproducible, offline, 40-example mock evaluation and the implemented FAAR controller.
+  \item The AAAI execution layer contains the locked protocol, model and dataset provenance, asset preparation, smoke testing, and commands for the planned B0 to B4 baselines.
+\end{enumerate}
+
+The central result of this audit is:
+
+\begin{center}
+\fbox{\parbox{0.92\linewidth}{\centering
+The planned AAAI baselines B0, B1, B2, B3, and B4 have produced \textbf{zero of five paper-eligible result files}. The only B0 file is explicitly a one-document smoke test and is marked \texttt{paper\_result=false}.
+}}
+\end{center}
+
+The prototype slice does contain numbers. On the current 40-example offline mock profile run, every compared profile has EM $=0.1250$ and F1 $=0.2036$. FAAR has not shown a quality advantage over \texttt{naive\_rag} on this slice: the recorded deltas are zero. The same artifacts support selective routing and diagnosis-policy consistency, but they do not support a broader answer-quality improvement claim.
+
+The remaining work is therefore experimental execution, not another paper rewrite: complete the GPU-backed assets, finish ArXivQA page confirmation and OCR, obtain MP-DocVQA, run B0 to B4 in order with B2 included, and only then populate paper tables.
+
+\section{How the repository was interpreted}
+
+The apparent contradiction between earlier progress wording and the actual baseline state comes from two phase vocabularies in the same FAAR repository.
+
+\begin{longtable}{L{0.19\linewidth} L{0.35\linewidth} L{0.37\linewidth}}
+\caption{Evidence layers that must not be conflated.}\\
+\toprule
+\textbf{Layer} & \textbf{What it contains} & \textbf{How it is used in this report}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Layer} & \textbf{What it contains} & \textbf{How it is used in this report}\\
+\midrule
+\endhead
+Prototype & The earlier FAAR controller, formal method mapping, 40-example benchmark profiles, phase reports, and claim artifacts. & Reported as offline prototype evidence. It is useful for engineering and hypothesis checking, but it is not substituted for the planned AAAI B0 to B4 runs. \\
+AAAI execution & The fixed OHR split, pinned model revisions, asset contracts, full-paper ArXivQA preparation, B0 smoke path, and the ordered B0 to B4 protocol. & Reported as readiness and execution status. A planned baseline counts only when its real result file and provenance exist. \\
+\bottomrule
+\end{longtable}
+
+The older prototype report says that Phases 0 to 4 are complete, while its benchmark command uses a mock VLM and \texttt{--no-api-enabled}. The AAAI execution plan separately states that no Phase 1 baseline has started. This report preserves both facts and labels them by layer instead of merging them.
+
+\textbf{Primary evidence:} \path{PLAN.md}, \path{RUNLOG.md}, and the supervisor report listed in the evidence index.
+
+\section{Phase and plan status}
+
+\subsection{AAAI execution track}
+
+\begin{longtable}{L{0.13\linewidth} L{0.19\linewidth} L{0.49\linewidth} L{0.12\linewidth}}
+\caption{AAAI execution status at the report date.}\\
+\toprule
+\textbf{Phase} & \textbf{Status} & \textbf{Verified work} & \textbf{Paper run}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Phase} & \textbf{Status} & \textbf{Verified work} & \textbf{Paper run}\\
+\midrule
+\endhead
+0 Setup & Implementation complete; asset readiness incomplete & Fixed OHR split, dataset registration, pinned loaders, shared-corpus guards, Docling and GOT-OCR preparation, API accounting, evaluation fields, model provenance, and one-document smoke path. & Smoke only \\
+1 Baselines & Protocol implemented; execution pending & Ordered B0, B1, B2, B3, B4 commands are recorded. No full baseline result file exists. & 0 of 5 \\
+2 Quality gate & Implementation complete; real validation pending & BGE top-1 threshold search and lock-file machinery exist. A real B0 validation result is required before choosing a threshold. & Not started \\
+3 Annotation & Tooling complete; human study pending & Failure sampling, GOT-OCR extraction, Label Studio assets, and kappa verification are implemented. & Not started \\
+4 Main FAAR runs & Implementation complete; assets and credentials pending & Dataset and split provenance, complete-asset guards, runner, and cost logging exist. & Not started \\
+5 Ablations & Implementation complete; experiment inputs pending & A1 to A4 routing variants and tests exist. & Not started \\
+6 Analysis & Implementation complete; real result JSONs pending & Bootstrap intervals, failure-type analysis, harm rate, and Pareto export are implemented. & Not started \\
+7 Tables and submission checks & Generation tooling complete; inputs pending & Table and figure generation plus anonymization checks exist. No final paper PDF is present. & Not started \\
+\bottomrule
+\end{longtable}
+
+The phase statuses above come from \path{PLAN.md:25-37}, \path{PLAN.md:39-71}, \path{PLAN.md:73-119}, and the latest entries in \path{RUNLOG.md:61-69}. ``Complete'' in the implementation column means code and contracts are present; it does not mean that the corresponding paper experiment has been executed.
+
+\subsection{Prototype track}
+
+The earlier prototype phases are operationally useful and have committed evidence:
+
+\begin{itemize}
+  \item Prototype Phase 0: a fixed 40-example grounding set with 33 no-issue, 5 text-corruption, and 2 structure-corruption examples.
+  \item Prototype Phase 1: a working LangGraph controller with typed recovery and a completed one-example end-to-end prototype log.
+  \item Prototype Phase 2: formal definitions and code-to-math mapping for $Q$, $F$, $\pi$, and $U$.
+  \item Prototype Phase 3: profile runner and metric exports for \texttt{faar\_full}, \texttt{faar\_no\_backtrack}, \texttt{faar\_no\_vlm}, \texttt{faar\_no\_diagnosis}, and \texttt{naive\_rag}.
+  \item Prototype Phase 4: claim assessment and case-study artifacts.
+  \item Prototype Phase 5: claim-safe writing scaffolding.
+\end{itemize}
+
+These are prototype implementation milestones. They are not evidence that the AAAI B0 to B4 protocol has been run.
+
+\section{Verified data and asset findings}
+
+\subsection{OHR-Bench split and smoke test}
+
+\begin{table}[ht]
+\centering
+\caption{Locked OHR-Bench counts and observed preparation costs.}
+\begin{tabular}{L{0.26\linewidth} r r r L{0.28\linewidth}}
+\toprule
+\textbf{Item} & \textbf{Questions} & \textbf{Documents} & \textbf{Pages} & \textbf{Evidence}\\
+\midrule
+Train split & 5,948 & -- & -- & \path{RUNLOG.md:8}\\
+Validation split & 1,274 & 549 & 7,033 & \path{RUNLOG.md:50}\\
+Test split & 1,276 & 567 & 6,842 & \path{RUNLOG.md:50}\\
+One-document smoke & 1 & 1 & 1 & \path{RUNLOG.md:57}, \path{RUNLOG.md:64}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The selected smoke document is \texttt{academic/DUDE\_157911e3080d18f4d799a122aaeb33fb}. The observed one-page run used MPS and recorded Docling time of 8.91 seconds, rendering time of 0.85 seconds, GOT-OCR time of 1,484.05 seconds per page, peak RSS of 1.72 GiB, a 609,929-byte PNG, a 7,100-byte OCR file, and an approximately 2.12 GiB GOT-OCR cache. A linear extrapolation recorded in the run log gives approximately 2,899 OCR-hours for the validation pages and 2,821 OCR-hours for the test pages. These are planning estimates, not completed runtimes.
+
+The B0 smoke used one example, 14 chunks from real GOT-OCR text, lexical mock retrieval, no paid API request, and no paper-result aggregation. An earlier intermediate asset-load note records 48 chunks for the same one-document preparation path. The difference is an intermediate corpus accounting detail and is not used as an experimental result.
+
+\subsection{ArXivQA full-paper remapping preparation}
+
+\begin{table}[ht]
+\centering
+\caption{ArXivQA preparation evidence.}
+\begin{tabular}{L{0.48\linewidth} L{0.37\linewidth}}
+\toprule
+\textbf{Quantity} & \textbf{Verified value}\\
+\midrule
+Staged QA rows & 500 \\
+Distinct papers & 497 \\
+Rendered paper pages & 8,955 \\
+Candidate mappings accepted & 0 \\
+Candidate mappings unresolved & 500 \\
+OCR entries in paper inventory & 0 \\
+Inventory state & \texttt{preparation\_only} \\
+Paper-ready flag & \texttt{false} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The staged subset was matched against the official 100,000-row JSONL using image, question, answer, and normalized options. The exact source locks are recorded below.
+
+\begin{center}
+\scriptsize
+\begin{tabular}{L{0.22\linewidth} L{0.68\linewidth}}
+\toprule
+Official revision & \texttt{85a6dca0e2bdc6f0268ae519be8913f83a83cafd} \\
+Official SHA-256 & \texttt{d66cee08f152747ea58ce7851310c97229dcc6103901b3041ea988ad11eb1b96} \\
+ViDoRe revision & \texttt{b8a106812c8682bab08935cf5d1b4566c82562de} \\
+ViDoRe SHA-256 & \texttt{a45cb85bb49dce83b1beb851e312fe38179035151a55401a8801a2e53c1159d3} \\
+Staged-row fingerprint & \texttt{ccb60459021d211628c399682437841158e1ca238799a3cd81eef63026a7fa9a} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The withdrawn paper \texttt{2304.04203} has an explicit \texttt{v1} override. Its recorded v1 match score is 0.7699745893478394, while the maximum v2 score is 0.2556701898574829. This is provenance for an asset override, not a model evaluation score.
+
+The exact source and readiness fields are in the following files:
+
+\begin{itemize}
+  \item \path{config/arxivqa_source_lock.json}
+  \item \path{data/benchmark_prep/arxivqa/staging_manifest.json}
+  \item \path{data/benchmark_prep/arxivqa/paper_inventory.json}
+  \item \path{data/benchmark_prep/arxivqa/evidence_candidates.json}
+\end{itemize}
+
+The latest run-log summary is \path{RUNLOG.md:66-69}.
+
+\subsection{Other data blockers}
+
+MP-DocVQA validation is not present locally. The run log records the expected validation scale as 5,187 questions, 927 documents, and 6,510 pages, with download access requiring the authenticated RRC DocVQA Task 4 portal. Complete OHR OCR and final ArXivQA OCR also require GPU compute. The OpenAI baseline calls have not started.
+
+\section{Baseline numbers}
+
+\subsection{Planned AAAI baselines B0 to B4}
+
+\begin{longtable}{L{0.12\linewidth} L{0.31\linewidth} L{0.42\linewidth}}
+\caption{Paper-eligibility audit for the planned baselines.}\\
+\toprule
+\textbf{ID} & \textbf{Expected output} & \textbf{Verified status}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{ID} & \textbf{Expected output} & \textbf{Verified status}\\
+\midrule
+\endhead
+B0 & \path{results/b0.json} & Absent. Only \path{results/smoke/b0_one_doc.json} exists, and it is explicitly a one-document smoke test. \\
+B1 & \path{results/b1.json} & Absent. No always-VLM baseline result exists. \\
+B2 & \path{results/b2.json} & Absent. No random-recovery baseline result exists. This required ablation is not skipped; it is still pending. \\
+B3 & \path{results/b3.json} & Absent. No ColPali baseline result exists. \\
+B4 & \path{results/b4.json} & Absent. No VisRAG baseline result exists. \\
+\midrule
+Total & Five planned paper baselines & \textbf{0 of 5 completed} \\
+\bottomrule
+\end{longtable}
+
+The ordered commands are recorded in \path{docs/faar-aaai-plan.md:47-59}, and the absence of the five files was checked in the repository result directory. Earlier blocked attempts are recorded in \path{RUNLOG.md:12-16}. They did not create result files and are not treated as results.
+
+\subsection{B0 one-document smoke numbers}
+
+\begin{table}[ht]
+\centering
+\caption{B0 smoke payload, reported only as a smoke test.}
+\begin{tabular}{L{0.39\linewidth} r}
+\toprule
+\textbf{Field} & \textbf{Value}\\
+\midrule
+Evaluation examples & 1 \\
+EM & 0.0 \\
+F1 & 0.0 \\
+VLM rate & 0.0 \\
+Harm rate & 0.0 \\
+API requests & 0 \\
+Prompt tokens & 0 \\
+Completion tokens & 0 \\
+Cost in USD & 0.0 \\
+Runtime in seconds & 0.0226 \\
+Mock retrieval & \texttt{true} \\
+API enabled & \texttt{false} \\
+Paper result & \texttt{false} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The values above are from \path{results/smoke/b0_one_doc.json}. The file also records the fixed model names and revisions, but the smoke path did not perform a paid VLM call or a full pinned-model baseline run. It must not be placed in a paper table beside B1 to B4.
+
+\subsection{Prototype offline mock profile numbers}
+
+The following table is real repository output, but it is a separate offline mock profile evaluation with $n=40$ per profile. It is not B0 to B4.
+
+\begin{table}[ht]
+\centering
+\caption{Offline 40-example mock profile evaluation.}
+\begin{tabular}{L{0.24\linewidth} r r r r r r}
+\toprule
+\textbf{Profile} & \textbf{N} & \textbf{NDCG@5} & \textbf{Recall@5} & \textbf{EM} & \textbf{F1} & \textbf{VLM fallback}\\
+\midrule
+\texttt{faar\_full} & 40 & 0.4789 & 0.5250 & 0.1250 & 0.2036 & 0.0750 \\
+\texttt{faar\_no\_backtrack} & 40 & 0.4789 & 0.5250 & 0.1250 & 0.2036 & 0.0750 \\
+\texttt{faar\_no\_diagnosis} & 40 & 0.4789 & 0.5250 & 0.1250 & 0.2036 & 0.0000 \\
+\texttt{faar\_no\_vlm} & 40 & 0.4789 & 0.5250 & 0.1250 & 0.2036 & 0.0000 \\
+\texttt{naive\_rag} & 40 & 0.4789 & 0.5250 & 0.1250 & 0.2036 & 0.0000 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Source: \path{artifacts/phase3/metrics_summary.json} and \path{artifacts/phase4/profile_deltas_vs_baseline.csv}. The supervisor report records a rerun with 40 examples, seed 42, a mock VLM backend, and API calls disabled. The profile deltas versus \texttt{naive\_rag} are zero for EM, F1, NDCG@5, and Recall@5 for every profile.
+
+\subsection{Prototype routing and claim findings}
+
+For \texttt{faar\_full} on the same 40-example mock slice, the recorded routing distribution is:
+
+\begin{center}
+\begin{tabular}{L{0.32\linewidth} r r}
+\toprule
+\textbf{Route or failure type} & \textbf{Count} & \textbf{Rate}\\
+\midrule
+Pass / answer direct & 21 & 0.525 \\
+Word level / correct text & 14 & 0.350 \\
+Structural / invoke VLM & 3 & 0.075 \\
+Semantic / retry retrieval & 2 & 0.050 \\
+Non-pass total & 19 & 0.475 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The claim artifact marks the following as supported or unsupported:
+
+\begin{itemize}
+  \item Selective fallback cost behavior: supported in this mock profile artifact; visual fallback rate $=0.075$, with an estimated $0.925$ savings relative to an always-on visual profile.
+  \item Diagnosis-policy consistency: supported; recorded consistency $=1.0$.
+  \item Typed-recovery quality gain over \texttt{naive\_rag}: not supported; delta F1 $=0.0$ and delta EM $=0.0$.
+  \item Selective visual fallback quality gain over no VLM: not supported; delta F1 $=0.0$ and delta EM $=0.0$.
+\end{itemize}
+
+These are conservative prototype findings. The supervisor report explicitly states that the command used a mock visual backend with API calls disabled, so the results do not establish performance of the full multimodal AAAI stack.
+
+\section{Implementation changes and provenance}
+
+The current AAAI change set added or hardened the following repository capabilities:
+
+\begin{itemize}
+  \item locked OHR split and dataset registration;
+  \item complete-document retrieval contracts that prevent evidence pages from defining the retrieval corpus;
+  \item exact model revision recording for NV-Embed-v2, BGE reranker, GOT-OCR, ColPali, VisRAG, and ByT5;
+  \item Docling and pinned GOT-OCR asset preparation with resumable provenance;
+  \item OpenAI request, token, cost, request-model, response-model, and completion-time logging;
+  \item strict full-paper ArXivQA remapping with source fingerprints, version overrides, PDF and image hashes, and human-confirmed mapping requirements;
+  \item one-document B0 smoke execution and explicit smoke-versus-paper-result fields;
+  \item phase 2 gate tuning, phase 3 annotation, phase 4 main-run, phase 5 ablation, phase 6 analysis, and phase 7 table-generation tooling;
+  \item tests for routing, provenance, path safety, shared-corpus integrity, ArXivQA preparation, remapping, and CLI behavior.
+\end{itemize}
+
+The most recent ArXivQA-related commits are:
+
+\begin{longtable}{L{0.14\linewidth} L{0.36\linewidth} L{0.42\linewidth}}
+\caption{Recent committed changes on the FAAR experiment branch.}\\
+\toprule
+\textbf{Commit} & \textbf{Message} & \textbf{Purpose}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Commit} & \textbf{Message} & \textbf{Purpose}\\
+\midrule
+\endhead
+\texttt{17128f0} & Ignore external benchmark inputs & Keep downloaded inputs outside versioned source. \\
+\texttt{5fffe18} & Lock ArXivQA remapping sources & Record exact source revisions and hashes. \\
+\texttt{78ad6f2} & Prepare full-paper ArXivQA assets & Add preparation workflow and inventory support. \\
+\texttt{fbab33e} & Add ArXivQA preparation CLI & Expose repeatable staging and preparation commands. \\
+\texttt{2bd47e8} & Harden ArXivQA remapping provenance & Fail closed on source and mapping inconsistencies. \\
+\texttt{d4bc236} & Cover ArXivQA asset preparation & Add preparation and provenance tests. \\
+\texttt{2791339} & Enforce full-paper remap integrity & Protect complete-paper retrieval and mapping contracts. \\
+\texttt{b69fb2b} & Record ArXivQA preparation evidence & Document asset counts, status, and blockers. \\
+\texttt{94e27a6} & Refresh phase zero asset status & Update readiness and execution status. \\
+\texttt{8a7ef92} & Ignore local build artifacts & Keep generated build output out of source control. \\
+\bottomrule
+\end{longtable}
+
+The branch was clean and matched \texttt{origin/faar-aaai-experiments} before this report was added. The full history remains available through Git; the table highlights the latest experiment-specific changes rather than claiming that these are the only changes in the repository.
+
+\section{Verification status}
+
+The latest repository run log records the following engineering checks:
+
+\begin{longtable}{L{0.35\linewidth} L{0.25\linewidth} L{0.30\linewidth}}
+\caption{Verification evidence and limits.}\\
+\toprule
+\textbf{Check} & \textbf{Recorded result} & \textbf{Interpretation}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Check} & \textbf{Recorded result} & \textbf{Interpretation}\\
+\midrule
+\endhead
+Locked Python test suite & 136 passed, 4 warnings & Current committed implementation regression check passed. \\
+Locked dependency check & \texttt{pip check} passed & The locked environment has consistent declared dependencies. \\
+Compilation and package build & Passed in run log & Source compiles and a wheel was previously built. \\
+Split integrity & \scriptsize\path{RUNLOG.md:28,47,59} & The immutable split was not changed. \\
+Credential tracking check & No credential files tracked & No API secret was added to Git. \\
+Coverage & No committed coverage result & Coverage is not a verified project result yet. \\
+Dead-code check & No configured dead-code report & No deletion should be justified from an unconfigured tool. \\
+\bottomrule
+\end{longtable}
+
+The verification evidence is recorded in \path{RUNLOG.md:65-69}, \path{results/environment/pip-freeze.txt}, and \path{pyproject.toml}. The repository has a GitHub Actions pytest workflow, but a passing local test suite is not the same as a completed paper evaluation.
+
+\subsection{Requested external worker audit}
+
+Five read-only OpenCode workers were launched with the requested main, non-free DeepSeek Flash model. The first attempt was blocked by the local sandbox network boundary. A retry with network permission reached the requested service, but all five jobs were rejected with an ``Insufficient balance'' error before producing review output. The free model was not used, and no worker output was incorporated as evidence. The repository audit in this document is therefore based on the checked-in artifacts and direct local commands.
+
+\section{What remains}
+
+The next execution sequence is:
+
+\begin{enumerate}
+  \item Choose or provision a GPU workflow for complete OHR val/test page rendering and GOT-OCR. The observed MPS smoke rate is not a practical full-dataset plan.
+  \item Finish the 500 ArXivQA QA-to-paper/page confirmations. Keep every mapping human-confirmed and retain complete-paper retrieval corpora.
+  \item Run pinned GOT-OCR for the 8,955 ArXivQA pages and emit per-page provenance before registering the dataset.
+  \item Download the authenticated MP-DocVQA validation set from the RRC Task 4 portal and record checksums.
+  \item Run the planned baselines in order: B0, B1, B2, B3, and B4. Save each result before starting the next. B2 must be included.
+  \item Tune the gate on validation data only after a real B0 result exists, then lock the threshold.
+  \item Run the human annotation study, FAAR test runs, ablations, confidence intervals, failure-type analysis, and paper tables.
+\end{enumerate}
+
+Until Step 5 is complete, the correct supervisor statement is: ``The FAAR implementation and experiment controls are substantially prepared, but the paper-eligible B0 to B4 baseline results are still pending because full OCR assets, ArXivQA confirmation/OCR, MP-DocVQA access, and paid baseline execution are not complete.''
+
+\section{Evidence index}
+
+\begin{longtable}{L{0.42\linewidth} L{0.48\linewidth}}
+\caption{Primary files used for this report.}\\
+\toprule
+\textbf{File} & \textbf{Use}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{File} & \textbf{Use}\\
+\midrule
+\endhead
+\path{PLAN.md} & AAAI phase status, implementation-versus-execution distinction, and remaining blockers. \\
+\path{docs/faar-aaai-plan.md} & Supervisor-approved ordered B0 to B4 commands and checklist. \\
+\path{RUNLOG.md} & Timestamped execution evidence, smoke numbers, asset counts, test counts, and blockers. \\
+\path{results/smoke/b0_one_doc.json} & The only B0-labelled result file; explicitly non-paper smoke payload. \\
+\path{artifacts/phase3/metrics_summary.json} & Current 40-example offline mock profile metrics. \\
+\path{artifacts/phase4/claim_assessment.json} & Supported and unsupported prototype claims. \\
+\path{artifacts/phase4/profile_deltas_vs_baseline.csv} & Profile deltas against \texttt{naive\_rag}. \\
+\path{config/model_revisions.json} & Locked Hugging Face model repositories and revisions. \\
+\path{config/arxivqa_source_lock.json} & ArXivQA source revisions, hashes, and withdrawn-paper override. \\
+\path{data/benchmark_prep/arxivqa/paper_inventory.json} & ArXivQA rendered-page inventory and OCR readiness state. \\
+\path{data/benchmark_prep/arxivqa/evidence_candidates.json} & Mapping candidate status; all 500 remain unresolved. \\
+\path{docs/reports/supervisor_progress_report.md} & Prototype mock command and the earlier supervisor-facing interpretation. \\
+\path{docs/phases/phase5/writing_plan.md} & Claim-safe writing guidance and limits on current evidence. \\
+\bottomrule
+\end{longtable}
+
+\end{document}
