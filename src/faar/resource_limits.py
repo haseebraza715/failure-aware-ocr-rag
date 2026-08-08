@@ -34,6 +34,79 @@ def _peak_rss_bytes() -> int | None:
     return value * 1024
 
 
+def _rss_bytes_from_proc_status(handle: Any) -> int | None:
+    for line in handle:
+        if line.startswith("VmRSS:"):
+            try:
+                value = int(line.split()[1]) * 1024
+            except (ValueError, IndexError):
+                return None
+            return value if value > 0 else None
+    return None
+
+
+def current_rss_bytes() -> int | None:
+    try:
+        with open("/proc/self/status", encoding="utf-8") as handle:
+            rss = _rss_bytes_from_proc_status(handle)
+    except OSError:
+        rss = None
+    if rss is not None:
+        return rss
+    return _peak_rss_bytes()
+
+
+def _import_torch() -> Any | None:
+    try:
+        import torch
+    except ImportError:
+        return None
+    return torch
+
+
+def torch_device(torch_module: Any | None = None) -> Any:
+    if torch_module is None:
+        torch_module = _import_torch()
+        if torch_module is None:
+            raise RuntimeError("torch is required to select a compute device")
+    if torch_module.cuda.is_available():
+        return torch_module.device("cuda:0")
+    if getattr(torch_module.backends, "mps", None) and torch_module.backends.mps.is_available():
+        return torch_module.device("mps")
+    return torch_module.device("cpu")
+
+
+def select_dtype(device: Any, torch_module: Any | None = None) -> Any:
+    if torch_module is None:
+        torch_module = _import_torch()
+        if torch_module is None:
+            raise RuntimeError("torch is required to select a compute dtype")
+    if device.type == "cuda":
+        is_bf16 = getattr(torch_module.cuda, "is_bf16_supported", None)
+        if callable(is_bf16) and is_bf16():
+            return torch_module.bfloat16
+        return torch_module.float16
+    if device.type == "mps":
+        return torch_module.float16
+    return torch_module.float32
+
+
+def release_cuda_cache(torch_module: Any | None = None) -> None:
+    active_exception = sys.exception() is not None
+    if torch_module is None:
+        torch_module = _import_torch()
+    if torch_module is None:
+        return
+    if not torch_module.cuda.is_available():
+        return
+    try:
+        torch_module.cuda.synchronize()
+        torch_module.cuda.empty_cache()
+    except RuntimeError:
+        if not active_exception:
+            raise
+
+
 def enforce_memory_budget(stage: str, torch_module: Any | None = None) -> None:
     """Fail before the next inference step when an optional budget is exceeded.
 
@@ -44,23 +117,23 @@ def enforce_memory_budget(stage: str, torch_module: Any | None = None) -> None:
 
     max_rss_gb = _optional_gb("FAAR_MAX_RSS_GB")
     if max_rss_gb is not None:
-        rss = _peak_rss_bytes()
+        rss = current_rss_bytes()
         if rss is not None and rss > max_rss_gb * 1024**3:
             raise MemoryError(
                 f"FAAR_MAX_RSS_GB exceeded before {stage}: "
-                f"peak RSS is {rss / 1024**3:.2f} GiB, limit is {max_rss_gb:.2f} GiB."
+                f"current RSS is {rss / 1024**3:.2f} GiB, limit is {max_rss_gb:.2f} GiB."
             )
 
     min_gpu_free_gb = _optional_gb("FAAR_MIN_GPU_FREE_GB")
     if min_gpu_free_gb is None:
         return
     if torch_module is None:
-        try:
-            import torch as torch_module
-        except Exception:
+        torch_module = _import_torch()
+        if torch_module is None:
             return
     if not torch_module.cuda.is_available():
         return
+    release_cuda_cache(torch_module)
     free_bytes, _ = torch_module.cuda.mem_get_info()
     if free_bytes < min_gpu_free_gb * 1024**3:
         raise MemoryError(

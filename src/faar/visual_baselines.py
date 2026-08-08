@@ -10,22 +10,17 @@ from .api_logging import openai_cost_rates
 from .benchmarks import BenchmarkRepository
 from .metrics import exact_match, token_f1
 from .recovery import VisualFallback
-from .resource_limits import enforce_memory_budget
+from .resource_limits import (
+    enforce_memory_budget,
+    release_cuda_cache,
+    select_dtype,
+    torch_device,
+)
 from .settings import AppSettings
 
 
 class VisualRetriever(Protocol):
     def retrieve(self, query: str, top_k: int) -> list[tuple[Path, float]]: ...
-
-
-def _torch_device():
-    torch = import_module("torch")
-
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
-        return torch.device("mps")
-    return torch.device("cpu")
 
 
 class ColPaliRetriever:
@@ -35,6 +30,7 @@ class ColPaliRetriever:
         model_name: str,
         revision: str | None,
         batch_size: int = 4,
+        score_batch_size: int = 32,
     ) -> None:
         torch = import_module("torch")
         image_module = import_module("PIL.Image")
@@ -42,40 +38,71 @@ class ColPaliRetriever:
         model_class = transformers.ColPaliForRetrieval
         processor_class = transformers.ColPaliProcessor
 
-        self.image_paths = image_paths
+        self.image_paths = list(image_paths)
+        if not self.image_paths:
+            raise ValueError("ColPali requires a non-empty visual corpus; found no image paths.")
         batch_size = max(1, batch_size)
-        self.device = _torch_device()
-        dtype = torch.bfloat16 if self.device.type in {"cuda", "mps"} else torch.float32
+        score_batch_size = max(1, score_batch_size)
+        self.score_batch_size = score_batch_size
+        self.device = torch_device(torch)
+        dtype = select_dtype(self.device, torch)
         self.model = (
-            model_class.from_pretrained(model_name, revision=revision, torch_dtype=dtype)
+            model_class.from_pretrained(
+                model_name,
+                revision=revision,
+                torch_dtype=dtype,
+                low_cpu_mem_usage=True,
+            )
             .to(self.device)
             .eval()
         )
         enforce_memory_budget("ColPali model load", torch)
         self.processor = processor_class.from_pretrained(model_name, revision=revision)
         embeddings = []
-        for start in range(0, len(image_paths), batch_size):
-            images = []
-            try:
-                for path in image_paths[start : start + batch_size]:
-                    with image_module.open(path) as source:
-                        images.append(source.convert("RGB"))
-                enforce_memory_budget("ColPali batch", torch)
-                inputs = self.processor(images=images).to(self.device)
-                with torch.inference_mode():
-                    embeddings.append(self.model(**inputs).embeddings.detach().cpu())
-            finally:
-                for image in images:
-                    image.close()
-        self.image_embeddings = torch.cat(embeddings, dim=0)
+        try:
+            for start in range(0, len(self.image_paths), batch_size):
+                images = []
+                inputs = None
+                outputs = None
+                try:
+                    for path in self.image_paths[start : start + batch_size]:
+                        with image_module.open(path) as source:
+                            images.append(source.convert("RGB"))
+                    enforce_memory_budget("ColPali batch", torch)
+                    inputs = self.processor(images=images).to(self.device)
+                    with torch.inference_mode():
+                        outputs = self.model(**inputs)
+                    embeddings.append(outputs.embeddings.detach().cpu())
+                finally:
+                    for image in images:
+                        image.close()
+                    del images, inputs, outputs
+            self.image_embeddings = torch.cat(embeddings, dim=0)
+        finally:
+            del embeddings
+            release_cuda_cache(torch)
 
     def retrieve(self, query: str, top_k: int) -> list[tuple[Path, float]]:
         torch = import_module("torch")
 
         inputs = self.processor(text=[query]).to(self.device)
-        with torch.no_grad():
-            query_embeddings = self.model(**inputs).embeddings.detach().cpu()
-            scores = self.processor.score_retrieval(query_embeddings, self.image_embeddings)[0]
+        try:
+            with torch.no_grad():
+                query_embeddings = self.model(**inputs).embeddings.detach().cpu()
+            score_slices = []
+            for start in range(0, len(self.image_paths), self.score_batch_size):
+                stop = min(start + self.score_batch_size, len(self.image_paths))
+                enforce_memory_budget("ColPali score batch", torch)
+                score_slices.append(
+                    self.processor.score_retrieval(
+                        query_embeddings,
+                        self.image_embeddings[start:stop],
+                    )[0]
+                )
+            scores = torch.cat(score_slices, dim=0)
+        finally:
+            del inputs
+            release_cuda_cache(torch)
         indices = torch.topk(scores, k=min(top_k, len(self.image_paths))).indices.tolist()
         return [(self.image_paths[index], float(scores[index])) for index in indices]
 
@@ -94,10 +121,12 @@ class VisRAGRetriever:
         image_module = import_module("PIL.Image")
         transformers = import_module("transformers")
 
-        self.image_paths = image_paths
+        self.image_paths = list(image_paths)
+        if not self.image_paths:
+            raise ValueError("VisRAG requires a non-empty visual corpus; found no image paths.")
         self.batch_size = max(1, batch_size)
-        self.device = _torch_device()
-        dtype = torch.bfloat16 if self.device.type in {"cuda", "mps"} else torch.float32
+        self.device = torch_device(torch)
+        dtype = select_dtype(self.device, torch)
         self.tokenizer = transformers.AutoTokenizer.from_pretrained(
             model_name,
             revision=revision,
@@ -108,6 +137,7 @@ class VisRAGRetriever:
                 model_name,
                 revision=revision,
                 torch_dtype=dtype,
+                low_cpu_mem_usage=True,
                 trust_remote_code=True,
             )
             .to(self.device)
@@ -115,18 +145,22 @@ class VisRAGRetriever:
         )
         enforce_memory_budget("VisRAG model load", torch)
         chunks = []
-        for start in range(0, len(image_paths), self.batch_size):
-            images = []
-            try:
-                for path in image_paths[start : start + self.batch_size]:
-                    with image_module.open(path) as source:
-                        images.append(source.convert("RGB"))
-                enforce_memory_budget("VisRAG batch", torch)
-                chunks.append(self._encode(images))
-            finally:
-                for image in images:
-                    image.close()
-        self.image_embeddings = np.concatenate(chunks, axis=0)
+        try:
+            for start in range(0, len(self.image_paths), self.batch_size):
+                images = []
+                try:
+                    for path in image_paths[start : start + self.batch_size]:
+                        with image_module.open(path) as source:
+                            images.append(source.convert("RGB"))
+                    enforce_memory_budget("VisRAG batch", torch)
+                    chunks.append(self._encode(images))
+                finally:
+                    for image in images:
+                        image.close()
+            self.image_embeddings = np.concatenate(chunks, axis=0)
+        finally:
+            del chunks
+            release_cuda_cache(torch)
 
     def _encode(self, values: list[Any]) -> np.ndarray:
         torch = import_module("torch")
@@ -155,12 +189,15 @@ class VisRAGRetriever:
 
 def build_visual_retriever(mode: str, repo: BenchmarkRepository, settings: AppSettings) -> VisualRetriever:
     images = repo.corpus_image_paths()
+    if not images:
+        raise ValueError(f"{mode} requires a non-empty visual corpus; found no image paths.")
     if mode == "colpali":
         return ColPaliRetriever(
             images,
             settings.retrieval.colpali_model,
             settings.retrieval.colpali_revision,
             settings.retrieval.visual_batch_size,
+            score_batch_size=settings.retrieval.visual_score_batch_size,
         )
     if mode == "visrag":
         return VisRAGRetriever(

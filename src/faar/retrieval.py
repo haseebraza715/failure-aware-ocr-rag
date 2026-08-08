@@ -3,12 +3,14 @@ from __future__ import annotations
 import math
 import re
 from functools import lru_cache
+from importlib import import_module
 
 import faiss
 import numpy as np
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder, SentenceTransformer
 
+from .resource_limits import select_dtype, torch_device
 from .settings import RetrievalSettings
 from .types import Chunk, RetrievalHit
 
@@ -36,13 +38,31 @@ def _tokenize(text: str) -> list[str]:
 @lru_cache(maxsize=2)
 def _load_embedding_model(model_name: str, revision: str | None) -> SentenceTransformer:
     resolved_name = MODEL_ALIASES.get(model_name, model_name)
-    return SentenceTransformer(resolved_name, revision=revision, trust_remote_code=True)
+    torch = import_module("torch")
+    device = torch_device(torch)
+    dtype = select_dtype(device, torch)
+    return SentenceTransformer(
+        resolved_name,
+        revision=revision,
+        trust_remote_code=True,
+        device=str(device),
+        model_kwargs={"torch_dtype": dtype},
+    )
 
 
 @lru_cache(maxsize=2)
 def _load_reranker(model_name: str, revision: str | None) -> CrossEncoder:
     resolved_name = MODEL_ALIASES.get(model_name, model_name)
-    return CrossEncoder(resolved_name, revision=revision, trust_remote_code=True)
+    torch = import_module("torch")
+    device = torch_device(torch)
+    dtype = select_dtype(device, torch)
+    return CrossEncoder(
+        resolved_name,
+        revision=revision,
+        trust_remote_code=True,
+        device=str(device),
+        automodel_args={"torch_dtype": dtype},
+    )
 
 
 def _to_probability(score: float) -> float:
@@ -60,18 +80,20 @@ class HybridRetriever:
         self._reranker = _load_reranker(settings.reranker, settings.reranker_revision)
         corpus_embeddings = self._embedder.encode(
             [chunk.text for chunk in chunks],
+            batch_size=settings.embed_batch_size,
             normalize_embeddings=True,
             convert_to_numpy=True,
         ).astype("float32")
         self._dense_index = faiss.IndexFlatIP(corpus_embeddings.shape[1])
         self._dense_index.add(corpus_embeddings)
-        self._corpus_embeddings = corpus_embeddings
+        del corpus_embeddings
 
     def retrieve(self, query: str, top_k: int | None = None) -> list[RetrievalHit]:
         k = top_k or self.settings.top_k
         bm25_scores = np.array(self._bm25.get_scores(_tokenize(query)), dtype=np.float32)
         query_embedding = self._embedder.encode(
             [query],
+            batch_size=self.settings.embed_batch_size,
             normalize_embeddings=True,
             convert_to_numpy=True,
         ).astype("float32")

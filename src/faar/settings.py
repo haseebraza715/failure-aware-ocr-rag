@@ -117,6 +117,12 @@ class RetrievalSettings(BaseModel):
     visual_batch_size: int = Field(
         default_factory=lambda: _positive_int_env("FAAR_VISUAL_BATCH_SIZE", 1)
     )
+    embed_batch_size: int = Field(
+        default_factory=lambda: _positive_int_env("FAAR_EMBED_BATCH_SIZE", 2)
+    )
+    visual_score_batch_size: int = Field(
+        default_factory=lambda: _positive_int_env("FAAR_VISUAL_SCORE_BATCH_SIZE", 8)
+    )
 
 
 class GateSettings(BaseModel):

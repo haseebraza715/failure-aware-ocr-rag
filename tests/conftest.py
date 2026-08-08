@@ -33,5 +33,9 @@ def isolate_model_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
         "OPENAI_INPUT_USD_PER_MTOK",
         "OPENAI_OUTPUT_USD_PER_MTOK",
         "VLM_BACKEND",
+        "FAAR_EMBED_BATCH_SIZE",
+        "FAAR_VISUAL_SCORE_BATCH_SIZE",
+        "FAAR_MAX_RSS_GB",
+        "FAAR_MIN_GPU_FREE_GB",
     ):
         monkeypatch.delenv(name, raising=False)
