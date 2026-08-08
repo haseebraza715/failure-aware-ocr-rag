@@ -10,9 +10,80 @@ from typing import Any, Iterable
 
 def load_result(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text())
-    if not isinstance(payload, dict) or "summary" not in payload or "rows" not in payload:
+    if (
+        not isinstance(payload, dict)
+        or not isinstance(payload.get("summary"), dict)
+        or not isinstance(payload.get("rows"), list)
+    ):
         raise ValueError(f"{path} is not a complete FAAR result JSON with summary and rows.")
     return payload
+
+
+_RUN_SPEC_MATCH_KEYS = (
+    "dataset",
+    "split",
+    "seed",
+    "max_examples",
+    "shard_index",
+    "num_shards",
+    "embedding_model",
+    "reranker",
+    "ocr_engine",
+    "model_provenance",
+)
+
+
+def _require_unique_example_ids(rows: list[dict[str, Any]], path: Path) -> None:
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError(f"{path} contains a row that is not an object.")
+        example_id = str(row.get("example_id") or "").strip()
+        if not example_id:
+            raise ValueError(f"{path} contains a row with a missing example_id.")
+        if example_id in seen:
+            raise ValueError(f"{path} contains duplicate example_id {example_id!r}.")
+        seen.add(example_id)
+
+
+def _validate_analysis_inputs(baseline_path: Path, result_paths: list[Path]) -> dict[str, Any]:
+    if not result_paths:
+        raise ValueError("Final analysis requires at least one result JSON.")
+    baseline = load_result(baseline_path)
+    if baseline.get("profile") != "naive_rag":
+        raise ValueError(f"Baseline must be a naive_rag profile result: {baseline_path}")
+    baseline_spec = baseline.get("run_spec")
+    if not isinstance(baseline_spec, dict):
+        raise ValueError(f"{baseline_path} has no run_spec provenance.")
+    baseline_rows = list(baseline["rows"])
+    if not baseline_rows:
+        raise ValueError(f"{baseline_path} contains no baseline rows.")
+    _require_unique_example_ids(baseline_rows, baseline_path)
+    baseline_ids = {str(row["example_id"]).strip() for row in baseline_rows}
+    for result_path in result_paths:
+        result = load_result(result_path)
+        run_spec = result.get("run_spec")
+        if not isinstance(run_spec, dict):
+            raise ValueError(f"{result_path} has no run_spec provenance.")
+        for key in _RUN_SPEC_MATCH_KEYS:
+            if key not in baseline_spec:
+                raise ValueError(f"{baseline_path} run_spec is missing {key}.")
+            if key not in run_spec:
+                raise ValueError(f"{result_path} run_spec is missing {key}.")
+            if run_spec[key] != baseline_spec[key]:
+                raise ValueError(f"{result_path} run_spec.{key} does not match baseline run_spec.")
+        result_rows = list(result["rows"])
+        if not result_rows:
+            raise ValueError(f"{result_path} contains no result rows.")
+        _require_unique_example_ids(result_rows, result_path)
+        result_ids = {str(row["example_id"]).strip() for row in result_rows}
+        uncovered = sorted(result_ids - baseline_ids)
+        if uncovered:
+            raise ValueError(f"{result_path} rows not covered by baseline B0: {uncovered}")
+        omitted = sorted(baseline_ids - result_ids)
+        if omitted:
+            raise ValueError(f"{result_path} omits baseline B0 rows: {omitted}")
+    return baseline
 
 
 def bootstrap_ci(values: Iterable[float], samples: int = 10_000, seed: int = 42) -> dict[str, float]:
@@ -30,15 +101,18 @@ def bootstrap_ci(values: Iterable[float], samples: int = 10_000, seed: int = 42)
 
 def _harm_rate(rows: list[dict[str, Any]], baseline_rows: list[dict[str, Any]]) -> float:
     baseline_by_id = {str(row.get("example_id")): row for row in baseline_rows}
-    comparable = [row for row in rows if str(row.get("example_id")) in baseline_by_id]
-    if not comparable:
+    uncovered = [row for row in rows if str(row.get("example_id")) not in baseline_by_id]
+    if uncovered:
+        ids = sorted({str(row.get("example_id")) for row in uncovered})
+        raise ValueError(f"Harm analysis cannot compare rows not covered by baseline B0: {ids}")
+    if not rows:
         return 0.0
     harmed = sum(
         float((row.get("metrics") or {}).get("f1", 0.0))
         < float((baseline_by_id[str(row.get("example_id"))].get("metrics") or {}).get("f1", 0.0))
-        for row in comparable
+        for row in rows
     )
-    return round(harmed / len(comparable), 4)
+    return round(harmed / len(rows), 4)
 
 
 def failure_type_breakdown(rows: list[dict[str, Any]], baseline_rows: list[dict[str, Any]]) -> dict[str, dict[str, float | int]]:
@@ -60,11 +134,13 @@ def failure_type_breakdown(rows: list[dict[str, Any]], baseline_rows: list[dict[
 
 
 def summarize_analysis(result_paths: list[Path], baseline_path: Path) -> dict[str, Any]:
-    baseline = load_result(baseline_path)
+    baseline = _validate_analysis_inputs(baseline_path, result_paths)
     analyses: dict[str, Any] = {}
     for result_path in result_paths:
         result = load_result(result_path)
         label = str(result.get("label") or result_path.stem)
+        if label in analyses:
+            raise ValueError(f"Final analysis contains duplicate result label {label!r}.")
         rows = list(result["rows"])
         analyses[label] = {
             "source": str(result_path),
