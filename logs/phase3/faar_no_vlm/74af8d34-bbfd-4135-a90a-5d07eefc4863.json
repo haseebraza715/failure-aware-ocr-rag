@@ -9,19 +9,19 @@
   "action_outcome": {
     "action": "correct_text",
     "status": "skipped",
-    "reason": "byt5_correction_guarded",
+    "reason": "byt5_disabled_by_profile",
     "applied_count": 0,
     "reviewed_count": 2,
     "decisions": [
       {
         "chunk_id": "74af8d34-bbfd-4135-a90a-5d07eefc4863-p0-c0",
         "applied": false,
-        "reason": "source_not_noisy_enough"
+        "reason": "byt5_disabled_by_profile"
       },
       {
         "chunk_id": "74af8d34-bbfd-4135-a90a-5d07eefc4863-p0-c1",
         "applied": false,
-        "reason": "source_not_noisy_enough"
+        "reason": "byt5_disabled_by_profile"
       }
     ]
   },
@@ -31,16 +31,35 @@
     "em": 0.0,
     "f1": 0.10679611650485436
   },
+  "recovery_metrics": {
+    "counterfactual_answer": "13. Lebesgue Integral and Volume 167 Ra Ra Rd [ofaar = a f fade (linearity). Re Re (ii) If f<g, thenalso f f(x)dx < f g(x)dz. Rd Rd (iti) Ifbe\u20acR*, A an orthogonal d x d\u2014matriz, then / f(Az +0)de = / f(a)de. Ra Re Proof. Parts (i) follows directly from the corresponding rules for the integral of elementary functions. The rule (iii) holds for elementary functions, because for an orthogonal matrix A and an elementary function t, the function to A is again elementary as A maps a cube onto a cube, and similarly for translation by a vector b. (ii) follows, as in case f < g, we can approximate f and g by sequences (f,,) and (s,,), respectively, of elementary functions with t,, < sp. O Furthermore, we have Lemma 13.5 Let f \u20ac C.(R%) with supp(f) in a cube of side length \u00a3. Then | f #(2)da| < sup|f(a)|- (2) R@ The proof again follows directly from the corresponding property for ele- mentary functions. Lemmas 13.4 and 13.5 mean that the correspondence fro f (ods J",
+    "recovery_changed_answer": false,
+    "em": {
+      "actual": 0.0,
+      "counterfactual": 0.0,
+      "delta": 0.0,
+      "effect": "equal"
+    },
+    "f1": {
+      "actual": 0.1068,
+      "counterfactual": 0.1068,
+      "delta": 0.0,
+      "effect": "equal"
+    }
+  },
   "top_hit_texts": [
     "13. Lebesgue Integral and Volume 167 Ra Ra Rd [ofaar = a f fade (linearity). Re Re (ii) If f<g, thenalso f f(x)dx < f g(x)dz. Rd Rd (iti) Ifbe\u20acR*, A an orthogonal d x d\u2014matriz, then / f(Az +0)de = / f(a)de. Ra Re Proof. Parts (i) follows directly from the corresponding rules for the integral of elementary functions. The rule (iii) holds for elementary functions, because for an orthogonal matrix A and an elementary function t, the function to A is again elementary as A maps a cube onto a cube, and similarly for translation by a vector b. (ii) follows, as in case f < g, we can approximate f and g by sequences (f,,) and (s,,), respectively, of elementary functions with t,, < sp. O Furthermore, we have Lemma 13.5 Let f \u20ac C.(R%) with supp(f) in a cube of side length \u00a3. Then | f #(2)da| < sup|f(a)|- (2) R@ The proof again follows directly from the corresponding property for ele- mentary functions. Lemmas 13.4 and 13.5 mean that the correspondence fro f (ods J,",
     "in a cube of side length \u00a3. Then | f #(2)da| < sup|f(a)|- (2) R@ The proof again follows directly from the corresponding property for ele- mentary functions. Lemmas 13.4 and 13.5 mean that the correspondence fro f (ods J, is a linear, bounded (therefore continuous) real valued functional on each Banach space C.(W) (W a cube in R@) that is invariant under isometries. One can show that a functional with these properties and the normalisation praw=1 Tad"
   ],
   "run_metadata": {
     "profile": "faar_no_vlm",
-    "run_id": "20260421T152518Z",
+    "run_id": "20260808T225510Z",
     "api_enabled": false,
     "vlm_backend": "mock",
     "openai_model": "gpt-4o",
+    "enable_byt5": false,
+    "byt5_model": "google/byt5-small",
+    "seed": 42,
     "evaluation_size": 40,
     "selection": {
       "max_examples": 40,

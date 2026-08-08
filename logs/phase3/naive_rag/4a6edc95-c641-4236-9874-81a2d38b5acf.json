@@ -17,6 +17,22 @@
     "em": 0.0,
     "f1": 0.13333333333333333
   },
+  "recovery_metrics": {
+    "counterfactual_answer": "Program Lock scheme are two Lock Bits which function as shown in Table 5. Erasing the EPROM also erases the Encryption Ar- ray and the Lock Bits, returning the part to full un- locked functionality. To ensure proper functionality of the chip, the inter- nally latched value of the EA pin must agree with its external state. MCS\u00ae 51 CONTROLLER Table 5. Lock Bits and their Features Lock Bits Logic Enabled LB1 LB2 U U {Minimum Program Lock features enabled. (Code Verify will still be encrypted by the Encryption Array) P U_\u2014_|MOVC instructions executed from external program memory are disabled from fetching code bytes from internal memory, EA is sampled and latched on reset, and further programming of the EPROM is disabled P P Same as above, but Verify is also disabled U P_ |Reserved for Future Definition = Programmed = Unprogrammed READING THE SIGNATURE BYTES The signature bytes are read by the same procedure as a normal verification of locations 030H and 031H, except that P3.6 and P3.7 need to be pulled to a logic low. The values returned",
+    "recovery_changed_answer": false,
+    "em": {
+      "actual": 0.0,
+      "counterfactual": 0.0,
+      "delta": 0.0,
+      "effect": "equal"
+    },
+    "f1": {
+      "actual": 0.1333,
+      "counterfactual": 0.1333,
+      "delta": 0.0,
+      "effect": "equal"
+    }
+  },
   "top_hit_texts": [
     "Program Lock scheme are two Lock Bits which function as shown in Table 5. Erasing the EPROM also erases the Encryption Ar- ray and the Lock Bits, returning the part to full un- locked functionality. To ensure proper functionality of the chip, the inter- nally latched value of the EA pin must agree with its external state. MCS\u00ae 51 CONTROLLER Table 5. Lock Bits and their Features Lock Bits Logic Enabled LB1 LB2 U U {Minimum Program Lock features enabled. (Code Verify will still be encrypted by the Encryption Array) P U_\u2014_|MOVC instructions executed from external program memory are disabled from fetching code bytes from internal memory, EA is sampled and latched on reset, and further programming of the EPROM is disabled P P Same as above, but Verify is also disabled U P_ |Reserved for Future Definition = Programmed = Unprogrammed READING THE SIGNATURE BYTES The signature bytes are read by the same procedure as a normal verification of locations 030H and 031H, except that P3.6 and P3.7 need to be pulled to a logic low. The values returned",
     "intel. PROGRAM MEMORY LOCK The two-level Program Lock system consists of 2 Lock bits and a 32-byte Encryption Array which are used to protect the program memory against soft- ware piracy. ENCRYPTION ARRAY Within the EPROM array are 32 bytes of Encryption Array that are initially unprogrammed (all 1s). Every time that a byte is addressed during a verify, 5 ad- dress lines are used to select a byte of the Encryp- tion Array. This byte is then exclusive-NORed (XNOR) with the code byte, creating an Encrypted Verify byte. The algorithm, with the array in the un- programmed state (all 1s), will return the code in its original, unmodified form. It is recommended that whenever the Encryption Ar- ray is used, at least one of the Lock Bits be pro- grammed as well. LOCK BITS Also included in the EPROM Program Lock scheme are two Lock Bits which function as shown in Table 5. Erasing the EPROM also erases the Encryption Ar- ray and the Lock Bits, returning the part to full un- locked functionality. To ensure proper functionality of",
@@ -24,10 +40,13 @@
   ],
   "run_metadata": {
     "profile": "naive_rag",
-    "run_id": "20260421T152530Z",
+    "run_id": "20260808T225510Z",
     "api_enabled": false,
     "vlm_backend": "mock",
     "openai_model": "gpt-4o",
+    "enable_byt5": false,
+    "byt5_model": "google/byt5-small",
+    "seed": 42,
     "evaluation_size": 40,
     "selection": {
       "max_examples": 40,
