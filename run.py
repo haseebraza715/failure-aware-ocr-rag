@@ -22,6 +22,7 @@ from faar.benchmarks import load_benchmark_repository
 from faar.experiment_runner import run_profile
 from faar.gate_tuning import load_locked_threshold
 from faar.results_aggregator import summarize_examples
+from faar.run_io import atomic_write_text, select_shard, shard_label
 from faar.settings import AppSettings
 from faar.visual_baselines import run_visual_baseline
 
@@ -72,6 +73,10 @@ def _run_profile_to_result(
     run_spec: dict[str, Any],
     dataset: str,
     split: str,
+    *,
+    resume: bool = False,
+    shard_index: int | None = None,
+    num_shards: int | None = None,
 ) -> dict[str, Any]:
     start = time.perf_counter()
     usage_path = settings.project_root / "logs/vlm_calls.jsonl"
@@ -83,6 +88,9 @@ def _run_profile_to_result(
         output_dir=out.parent / f"{out.stem}_rows",
         dataset=dataset,
         split=split,
+        resume=resume,
+        shard_index=shard_index,
+        num_shards=num_shards,
     )
     summary = summarize_examples(rows)
     end_usage = _read_vlm_usage(usage_path)
@@ -105,7 +113,7 @@ def _run_profile_to_result(
         "rows": rows,
     }
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(payload, indent=2) + "\n")
+    atomic_write_text(out, json.dumps(payload, indent=2) + "\n")
     return payload
 
 
@@ -151,7 +159,7 @@ def _apply_baseline_harm(
                 f"Baseline mismatch: expected {key}={expected!r}, but {baseline_path} records {observed!r}."
             )
     payload["summary"]["harm_rate"] = evaluate_results(output_path, baseline_path=baseline_path)["harm_rate"]
-    output_path.write_text(json.dumps(payload, indent=2) + "\n")
+    atomic_write_text(output_path, json.dumps(payload, indent=2) + "\n")
     return payload
 
 
@@ -193,8 +201,32 @@ def _run_visual_baseline_to_result(
             "rows": result,
         }
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(payload, indent=2) + "\n")
+    atomic_write_text(out, json.dumps(payload, indent=2) + "\n")
     return payload
+
+
+def _sharded_out_path(out: Path, shard_index: int | None, num_shards: int | None) -> Path:
+    if num_shards is None:
+        if shard_index is not None:
+            raise SystemExit("--shard-index requires --num-shards.")
+        return out
+    if shard_index is None:
+        raise SystemExit("--num-shards requires --shard-index.")
+    try:
+        select_shard([], shard_index, num_shards)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    return out.with_name(f"{out.stem}_{shard_label(shard_index, num_shards)}{out.suffix}")
+
+
+def _text_run_kwargs(resume: bool, shard_index: int | None, num_shards: int | None) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {}
+    if resume:
+        kwargs["resume"] = True
+    if num_shards is not None:
+        kwargs["shard_index"] = shard_index
+        kwargs["num_shards"] = num_shards
+    return kwargs
 
 
 def main() -> None:
@@ -214,6 +246,9 @@ def main() -> None:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--max-examples", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--resume", action="store_true", help="Reuse per-example checkpoints whose run fingerprint matches.")
+    parser.add_argument("--shard-index", type=int, default=None, help="Zero-based shard to run; requires --num-shards.")
+    parser.add_argument("--num-shards", type=int, default=None, help="Total shards; requires --shard-index.")
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -239,6 +274,8 @@ def main() -> None:
     }
 
     if args.mode in {"colpali", "visrag"}:
+        if args.resume or args.shard_index is not None or args.num_shards is not None:
+            raise SystemExit("--resume and shard flags are not supported for visual modes yet.")
         _require_key_for_paid_vlm(settings.recovery.vlm_backend)
         payload = _run_visual_baseline_to_result(
             settings,
@@ -259,14 +296,17 @@ def main() -> None:
         print(json.dumps(payload["summary"], indent=2))
         return
 
+    text_out = _sharded_out_path(args.out, args.shard_index, args.num_shards)
+    text_kwargs = _text_run_kwargs(args.resume, args.shard_index, args.num_shards)
+
     if args.mode == "faar":
         _require_key_for_paid_vlm(settings.recovery.vlm_backend)
         payload = _run_profile_to_result(
-            settings, "faar_full", args.out, f"FAAR {args.dataset} {args.split}", args.max_examples, run_spec, args.dataset, args.split
+            settings, "faar_full", text_out, f"FAAR {args.dataset} {args.split}", args.max_examples, run_spec, args.dataset, args.split, **text_kwargs
         )
         payload = _apply_baseline_harm(
             payload,
-            args.out,
+            text_out,
             args.baseline,
             dataset=args.dataset,
             split=args.split,
@@ -283,11 +323,11 @@ def main() -> None:
         }[args.ablate]
         _require_key_for_paid_vlm(settings.recovery.vlm_backend)
         payload = _run_profile_to_result(
-            settings, ablation_profile, args.out, args.ablate, args.max_examples, run_spec, args.dataset, args.split
+            settings, ablation_profile, text_out, args.ablate, args.max_examples, run_spec, args.dataset, args.split, **text_kwargs
         )
         payload = _apply_baseline_harm(
             payload,
-            args.out,
+            text_out,
             args.baseline,
             dataset=args.dataset,
             split=args.split,
@@ -301,11 +341,11 @@ def main() -> None:
     baseline_id, profile, label = BASELINE_MAP[key]
     if baseline_id == "B1":
         _require_key_for_paid_vlm(settings.recovery.vlm_backend)
-    payload = _run_profile_to_result(settings, profile, args.out, label, args.max_examples, run_spec, args.dataset, args.split)
+    payload = _run_profile_to_result(settings, profile, text_out, label, args.max_examples, run_spec, args.dataset, args.split, **text_kwargs)
     default_baseline = Path("results/b0.json") if baseline_id == "B2" and Path("results/b0.json").exists() else None
     payload = _apply_baseline_harm(
         payload,
-        args.out,
+        text_out,
         args.baseline or default_baseline,
         dataset=args.dataset,
         split=args.split,

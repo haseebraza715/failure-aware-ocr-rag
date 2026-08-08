@@ -11,6 +11,7 @@ from .data import Phase0Repository
 from .experiment_profiles import apply_profile
 from .graph import build_graph
 from .metrics import exact_match, ndcg_at_k, recall_at_k, token_f1
+from .run_io import atomic_write_json, run_fingerprint, safe_checkpoint_stem, select_shard
 from .settings import AppSettings
 
 
@@ -24,23 +25,50 @@ def run_profile(
     dataset: str | None = None,
     split: str | None = None,
     repo: Any | None = None,
+    *,
+    resume: bool = False,
+    shard_index: int | None = None,
+    num_shards: int | None = None,
 ) -> list[dict[str, Any]]:
     settings = apply_profile(settings, profile_name)
-    if repo is not None:
-        graph = build_graph(settings, repo=repo)
-    elif dataset and split:
-        repo = load_benchmark_repository(settings.project_root, dataset, split)
-        graph = build_graph(settings, repo=repo)
-    else:
-        repo = Phase0Repository(settings)
-        graph = build_graph(settings)
+    use_repo_kwarg = repo is not None or bool(dataset and split)
+    if repo is None:
+        if dataset and split:
+            repo = load_benchmark_repository(settings.project_root, dataset, split)
+        else:
+            repo = Phase0Repository(settings)
+    fingerprint = run_fingerprint(
+        settings,
+        profile=profile_name,
+        dataset=dataset,
+        split=split,
+        manifest_sha256=getattr(repo, "manifest_sha256", None),
+    )
     selected_ids = list(example_ids) if example_ids is not None else repo.list_example_ids()
     if max_examples is not None and example_ids is None:
         selected_ids = selected_ids[: max(0, max_examples)]
+    if num_shards is not None:
+        selected_ids = select_shard(selected_ids, shard_index, num_shards)
     base_output = output_dir or (settings.project_root / "logs/phase3" / profile_name)
     base_output.mkdir(parents=True, exist_ok=True)
-    rows: list[dict[str, Any]] = []
-    for example_id in selected_ids:
+    rows_by_id: dict[str, dict[str, Any]] = {}
+    pending: list[str] = []
+    graph = None
+    if resume:
+        for example_id in selected_ids:
+            cached = _load_checkpoint(_checkpoint_path(base_output, example_id))
+            if cached is not None and _is_valid_checkpoint(cached, example_id, profile_name, fingerprint):
+                rows_by_id[example_id] = cached
+            else:
+                pending.append(example_id)
+        if pending:
+            graph = build_graph(settings, repo=repo) if use_repo_kwarg else build_graph(settings)
+    else:
+        pending = list(selected_ids)
+        if pending or (example_ids is not None and num_shards is None):
+            graph = build_graph(settings, repo=repo) if use_repo_kwarg else build_graph(settings)
+    for example_id in pending:
+        assert graph is not None
         result = graph.invoke({"example_id": example_id})
         result_hits = result.get("corrected_hits") or result.get("retrieved_hits", [])
         hit_texts = [hit.chunk.text for hit in result_hits]
@@ -80,6 +108,7 @@ def run_profile(
             "run_metadata": {
                 "profile": profile_name,
                 "run_id": datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ"),
+                "run_fingerprint": fingerprint,
                 "api_enabled": settings.recovery.api_enabled,
                 "vlm_backend": settings.recovery.vlm_backend,
                 "openai_model": settings.recovery.openai_model,
@@ -90,7 +119,31 @@ def run_profile(
                 "split": split or "development",
             },
         }
-        rows.append(row)
-        destination = base_output / f"{example_id}.json"
-        destination.write_text(json.dumps(row, indent=2))
-    return rows
+        rows_by_id[example_id] = row
+        atomic_write_json(_checkpoint_path(base_output, example_id), row)
+    return [rows_by_id[example_id] for example_id in selected_ids if example_id in rows_by_id]
+
+
+def _checkpoint_path(base_output: Path, example_id: str) -> Path:
+    return base_output / f"{safe_checkpoint_stem(example_id)}.json"
+
+
+def _load_checkpoint(path: Path) -> dict[str, Any] | None:
+    try:
+        row = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return row if isinstance(row, dict) else None
+
+
+def _is_valid_checkpoint(
+    row: dict[str, Any],
+    example_id: str,
+    profile_name: str,
+    fingerprint: str,
+) -> bool:
+    return (
+        row.get("example_id") == example_id
+        and row.get("profile") == profile_name
+        and (row.get("run_metadata") or {}).get("run_fingerprint") == fingerprint
+    )

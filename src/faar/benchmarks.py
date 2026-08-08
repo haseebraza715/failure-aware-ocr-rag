@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -37,10 +38,12 @@ class BenchmarkRepository:
         split: str,
         *,
         document_inventory: dict[str, list[int]] | None = None,
+        manifest_sha256: str | None = None,
     ) -> None:
         self.project_root = project_root.expanduser().resolve()
         self.dataset = dataset
         self.split = split
+        self.manifest_sha256 = manifest_sha256
         self._records = {str(record["example_id"]): record for record in records}
         self._corpus_pages = [self._normalise_corpus_page(page) for page in corpus_pages]
         self._document_inventory = {
@@ -186,6 +189,7 @@ def load_benchmark_repository_from_manifest(
         document_inventory = None
     dataset_key = _normalise_dataset(str(dataset or (payload.get("dataset") if isinstance(payload, dict) else None) or "unknown"))
     split_key = str(split or (payload.get("split") if isinstance(payload, dict) else None) or "unknown")
+    manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     return BenchmarkRepository(
         records,
         corpus_pages,
@@ -193,6 +197,7 @@ def load_benchmark_repository_from_manifest(
         dataset_key,
         split_key,
         document_inventory=document_inventory,
+        manifest_sha256=manifest_sha256,
     )
 
 
