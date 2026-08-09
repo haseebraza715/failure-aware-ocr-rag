@@ -39,7 +39,9 @@ def test_hugging_face_revisions_must_be_immutable_commit_shas(tmp_path) -> None:
 
     provenance = settings.model_provenance()
     assert provenance["embedding"]["revision"] == locked.retrieval.embedding_revision
-    assert provenance["vlm"]["repository"] == "gpt-4o-2024-11-20"
+    assert provenance["vlm"]["backend"] == "openai"
+    assert provenance["vlm"]["provider"] == "openai"
+    assert provenance["vlm"]["model"] == "gpt-4o-2024-11-20"
 
     settings.retrieval.embedding_revision = "a" * 40
     with pytest.raises(ValueError, match="model_revisions.json"):
@@ -52,3 +54,27 @@ def test_model_revision_lock_is_available_as_a_package_resource() -> None:
 
     assert package_path.is_file()
     assert json.loads(package_path.read_text()) == json.loads(repository_path.read_text())
+
+
+@pytest.mark.parametrize("backend", ["claude-sonnet-4-5", "anthropic", "claude"])
+def test_vlm_provenance_encodes_anthropic_aliases(tmp_path, backend: str) -> None:
+    settings = AppSettings(project_root=tmp_path)
+    settings.recovery.vlm_backend = backend
+    settings.recovery.anthropic_model = "claude-sonnet-4-5"
+
+    vlm = settings.model_provenance()["vlm"]
+
+    assert vlm["backend"] == backend
+    assert vlm["provider"] == "anthropic"
+    assert vlm["model"] == "claude-sonnet-4-5"
+
+
+def test_vlm_provenance_tracks_selected_request_model(tmp_path) -> None:
+    settings = AppSettings(project_root=tmp_path)
+    settings.recovery.vlm_backend = "openai"
+    assert settings.model_provenance()["vlm"]["model"] == settings.recovery.openai_model
+    assert settings.vlm_request_model() == settings.recovery.openai_model
+
+    settings.recovery.vlm_backend = "anthropic"
+    assert settings.model_provenance()["vlm"]["model"] == settings.recovery.anthropic_model
+    assert settings.vlm_request_model() == settings.recovery.anthropic_model

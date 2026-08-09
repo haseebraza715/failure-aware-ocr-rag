@@ -21,6 +21,14 @@ def _run_spec(**overrides) -> dict:
             "embedding": {"repository": "nvidia/NV-Embed-v2", "revision": None},
             "reranker": {"repository": "BAAI/bge-reranker-v2-m3", "revision": None},
         },
+        "vlm_backend": "openai",
+        "vlm_model": "gpt-4o-2024-11-20",
+        "vlm_cost_rates": {
+            "provider": "openai",
+            "currency": "USD",
+            "input_usd_per_million_tokens": 2.5,
+            "output_usd_per_million_tokens": 10.0,
+        },
     }
     spec.update(overrides)
     return spec
@@ -225,3 +233,45 @@ def test_harm_rate_rejects_uncovered_row_directly() -> None:
     baseline_rows = [_row("e1", 1.0)]
     with pytest.raises(ValueError, match="not covered"):
         _harm_rate([_row("e1", 0.0), _row("e9", 0.5)], baseline_rows)
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("vlm_backend", "claude-sonnet-4-5"),
+        ("vlm_model", "claude-sonnet-4-5"),
+        (
+            "vlm_cost_rates",
+            {
+                "provider": "anthropic",
+                "currency": "USD",
+                "input_usd_per_million_tokens": 3.0,
+                "output_usd_per_million_tokens": 15.0,
+            },
+        ),
+    ],
+)
+def test_analysis_rejects_mixed_vlm_provenance_across_results(
+    tmp_path: Path,
+    key: str,
+    value: object,
+) -> None:
+    baseline, first, second = tmp_path / "b0.json", tmp_path / "first.json", tmp_path / "second.json"
+    spec = _run_spec()
+    _result(baseline, "B0", 0.5, 0.0, [_row("e1", 1.0)], profile="naive_rag", run_spec=spec)
+    _result(first, "FAAR", 0.5, 0.2, [_row("e1", 0.0)], run_spec=spec)
+    _result(second, "FAAR-2", 0.6, 0.3, [_row("e1", 1.0)], run_spec=_run_spec(**{key: value}))
+    with pytest.raises(ValueError, match="vlm_backend, vlm_model, and vlm_cost_rates"):
+        summarize_analysis([first, second], baseline)
+
+
+@pytest.mark.parametrize("key", ["vlm_backend", "vlm_model", "vlm_cost_rates"])
+def test_analysis_rejects_missing_vlm_provenance_key(tmp_path: Path, key: str) -> None:
+    baseline, faar = tmp_path / "b0.json", tmp_path / "faar.json"
+    spec = _run_spec()
+    partial = dict(spec)
+    del partial[key]
+    _result(baseline, "B0", 0.5, 0.0, [_row("e1", 1.0)], profile="naive_rag", run_spec=spec)
+    _result(faar, "FAAR", 0.5, 0.2, [_row("e1", 0.0)], run_spec=partial)
+    with pytest.raises(ValueError, match=key):
+        summarize_analysis([faar], baseline)
