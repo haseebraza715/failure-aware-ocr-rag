@@ -25,7 +25,7 @@ from faar.metrics import token_f1
 from faar.operations import install_graceful_termination_handler, startup_report
 from faar.results_aggregator import summarize_api_usage, summarize_examples
 from faar.run_io import atomic_write_text, select_shard, shard_label
-from faar.settings import AppSettings
+from faar.settings import AppSettings, resolve_retrieval_models
 from faar.visual_baselines import run_visual_baseline
 
 
@@ -139,8 +139,10 @@ def _settings_from_args(args: argparse.Namespace) -> AppSettings:
         settings.recovery.anthropic_model = settings.recovery.vlm_backend
     if settings.recovery.vlm_backend == "openai":
         settings.recovery.openai_model = os.getenv("OPENAI_MODEL", settings.recovery.openai_model)
-    settings.retrieval.embedding_model = args.embed or os.getenv("EMBED_MODEL", settings.retrieval.embedding_model)
-    settings.retrieval.reranker = args.reranker or os.getenv("RERANKER", settings.retrieval.reranker)
+    settings.retrieval.embedding_model, settings.retrieval.reranker = resolve_retrieval_models(
+        embed=args.embed,
+        reranker=args.reranker,
+    )
     settings.recovery.ocr_engine = args.ocr or os.getenv("OCR_ENGINE", settings.recovery.ocr_engine)
     settings.recovery.log_vlm_calls = True
     settings.experiment.random_seed = args.seed

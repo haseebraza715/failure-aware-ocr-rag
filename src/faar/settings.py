@@ -45,6 +45,46 @@ def _canonical_model_repository(repository: str) -> str:
     return MODEL_REPOSITORY_ALIASES.get(repository, repository)
 
 
+def resolve_retrieval_models(
+    *, embed: str | None = None, reranker: str | None = None
+) -> tuple[str, str]:
+    """Resolve effective embedding/reranker model names exactly as run.py will.
+
+    Applies CLI override, then environment (EMBED_MODEL/EMBED_MODEL_REPO,
+    RERANKER/RERANKER_MODEL_REPO), then committed model-revision locks, then
+    defaults. Pure configuration resolution: no model weights, CUDA contexts,
+    downloads, or API keys are touched.
+    """
+    retrieval = RetrievalSettings()
+    embedding_model = embed or retrieval.embedding_model
+    reranker_model = reranker or retrieval.reranker
+    return embedding_model, reranker_model
+
+
+def effective_retrieval_provenance(
+    *, embed: str | None = None, reranker: str | None = None
+) -> dict[str, dict[str, str | None]]:
+    """Gate-relevant model provenance the next B0 will record (embedding + reranker).
+
+    Mirrors run.py's resolution so gate-lock validation can compare the lock
+    against the exact provenance a fresh run will produce, without importing
+    torch or initializing any external client.
+    """
+    retrieval = RetrievalSettings()
+    embedding_model = embed or retrieval.embedding_model
+    reranker_model = reranker or retrieval.reranker
+    return {
+        "embedding": {
+            "repository": _canonical_model_repository(embedding_model),
+            "revision": retrieval.embedding_revision,
+        },
+        "reranker": {
+            "repository": _canonical_model_repository(reranker_model),
+            "revision": retrieval.reranker_revision,
+        },
+    }
+
+
 def _positive_int_env(name: str, fallback: int) -> int:
     raw = os.getenv(name)
     if raw is None:

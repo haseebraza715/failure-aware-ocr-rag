@@ -17,6 +17,7 @@ if str(SRC) not in sys.path:
 
 from faar.gate_tuning import require_paper_gate_threshold
 from faar.results_aggregator import summarize_api_usage
+from faar.settings import effective_retrieval_provenance
 
 STAGE_ORDER = ("b0", "b1", "b2", "b3", "b4")
 
@@ -447,13 +448,16 @@ def main(argv: list[str] | None = None) -> int:
         # the gate-lock check; a tampered B0 fails here before any stage runs.
         baseline_payload = validate_output(b0_path, "b0", args, None)
     # Validate the B2 gate lock before launching any stage so a missing or
-    # invalid lock never spends API/GPU resources on B0 or paid B1.
+    # invalid lock never spends API/GPU resources on B0 or paid B1. Without an
+    # existing B0, resolve the exact provenance the fresh run would record so
+    # a lock tuned for a different embedding/reranker configuration also
+    # fails here instead of after paid B1.
     gate_lock = None
     if args.stop_after != "b0":
         baseline_mp = (
             baseline_payload["run_spec"].get("model_provenance")
             if baseline_payload is not None
-            else None
+            else effective_retrieval_provenance(embed=args.embed, reranker=args.reranker)
         )
         gate_lock = validate_gate_lock(
             root,

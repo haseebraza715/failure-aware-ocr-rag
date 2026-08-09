@@ -23,10 +23,10 @@ SPLIT = "test"
 SEED = 42
 IDS = ["id-a", "id-b"]
 
-_BASE_MODEL_PROVENANCE = {
-    "embedding": {"repository": "nvidia/NV-Embed-v2", "revision": "locked"},
-    "reranker": {"repository": "BAAI/bge-reranker-v2-m3", "revision": "locked"},
-}
+
+def _effective_provenance() -> dict:
+    """Gate-relevant provenance the runner resolves for a fresh run (no overrides)."""
+    return run_baselines.effective_retrieval_provenance()
 
 
 def _gate_lock(root: Path) -> None:
@@ -40,7 +40,7 @@ def _gate_lock(root: Path) -> None:
             "profile": "naive_rag",
             "dataset": DATASET,
             "split": "val",
-            "model_provenance": _BASE_MODEL_PROVENANCE,
+            "model_provenance": _effective_provenance(),
         },
         "rows": [],
     }
@@ -53,7 +53,7 @@ def _gate_lock(root: Path) -> None:
                 "source_digest": _gate_relevant_source_digest(source_payload),
                 "dataset": DATASET,
                 "split": "val",
-                "model_provenance": _BASE_MODEL_PROVENANCE,
+                "model_provenance": _effective_provenance(),
                 "gate_source_metric": "em",
                 "signal": "BGE-reranker-v2-m3 top-1 score",
                 "threshold": 0.5,
@@ -115,10 +115,7 @@ def _payload(stage: str, args, ids: list[str]) -> dict:
             "vlm_backend": args.vlm or "openai",
             "gate_threshold": 0.5 if stage == "b2" else None,
             "manifest_sha256": "a" * 64,
-            "model_provenance": {
-                "embedding": {"repository": embedding, "revision": "locked"},
-                "reranker": {"repository": reranker, "revision": "locked"},
-            },
+            "model_provenance": _effective_provenance(),
         },
         "rows": _rows(ids),
     }
@@ -448,6 +445,88 @@ def test_b2_remains_mandatory_without_lock_even_when_stopping_after_b1(
     with pytest.raises(SystemExit, match="B2 requires"):
         run_baselines.main(["--project-root", str(tmp_path), "--stop-after", "b1"])
     assert calls == []
+
+
+def test_fresh_run_mismatched_embedding_launches_zero_stages(monkeypatch, tmp_path: Path) -> None:
+    _gate_lock(tmp_path)
+    fake, calls = _successful_run_child(tmp_path, _args(tmp_path))
+    monkeypatch.setattr(run_baselines, "run_child", fake)
+    with pytest.raises(SystemExit, match="retrieval model provenance does not match"):
+        run_baselines.main(["--project-root", str(tmp_path), "--embed", "other/model"])
+    assert calls == []
+
+
+def test_fresh_run_mismatched_reranker_launches_zero_stages(monkeypatch, tmp_path: Path) -> None:
+    _gate_lock(tmp_path)
+    fake, calls = _successful_run_child(tmp_path, _args(tmp_path))
+    monkeypatch.setattr(run_baselines, "run_child", fake)
+    with pytest.raises(SystemExit, match="retrieval model provenance does not match"):
+        run_baselines.main(["--project-root", str(tmp_path), "--reranker", "other/reranker"])
+    assert calls == []
+
+
+def test_env_override_provenance_mismatch_launches_zero_stages(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _gate_lock(tmp_path)
+    monkeypatch.setenv("EMBED_MODEL", "other/model")
+    fake, calls = _successful_run_child(tmp_path, _args(tmp_path))
+    monkeypatch.setattr(run_baselines, "run_child", fake)
+    with pytest.raises(SystemExit, match="retrieval model provenance does not match"):
+        run_baselines.main(["--project-root", str(tmp_path)])
+    assert calls == []
+
+
+def test_revision_mismatch_launches_zero_stages(monkeypatch, tmp_path: Path) -> None:
+    _gate_lock(tmp_path)
+    monkeypatch.setenv("EMBED_MODEL_REVISION", "0" * 40)
+    fake, calls = _successful_run_child(tmp_path, _args(tmp_path))
+    monkeypatch.setattr(run_baselines, "run_child", fake)
+    with pytest.raises(SystemExit, match="retrieval model provenance does not match"):
+        run_baselines.main(["--project-root", str(tmp_path)])
+    assert calls == []
+
+
+def test_compatible_explicit_cli_models_launch_full_sequence(monkeypatch, tmp_path: Path) -> None:
+    _gate_lock(tmp_path)
+    args = _args(
+        tmp_path,
+        embed="nvidia/NV-Embed-v2",
+        reranker="BAAI/bge-reranker-v2-m3",
+    )
+    fake, calls = _successful_run_child(tmp_path, args)
+    monkeypatch.setattr(run_baselines, "run_child", fake)
+    result = run_baselines.main(
+        [
+            "--project-root",
+            str(tmp_path),
+            "--embed",
+            "nvidia/NV-Embed-v2",
+            "--reranker",
+            "BAAI/bge-reranker-v2-m3",
+        ]
+    )
+    assert result == 0
+    assert [_stage_from_command(command) for command in calls] == ["b0", "b1", "b2", "b3", "b4"]
+
+
+def test_gate_provenance_resolution_is_side_effect_free(monkeypatch, tmp_path: Path) -> None:
+    import builtins
+
+    real_import = builtins.__import__
+
+    def guarded(name, *args, **kwargs):
+        if name == "torch":
+            raise AssertionError("torch must not be imported while resolving gate provenance")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded)
+    provenance = run_baselines.effective_retrieval_provenance()
+    assert set(provenance) == {"embedding", "reranker"}
+    assert provenance["embedding"]["repository"]
+    assert provenance["embedding"]["revision"]
+    assert provenance["reranker"]["repository"]
+    assert provenance["reranker"]["revision"]
 
 
 def test_resume_rejects_null_summary_metric(monkeypatch, tmp_path: Path) -> None:
