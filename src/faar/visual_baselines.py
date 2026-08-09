@@ -21,6 +21,7 @@ from .recovery import VisualFallback
 from .resource_limits import (
     enforce_gpu_memory_fraction,
     enforce_memory_budget,
+    is_fatal_resource_error,
     release_cuda_cache,
     select_dtype,
     torch_device,
@@ -661,6 +662,7 @@ def run_visual_baseline(
     processed = 0
     for example_id in pending:
         check_termination()
+        enforce_memory_budget(f"profile:{mode} before example {example_id}")
         assert retriever is not None
         assert fallback is not None
         try:
@@ -730,6 +732,8 @@ def run_visual_baseline(
                 },
             }
         except Exception as exc:
+            if is_fatal_resource_error(exc):
+                raise
             reason = f"{type(exc).__name__}: {exc}"
             failed_row = {
                 "profile": mode,
@@ -755,6 +759,7 @@ def run_visual_baseline(
             continue
         rows_by_id[example_id] = row
         atomic_write_json(_visual_checkpoint_path(base_output, example_id), row)
+        enforce_memory_budget(f"profile:{mode} after example {example_id}")
         processed += 1
         reporter.update(processed)
     if failures:

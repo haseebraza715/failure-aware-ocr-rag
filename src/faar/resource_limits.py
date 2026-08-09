@@ -80,6 +80,32 @@ def _import_torch() -> Any | None:
     return torch
 
 
+def is_fatal_resource_error(exc: BaseException, torch_module: Any | None = None) -> bool:
+    """True when exc is process-wide resource exhaustion that must abort the run.
+
+    MemoryError and torch CUDA OutOfMemoryError are fatal; RuntimeError
+    messages that unambiguously name CUDA out-of-memory are also fatal. Other
+    exceptions (bad data, exhausted API calls) remain per-example recoverable
+    failures. torch is imported lazily only when needed so CPU-only paths do
+    not pay an eager import cost.
+    """
+    if isinstance(exc, MemoryError):
+        return True
+    if isinstance(exc, RuntimeError):
+        message = str(exc).lower()
+        if "out of memory" not in message:
+            return False
+        if "cuda" in message:
+            return True
+        if torch_module is None:
+            torch_module = _import_torch()
+        if torch_module is not None:
+            oom_type = getattr(getattr(torch_module, "cuda", None), "OutOfMemoryError", None)
+            if oom_type is not None and isinstance(exc, oom_type):
+                return True
+    return False
+
+
 def torch_device(torch_module: Any | None = None) -> Any:
     if torch_module is None:
         torch_module = _import_torch()

@@ -12,6 +12,7 @@ from .experiment_profiles import apply_profile
 from .graph import build_graph, random_recovery_type
 from .metrics import exact_match, ndcg_at_k, recall_at_k, token_f1
 from .operations import ProgressReporter, check_termination
+from .resource_limits import enforce_memory_budget, is_fatal_resource_error
 from .run_io import atomic_write_json, run_fingerprint, safe_checkpoint_stem, select_shard
 from .settings import AppSettings
 
@@ -78,6 +79,7 @@ def run_profile(
     processed = 0
     for example_id in pending:
         check_termination()
+        enforce_memory_budget(f"profile:{profile_name} before example {example_id}")
         try:
             result = graph.invoke({"example_id": example_id})
             result_hits = result.get("corrected_hits") or result.get("retrieved_hits", [])
@@ -145,6 +147,8 @@ def run_profile(
             if result.get("recovery_type") is not None:
                 row["recovery_type"] = result["recovery_type"]
         except Exception as exc:
+            if is_fatal_resource_error(exc):
+                raise
             reason = f"{type(exc).__name__}: {exc}"
             failed_row = {
                 "profile": profile_name,
@@ -171,6 +175,7 @@ def run_profile(
             continue
         rows_by_id[example_id] = row
         atomic_write_json(_checkpoint_path(base_output, example_id), row)
+        enforce_memory_budget(f"profile:{profile_name} after example {example_id}")
         processed += 1
         reporter.update(processed)
     if failures:
