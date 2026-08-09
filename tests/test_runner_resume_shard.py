@@ -474,9 +474,14 @@ class FakeVisualRepo:
     def get_example(self, example_id: str):
         return SimpleNamespace(
             example_id=example_id,
+            doc_name="doc",
+            page_ids=[],
             question=f"Question {example_id}?",
             correct_answer=f"answer-{example_id}",
         )
+
+    def corpus_image_page_map(self) -> dict[Path, tuple[str, int]]:
+        return {}
 
 
 class FakeVisualRetriever:

@@ -300,6 +300,14 @@ def build_visual_retriever(mode: str, repo: BenchmarkRepository, settings: AppSe
     raise ValueError(f"Unsupported visual baseline: {mode}")
 
 
+def _ndcg_at_5(relevance: list[float], gold_size: int) -> float:
+    ideal = sum(1.0 / math.log2(index + 2) for index in range(min(len(relevance), gold_size)))
+    if ideal <= 0:
+        return 0.0
+    dcg = sum(rel / math.log2(index + 2) for index, rel in enumerate(relevance))
+    return dcg / ideal
+
+
 def run_visual_baseline(
     settings: AppSettings,
     repo: BenchmarkRepository,
@@ -339,12 +347,19 @@ def run_visual_baseline(
     if pending:
         retriever = build_visual_retriever(mode, repo, settings)
         fallback = VisualFallback(settings)
+    page_map = repo.corpus_image_page_map()
     for example_id in pending:
         assert retriever is not None
         assert fallback is not None
         example = repo.get_example(example_id)
         retrieved = retriever.retrieve(example.question, settings.retrieval.top_k)
         image_paths = [path for path, _ in retrieved]
+        gold_evidence = {(example.doc_name, page_id) for page_id in example.page_ids}
+        top_relevance = [
+            1.0 if page_map.get(path) in gold_evidence else 0.0 for path, _ in retrieved[:5]
+        ]
+        recall_at_5 = min(sum(top_relevance) / len(gold_evidence), 1.0) if gold_evidence else 0.0
+        ndcg_at_5 = _ndcg_at_5(top_relevance, len(gold_evidence))
         answer_result = fallback.answer(example.question, image_paths, "")
         if answer_result.get("status") == "failed":
             raise RuntimeError(
@@ -377,8 +392,8 @@ def run_visual_baseline(
                 "reason": f"{mode}_retrieval_then_vlm",
             },
             "metrics": {
-                "ndcg@5": 0.0,
-                "recall@5": 0.0,
+                "ndcg@5": ndcg_at_5,
+                "recall@5": recall_at_5,
                 "em": exact_match(prediction, example.correct_answer),
                 "f1": token_f1(prediction, example.correct_answer),
             },

@@ -15,12 +15,17 @@ class FakeVisualRepository:
     def corpus_image_paths(self) -> list[Path]:
         return [self.image_path]
 
+    def corpus_image_page_map(self) -> dict[Path, tuple[str, int]]:
+        return {self.image_path: ("doc", 1)}
+
     def list_example_ids(self) -> list[str]:
         return ["q1"]
 
     def get_example(self, example_id: str):
         return SimpleNamespace(
             example_id=example_id,
+            doc_name="doc",
+            page_ids=[1],
             question="What is shown?",
             correct_answer="answer",
         )

@@ -158,6 +158,12 @@ class BenchmarkRepository:
     def corpus_image_paths(self) -> list[Path]:
         return [Path(page["image_path"]) for page in self._corpus_pages]
 
+    def corpus_image_page_map(self) -> dict[Path, tuple[str, int]]:
+        return {
+            Path(page["image_path"]): (str(page["doc_name"]), int(page["page_id"]))
+            for page in self._corpus_pages
+        }
+
 
 def load_benchmark_repository_from_manifest(
     project_root: Path,
