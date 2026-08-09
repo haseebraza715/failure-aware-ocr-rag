@@ -9,7 +9,7 @@ from .api_logging import is_valid_api_usage, openai_cost_rates, zero_api_usage
 from .benchmarks import load_benchmark_repository
 from .data import Phase0Repository
 from .experiment_profiles import apply_profile
-from .graph import build_graph
+from .graph import build_graph, random_recovery_type
 from .metrics import exact_match, ndcg_at_k, recall_at_k, token_f1
 from .run_io import atomic_write_json, run_fingerprint, safe_checkpoint_stem, select_shard
 from .settings import AppSettings
@@ -57,7 +57,7 @@ def run_profile(
     if resume:
         for example_id in selected_ids:
             cached = _load_checkpoint(_checkpoint_path(base_output, example_id))
-            if cached is not None and _is_valid_checkpoint(cached, example_id, profile_name, fingerprint):
+            if cached is not None and _is_valid_checkpoint(cached, example_id, profile_name, fingerprint, settings):
                 rows_by_id[example_id] = cached
             else:
                 pending.append(example_id)
@@ -127,6 +127,8 @@ def run_profile(
                 "split": split or "development",
             },
         }
+        if result.get("recovery_type") is not None:
+            row["recovery_type"] = result["recovery_type"]
         rows_by_id[example_id] = row
         atomic_write_json(_checkpoint_path(base_output, example_id), row)
     return [rows_by_id[example_id] for example_id in selected_ids if example_id in rows_by_id]
@@ -149,10 +151,17 @@ def _is_valid_checkpoint(
     example_id: str,
     profile_name: str,
     fingerprint: str,
+    settings: AppSettings,
 ) -> bool:
-    return (
+    if not (
         row.get("example_id") == example_id
         and row.get("profile") == profile_name
         and (row.get("run_metadata") or {}).get("run_fingerprint") == fingerprint
         and is_valid_api_usage(row.get("api_usage"))
-    )
+    ):
+        return False
+    if settings.experiment.random_recovery and row.get("failure_type") == "random":
+        expected = random_recovery_type(settings.experiment.random_seed, example_id)
+        if row.get("recovery_type") != expected:
+            return False
+    return True

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import random
+import hashlib
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -18,6 +18,28 @@ from .symspell import correct_text as symspell_correct_text
 from .types import Chunk, RetrievalHit
 
 
+RANDOM_RECOVERY_TYPES = ("semantic", "word_level", "structural")
+
+POLICY_ACTION_BY_TYPE = {
+    "word_level": "correct_text",
+    "structural": "invoke_vlm",
+    "semantic": "retry_retrieval",
+}
+
+
+def random_recovery_type(seed: int, example_id: str) -> str:
+    """Deterministic per-example random recovery type for the B2 ablation.
+
+    The choice is a pure function of the locked run seed and the example id, so
+    it is invariant to resume, iteration order, and sharding. Seed and example
+    id are mixed through SHA-256 instead of Python's process-randomized hash(),
+    keeping the result stable across processes and interpreter runs.
+    """
+    digest = hashlib.sha256(f"{seed}:{example_id}".encode("utf-8")).digest()
+    index = int.from_bytes(digest, byteorder="big") % len(RANDOM_RECOVERY_TYPES)
+    return RANDOM_RECOVERY_TYPES[index]
+
+
 class GraphState(TypedDict, total=False):
     example_id: str
     question: str
@@ -28,6 +50,7 @@ class GraphState(TypedDict, total=False):
     gate: dict[str, Any]
     failure_type: str
     policy_action: str
+    recovery_type: str
     corrected_hits: list[RetrievalHit]
     semantic_retry_query: str
     visual_result: dict[str, Any]
@@ -78,13 +101,12 @@ def build_graph(settings: AppSettings, repo: Phase0Repository | Any | None = Non
 
     def diagnose_node(state: GraphState) -> GraphState:
         if settings.experiment.random_recovery:
-            recovery_type = random.choice(("semantic", "word_level", "structural"))
-            policy_action = {
-                "word_level": "correct_text",
-                "structural": "invoke_vlm",
-                "semantic": "retry_retrieval",
-            }[recovery_type]
-            return {"failure_type": "random", "policy_action": policy_action}
+            recovery_type = random_recovery_type(settings.experiment.random_seed, state["example_id"])
+            return {
+                "failure_type": "random",
+                "policy_action": POLICY_ACTION_BY_TYPE[recovery_type],
+                "recovery_type": recovery_type,
+            }
         if settings.experiment.disable_diagnosis:
             return {"failure_type": "semantic", "policy_action": "answer_direct"}
         failure_type = diagnose_failure(state["retrieved_hits"], state["gate"], settings.gate)
