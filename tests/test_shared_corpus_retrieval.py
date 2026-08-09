@@ -42,7 +42,7 @@ class SharedCorpusRepository:
 class CountingRetriever:
     constructions = 0
 
-    def __init__(self, chunks, settings) -> None:
+    def __init__(self, chunks, settings, *, cache_dir: Path | None = None) -> None:
         type(self).constructions += 1
         self.hit = RetrievalHit(
             chunk=chunks[0],
