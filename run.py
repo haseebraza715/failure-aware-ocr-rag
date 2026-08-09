@@ -17,7 +17,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from evaluate import load_rows
-from faar.api_logging import openai_cost_rates
+from faar.api_logging import vlm_cost_rates
 from faar.benchmarks import load_benchmark_repository
 from faar.experiment_runner import run_profile
 from faar.gate_tuning import require_paper_gate_threshold
@@ -359,12 +359,8 @@ def main() -> None:
         "reranker": settings.retrieval.reranker,
         "ocr_engine": settings.recovery.ocr_engine,
         "vlm_backend": settings.recovery.vlm_backend,
-        "vlm_model": (
-            settings.recovery.openai_model
-            if settings.recovery.vlm_backend == "openai"
-            else settings.recovery.anthropic_model
-        ),
-        "vlm_cost_rates": openai_cost_rates() if settings.recovery.vlm_backend == "openai" else None,
+        "vlm_model": settings.vlm_request_model(),
+        "vlm_cost_rates": vlm_cost_rates(settings.recovery.vlm_backend),
         "model_provenance": settings.model_provenance(),
     }
 

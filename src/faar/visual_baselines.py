@@ -9,7 +9,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
-from .api_logging import is_valid_api_usage, openai_cost_rates
+from .api_logging import is_valid_api_usage, vlm_cost_rates
 from .benchmarks import BenchmarkRepository
 from .metrics import exact_match, token_f1
 from .recovery import VisualFallback
@@ -369,10 +369,7 @@ def run_visual_baseline(
             "request_model": answer_result.get("request_model"),
             "response_model": answer_result.get("response_model"),
             "completed_at_utc": answer_result.get("completed_at_utc"),
-            "cost_rates": (
-                answer_result.get("cost_rates")
-                or (openai_cost_rates() if settings.recovery.vlm_backend == "openai" else None)
-            ),
+            "cost_rates": answer_result.get("cost_rates") or vlm_cost_rates(settings.recovery.vlm_backend),
             "api_usage": api_usage,
             "action_outcome": {
                 "action": "invoke_vlm",
@@ -396,7 +393,8 @@ def run_visual_baseline(
                 "api_enabled": settings.recovery.api_enabled,
                 "vlm_backend": settings.recovery.vlm_backend,
                 "openai_model": settings.recovery.openai_model,
-                "cost_rates": openai_cost_rates() if settings.recovery.vlm_backend == "openai" else None,
+                "vlm_model": settings.vlm_request_model(),
+                "cost_rates": vlm_cost_rates(settings.recovery.vlm_backend),
                 "evaluation_size": len(example_ids),
                 "selection": {"max_examples": max_examples},
                 "dataset": dataset,

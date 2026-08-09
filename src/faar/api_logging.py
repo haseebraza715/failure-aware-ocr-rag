@@ -70,10 +70,24 @@ def new_record(
     )
 
 
-def estimate_anthropic_cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float:
-    input_per_million = float(os.getenv("ANTHROPIC_INPUT_USD_PER_MTOK", "3.0"))
-    output_per_million = float(os.getenv("ANTHROPIC_OUTPUT_USD_PER_MTOK", "15.0"))
-    return (prompt_tokens / 1_000_000 * input_per_million) + (completion_tokens / 1_000_000 * output_per_million)
+ANTHROPIC_VLM_BACKENDS = {"claude-sonnet-4-5", "anthropic", "claude"}
+
+
+def anthropic_cost_rates() -> dict[str, float | str]:
+    return {
+        "provider": "anthropic",
+        "currency": "USD",
+        "input_usd_per_million_tokens": float(os.getenv("ANTHROPIC_INPUT_USD_PER_MTOK", "3.0")),
+        "output_usd_per_million_tokens": float(os.getenv("ANTHROPIC_OUTPUT_USD_PER_MTOK", "15.0")),
+    }
+
+
+def vlm_cost_rates(vlm_backend: str) -> dict[str, float | str] | None:
+    if vlm_backend == "openai":
+        return openai_cost_rates()
+    if vlm_backend in ANTHROPIC_VLM_BACKENDS:
+        return anthropic_cost_rates()
+    return None
 
 
 def openai_cost_rates() -> dict[str, float | str]:
@@ -85,16 +99,28 @@ def openai_cost_rates() -> dict[str, float | str]:
     }
 
 
+def _cost_usd_from_rates(
+    prompt_tokens: int,
+    completion_tokens: int,
+    rates: dict[str, float | str],
+) -> float:
+    return (
+        prompt_tokens / 1_000_000 * float(rates["input_usd_per_million_tokens"])
+        + completion_tokens / 1_000_000 * float(rates["output_usd_per_million_tokens"])
+    )
+
+
+def estimate_anthropic_cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    return _cost_usd_from_rates(prompt_tokens, completion_tokens, anthropic_cost_rates())
+
+
 def estimate_openai_cost_usd(
     prompt_tokens: int,
     completion_tokens: int,
     rates: dict[str, float | str] | None = None,
 ) -> float:
     rates = rates or openai_cost_rates()
-    return (
-        prompt_tokens / 1_000_000 * float(rates["input_usd_per_million_tokens"])
-        + completion_tokens / 1_000_000 * float(rates["output_usd_per_million_tokens"])
-    )
+    return _cost_usd_from_rates(prompt_tokens, completion_tokens, rates)
 
 
 def make_api_usage(

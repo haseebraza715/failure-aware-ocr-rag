@@ -12,12 +12,14 @@ from openai import OpenAI
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
 from .api_logging import (
+    anthropic_cost_rates,
     estimate_anthropic_cost_usd,
     estimate_openai_cost_usd,
     make_api_usage,
     make_vlm_logger,
     new_record,
     openai_cost_rates,
+    vlm_cost_rates,
     zero_api_usage,
 )
 from .settings import AppSettings
@@ -79,6 +81,7 @@ class VisualFallback:
                 "reason": "api_disabled",
                 "answer": "",
                 "used_images": [],
+                "cost_rates": vlm_cost_rates(self.settings.recovery.vlm_backend),
                 "api_usage": zero_api_usage(),
             }
         if self.settings.recovery.vlm_backend == "openai":
@@ -253,6 +256,7 @@ class VisualFallback:
             )
         except Exception as exc:  # pragma: no cover - external runtime dependent
             completed_at_utc = datetime.now(UTC).isoformat()
+            cost_rates = anthropic_cost_rates()
             self.logger.log(
                 new_record(
                     provider="anthropic",
@@ -265,6 +269,7 @@ class VisualFallback:
                         "request_model": self.settings.recovery.anthropic_model,
                         "response_model": None,
                         "completed_at_utc": completed_at_utc,
+                        "cost_rates": cost_rates,
                     },
                 )
             )
@@ -277,6 +282,7 @@ class VisualFallback:
                 "request_model": self.settings.recovery.anthropic_model,
                 "response_model": None,
                 "completed_at_utc": completed_at_utc,
+                "cost_rates": cost_rates,
                 "api_usage": make_api_usage(api_requests=1),
             }
         usage = getattr(response, "usage", None)
@@ -285,6 +291,7 @@ class VisualFallback:
         text_parts = [getattr(block, "text", "") for block in getattr(response, "content", []) if getattr(block, "type", "") == "text"]
         response_model = getattr(response, "model", None) or self.settings.recovery.anthropic_model
         completed_at_utc = datetime.now(UTC).isoformat()
+        cost_rates = anthropic_cost_rates()
         cost_usd = estimate_anthropic_cost_usd(self.settings.recovery.anthropic_model, prompt_tokens, completion_tokens)
         self.logger.log(
             new_record(
@@ -301,6 +308,7 @@ class VisualFallback:
                     "request_model": self.settings.recovery.anthropic_model,
                     "response_model": response_model,
                     "completed_at_utc": completed_at_utc,
+                    "cost_rates": cost_rates,
                 },
             )
         )
@@ -313,6 +321,7 @@ class VisualFallback:
             "request_model": self.settings.recovery.anthropic_model,
             "response_model": response_model,
             "completed_at_utc": completed_at_utc,
+            "cost_rates": cost_rates,
             "api_usage": make_api_usage(
                 api_requests=1,
                 prompt_tokens=prompt_tokens,

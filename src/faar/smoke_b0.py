@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .api_logging import openai_cost_rates
+from .api_logging import vlm_cost_rates
 from .benchmarks import BenchmarkRepository, load_benchmark_repository_from_manifest
 from .data import DatasetUnavailableError
 from .experiment_profiles import apply_profile
@@ -463,8 +463,8 @@ def run_one_document_b0_smoke(
             "reranker": settings.retrieval.reranker,
             "ocr_engine": settings.recovery.ocr_engine,
             "vlm_backend": settings.recovery.vlm_backend,
-            "vlm_model": settings.recovery.openai_model,
-            "vlm_cost_rates": openai_cost_rates() if settings.recovery.vlm_backend == "openai" else None,
+            "vlm_model": settings.vlm_request_model(),
+            "vlm_cost_rates": vlm_cost_rates(settings.recovery.vlm_backend),
             "model_provenance": settings.model_provenance(),
             "note": (
                 "One-document Phase 0 smoke after OHR asset preparation. "

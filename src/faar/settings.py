@@ -32,6 +32,7 @@ MODEL_REPOSITORY_ALIASES = {
     "NV-Embed-v2": "nvidia/NV-Embed-v2",
     "bge-reranker-v2-m3": "BAAI/bge-reranker-v2-m3",
 }
+ANTHROPIC_VLM_BACKENDS = {"claude-sonnet-4-5", "anthropic", "claude"}
 
 
 def _locked_model_value(role: str, key: str, fallback: str | None = None) -> str | None:
@@ -276,6 +277,20 @@ class AppSettings(BaseModel):
                 + ". Resolve the intended commits and update the lock file before inference."
             )
 
+    def vlm_provider(self) -> str:
+        if self.recovery.vlm_backend == "openai":
+            return "openai"
+        if self.recovery.vlm_backend in ANTHROPIC_VLM_BACKENDS:
+            return "anthropic"
+        return self.recovery.vlm_backend
+
+    def vlm_request_model(self) -> str | None:
+        if self.recovery.vlm_backend == "openai":
+            return self.recovery.openai_model
+        if self.recovery.vlm_backend in ANTHROPIC_VLM_BACKENDS:
+            return self.recovery.anthropic_model
+        return None
+
     def model_provenance(self) -> dict[str, dict[str, str | None]]:
         return {
             "embedding": {
@@ -290,7 +305,11 @@ class AppSettings(BaseModel):
             "byt5": {"repository": self.recovery.byt5_model, "revision": self.recovery.byt5_revision},
             "colpali": {"repository": self.retrieval.colpali_model, "revision": self.retrieval.colpali_revision},
             "visrag": {"repository": self.retrieval.visrag_model, "revision": self.retrieval.visrag_revision},
-            "vlm": {"repository": self.recovery.openai_model, "revision": self.recovery.openai_model},
+            "vlm": {
+                "backend": self.recovery.vlm_backend,
+                "provider": self.vlm_provider(),
+                "model": self.vlm_request_model(),
+            },
         }
 
 

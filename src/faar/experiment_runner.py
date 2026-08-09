@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .api_logging import is_valid_api_usage, openai_cost_rates, zero_api_usage
+from .api_logging import is_valid_api_usage, vlm_cost_rates, zero_api_usage
 from .benchmarks import load_benchmark_repository
 from .data import Phase0Repository
 from .experiment_profiles import apply_profile
@@ -102,10 +102,7 @@ def run_profile(
             "request_model": visual_result.get("request_model"),
             "response_model": visual_result.get("response_model"),
             "completed_at_utc": visual_result.get("completed_at_utc"),
-            "cost_rates": (
-                visual_result.get("cost_rates")
-                or (openai_cost_rates() if settings.recovery.vlm_backend == "openai" else None)
-            ),
+            "cost_rates": visual_result.get("cost_rates") or vlm_cost_rates(settings.recovery.vlm_backend),
             "api_usage": api_usage,
             "metrics": {
                 "ndcg@5": ndcg_at_k(hit_texts, gold, k=5),
@@ -126,7 +123,8 @@ def run_profile(
                 "api_enabled": settings.recovery.api_enabled,
                 "vlm_backend": settings.recovery.vlm_backend,
                 "openai_model": settings.recovery.openai_model,
-                "cost_rates": openai_cost_rates() if settings.recovery.vlm_backend == "openai" else None,
+                "vlm_model": settings.vlm_request_model(),
+                "cost_rates": vlm_cost_rates(settings.recovery.vlm_backend),
                 "evaluation_size": len(selected_ids),
                 "selection": selection or {"max_examples": max_examples},
                 "dataset": dataset or "phase0",
