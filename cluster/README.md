@@ -99,6 +99,55 @@ that exactly match B0's example ids, and summary values recomputed from the
 rows. Any mismatch stops the run. Because each stage runs in a fresh
 subprocess, per-stage memory is released before the next stage starts.
 
+## Validation B0 and gate tuning
+
+The gate threshold may be tuned only on the validation split. Before the
+lock exists, the ordered runner can produce the validation B0 in isolation —
+this is the only ordered-runner mode that does not require
+`config/gate_threshold.json`:
+
+```bash
+.venv-aaai/bin/python cluster/run_baselines.py \
+  --project-root "$PWD" \
+  --dataset ohrbench \
+  --split val \
+  --stop-after b0 \
+  --resume
+```
+
+The output is `results/baselines/ohrbench/val/b0.json`. Do not use the
+default `test` split for gate tuning; scheduler jobs that prepare validation
+assets must request the `val` split explicitly (`FAAR_SPLIT=val`).
+
+Once the validation B0 exists, tune and lock the gate threshold:
+
+```bash
+.venv-aaai/bin/python tune_gate.py \
+  --baseline results/baselines/ohrbench/val/b0.json \
+  --out results/gate_threshold_search.json \
+  --lock config/gate_threshold.json
+```
+
+This writes `config/gate_threshold.json` (locked at precision >= 0.75 and
+recall >= 0.70). It refuses non-validation sources and refuses to lock a
+search that did not pass.
+
+After the lock exists, resume the complete B0-B4 sequence with the exact
+runner command from the previous section:
+
+```bash
+.venv-aaai/bin/python cluster/run_baselines.py \
+  --project-root "$PWD" \
+  --dataset ohrbench --split test \
+  --resume
+```
+
+B2 cannot be skipped: any run that reaches or prepares for B2 requires a
+compatible gate lock, and the runner validates the lock's model provenance
+against the run's embedding/reranker configuration before launching B0 or
+paid B1. `--dry-run` requires no lock and performs no execution; it only
+prints the commands.
+
 ## Launcher
 
 `cluster/launcher.py` is the generic entry point for one bounded job, spawned
