@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import math
+import os
 import re
 from functools import lru_cache
 from importlib import import_module
+from pathlib import Path
 
 import faiss
 import numpy as np
@@ -13,6 +17,7 @@ from sentence_transformers import CrossEncoder, SentenceTransformer
 from .resource_limits import (
     enforce_gpu_memory_fraction,
     enforce_memory_budget,
+    release_cuda_cache,
     select_dtype,
     torch_device,
 )
@@ -24,6 +29,8 @@ MODEL_ALIASES = {
     "NV-Embed-v2": "nvidia/NV-Embed-v2",
     "bge-reranker-v2-m3": "BAAI/bge-reranker-v2-m3",
 }
+
+CORPUS_CACHE_SCHEMA_VERSION = 1
 
 
 def _normalize_scores(values: np.ndarray) -> np.ndarray:
@@ -38,6 +45,126 @@ def _normalize_scores(values: np.ndarray) -> np.ndarray:
 
 def _tokenize(text: str) -> list[str]:
     return re.findall(r"[a-z0-9%$]+", text.lower())
+
+
+def _corpus_text_digest(chunks: list[Chunk]) -> str:
+    digest = hashlib.sha256()
+    for chunk in chunks:
+        digest.update(chunk.chunk_id.encode("utf-8"))
+        digest.update(b"\x00")
+        digest.update(chunk.text.encode("utf-8"))
+        digest.update(b"\x00")
+    return digest.hexdigest()
+
+
+def _is_cuda_oom(exc: BaseException, torch_module: Any | None = None) -> bool:
+    if torch_module is not None and isinstance(exc, getattr(torch_module.cuda, "OutOfMemoryError", ())):
+        return True
+    message = str(exc).lower()
+    return "out of memory" in message and "cuda" in message
+
+
+def _encode_with_oom_retry(
+    embedder: SentenceTransformer,
+    texts: list[str],
+    *,
+    batch_size: int,
+    normalize_embeddings: bool,
+) -> np.ndarray:
+    torch = import_module("torch")
+    while True:
+        try:
+            return (
+                embedder.encode(
+                    texts,
+                    batch_size=batch_size,
+                    normalize_embeddings=normalize_embeddings,
+                    convert_to_numpy=True,
+                ).astype("float32")
+            )
+        except Exception as exc:
+            if not _is_cuda_oom(exc, torch):
+                raise
+            if batch_size <= 1:
+                raise
+            batch_size = max(1, batch_size // 2)
+            release_cuda_cache(torch)
+            print(
+                f"[faar] CUDA OOM during corpus encode; halving batch size -> {batch_size}",
+                flush=True,
+            )
+
+
+def _encode_corpus_embeddings(
+    embedder: SentenceTransformer,
+    chunks: list[Chunk],
+    settings: RetrievalSettings,
+    cache_dir: Path | None,
+) -> np.ndarray:
+    if cache_dir is None or not chunks:
+        return _encode_with_oom_retry(
+            embedder,
+            [chunk.text for chunk in chunks],
+            batch_size=settings.embed_batch_size,
+            normalize_embeddings=True,
+        )
+    torch = import_module("torch")
+    dtype_name = str(select_dtype(torch_device(torch), torch))
+    text_digest = _corpus_text_digest(chunks)
+    key = hashlib.sha256(
+        f"{CORPUS_CACHE_SCHEMA_VERSION}|{settings.embedding_model}|"
+        f"{settings.embedding_revision}|{dtype_name}|{text_digest}".encode("utf-8")
+    ).hexdigest()
+    cache_dir = cache_dir.expanduser().resolve()
+    npz_path = cache_dir / f"{key}.npz"
+    meta_path = cache_dir / f"{key}.meta.json"
+    if npz_path.is_file() and meta_path.is_file():
+        try:
+            stored = json.loads(meta_path.read_text(encoding="utf-8"))
+            valid = (
+                stored.get("schema_version") == CORPUS_CACHE_SCHEMA_VERSION
+                and stored.get("model") == settings.embedding_model
+                and stored.get("revision") == settings.embedding_revision
+                and stored.get("dtype") == dtype_name
+                and stored.get("text_digest") == text_digest
+                and stored.get("count") == len(chunks)
+            )
+            if valid:
+                embeddings = np.load(npz_path)["embeddings"]
+                if embeddings.shape == (len(chunks), int(stored["dim"])) and embeddings.dtype == np.float32:
+                    print(
+                        f"[faar] corpus embeddings cache hit: {npz_path.name} ({len(chunks)} chunks)",
+                        flush=True,
+                    )
+                    return embeddings
+        except (OSError, ValueError, TypeError, KeyError):
+            pass
+    embeddings = _encode_with_oom_retry(
+        embedder,
+        [chunk.text for chunk in chunks],
+        batch_size=settings.embed_batch_size,
+        normalize_embeddings=True,
+    )
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        tmp_npz = npz_path.with_name(f".{npz_path.stem}.tmp")
+        tmp_meta = meta_path.with_name(f".{meta_path.name}.tmp")
+        np.savez(tmp_npz, embeddings=embeddings)
+        os.replace(Path(f"{tmp_npz}.npz"), npz_path)
+        meta = {
+            "schema_version": CORPUS_CACHE_SCHEMA_VERSION,
+            "model": settings.embedding_model,
+            "revision": settings.embedding_revision,
+            "dtype": dtype_name,
+            "text_digest": text_digest,
+            "count": len(chunks),
+            "dim": int(embeddings.shape[1]),
+        }
+        tmp_meta.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp_meta, meta_path)
+    except OSError as exc:
+        print(f"[faar] could not persist corpus embedding cache: {exc}", flush=True)
+    return embeddings
 
 
 @lru_cache(maxsize=2)
@@ -78,7 +205,13 @@ def _to_probability(score: float) -> float:
 
 
 class HybridRetriever:
-    def __init__(self, chunks: list[Chunk], settings: RetrievalSettings) -> None:
+    def __init__(
+        self,
+        chunks: list[Chunk],
+        settings: RetrievalSettings,
+        *,
+        cache_dir: Path | None = None,
+    ) -> None:
         self.chunks = chunks
         self.settings = settings
         self._bm25_tokens = [_tokenize(chunk.text) for chunk in chunks]
@@ -87,12 +220,7 @@ class HybridRetriever:
         self._reranker = _load_reranker(settings.reranker, settings.reranker_revision)
         torch = import_module("torch")
         enforce_memory_budget("text retrieval model load", torch)
-        corpus_embeddings = self._embedder.encode(
-            [chunk.text for chunk in chunks],
-            batch_size=settings.embed_batch_size,
-            normalize_embeddings=True,
-            convert_to_numpy=True,
-        ).astype("float32")
+        corpus_embeddings = _encode_corpus_embeddings(self._embedder, chunks, settings, cache_dir)
         self._dense_index = faiss.IndexFlatIP(corpus_embeddings.shape[1])
         self._dense_index.add(corpus_embeddings)
         del corpus_embeddings

@@ -43,7 +43,7 @@ class LexicalSmokeRetriever:
     without loading NV-Embed-v2 or bge-reranker-v2-m3.
     """
 
-    def __init__(self, chunks: list[Chunk], settings: Any = None) -> None:
+    def __init__(self, chunks: list[Chunk], settings: Any = None, *, cache_dir: Any = None) -> None:
         self.chunks = list(chunks)
         self.settings = settings
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -69,7 +70,12 @@ def build_graph(settings: AppSettings, repo: Phase0Repository | Any | None = Non
     )
     visual_fallback = VisualFallback(settings)
     shared_chunks = repo.get_corpus_chunks(settings.retrieval) if hasattr(repo, "get_corpus_chunks") else None
-    shared_retriever = HybridRetriever(shared_chunks, settings.retrieval) if shared_chunks is not None else None
+    cache_dir = Path(os.getenv("FAAR_CACHE_DIR", str(settings.project_root / "cache"))) / "text_embeddings"
+    shared_retriever = (
+        HybridRetriever(shared_chunks, settings.retrieval, cache_dir=cache_dir)
+        if shared_chunks is not None
+        else None
+    )
 
     def load_example(state: GraphState) -> GraphState:
         example = repo.get_example(state["example_id"])
