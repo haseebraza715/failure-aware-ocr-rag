@@ -9,6 +9,10 @@ __pycache__/
 src/*.egg-info/
 src/**/*.egg-info/
 
-data/ohr_bench_raw/
-OHR-Bench/.git/
+# Experiment output and benchmark data are preserved as committed evidence;
+# these rules keep new runs and untracked benchmark payloads out of git status.
+data/
+logs/
+artifacts/
+OHR-Bench/
 AGENT.MD
