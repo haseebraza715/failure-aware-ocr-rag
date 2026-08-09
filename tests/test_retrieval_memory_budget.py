@@ -62,6 +62,13 @@ def test_byt5_load_calls_memory_budget(monkeypatch) -> None:
     class FakeTorch:
         pass
 
+    class _Chain:
+        def to(self, device):
+            return self
+
+        def eval(self):
+            return self
+
     class FakeTokenizer:
         @classmethod
         def from_pretrained(cls, model, **kwargs):
@@ -70,7 +77,7 @@ def test_byt5_load_calls_memory_budget(monkeypatch) -> None:
     class FakeModel:
         @classmethod
         def from_pretrained(cls, model, **kwargs):
-            return object()
+            return _Chain()
 
     monkeypatch.setattr(
         recovery,
@@ -80,6 +87,9 @@ def test_byt5_load_calls_memory_budget(monkeypatch) -> None:
     monkeypatch.setattr(recovery, "import_module", lambda name: FakeTorch())
     monkeypatch.setattr(recovery, "AutoTokenizer", FakeTokenizer)
     monkeypatch.setattr(recovery, "AutoModelForSeq2SeqLM", FakeModel)
+    monkeypatch.setattr(recovery, "torch_device", lambda torch: "cpu")
+    monkeypatch.setattr(recovery, "select_dtype", lambda device, torch: None)
+    monkeypatch.setattr(recovery, "enforce_gpu_memory_fraction", lambda torch: None)
 
     recovery._load_byt5.cache_clear()
     tokenizer, model = recovery._load_byt5("mock/byt5", None)

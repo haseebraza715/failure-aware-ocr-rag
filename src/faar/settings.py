@@ -168,7 +168,9 @@ class RecoverySettings(BaseModel):
     pdf_preprocessor: str = Field(default_factory=lambda: os.getenv("PDF_PREPROCESSOR", "docling"))
     enable_vlm: bool = True
     api_enabled: bool = True
-    request_timeout_seconds: int = 60
+    request_timeout_seconds: int = Field(
+        default_factory=lambda: _positive_int_env("FAAR_VLM_TIMEOUT_SECONDS", 60)
+    )
     log_vlm_calls: bool = Field(default_factory=lambda: os.getenv("LOG_VLM_CALLS", "true").lower() == "true")
     wordlevel_fallback: str | None = None
 

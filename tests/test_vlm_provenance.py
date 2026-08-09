@@ -55,7 +55,7 @@ def test_vlm_cost_rates_selects_by_backend(monkeypatch) -> None:
 
 def test_anthropic_provider_result_persists_cost_rates(monkeypatch, tmp_path: Path) -> None:
     image_path = tmp_path / "page.png"
-    image_path.write_bytes(b"image")
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"payload")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-only-placeholder")
     monkeypatch.setenv("ANTHROPIC_INPUT_USD_PER_MTOK", "3.0")
     monkeypatch.setenv("ANTHROPIC_OUTPUT_USD_PER_MTOK", "15.0")

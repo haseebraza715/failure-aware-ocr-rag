@@ -115,15 +115,54 @@ def _text_checkpoint(tmp_path: Path, example_id: str) -> Path:
     return tmp_path / "logs/phase3/faar_full" / f"{example_id}.json"
 
 
-def test_text_runner_failed_vlm_raises_and_creates_no_checkpoint(monkeypatch, tmp_path: Path) -> None:
+def test_text_runner_failed_vlm_records_failed_checkpoint_and_raises(monkeypatch, tmp_path: Path) -> None:
     _prepare_phase0(tmp_path)
     monkeypatch.setattr("faar.experiment_runner.build_graph", lambda settings: FakeGraph(FAILED_VLM_RESULT))
     settings = AppSettings(project_root=tmp_path)
 
-    with pytest.raises(RuntimeError, match="refusing to score or checkpoint a failed row"):
+    with pytest.raises(RuntimeError, match="failed and were not scored"):
         run_profile(settings, profile_name="faar_full", example_ids=["ex2"])
 
-    assert not _text_checkpoint(tmp_path, "ex2").exists()
+    checkpoint = json.loads(_text_checkpoint(tmp_path, "ex2").read_text(encoding="utf-8"))
+    assert checkpoint["action_outcome"]["status"] == "failed"
+    assert "refusing to score or checkpoint a failed row" in checkpoint["error"]
+
+
+def test_text_runner_failed_vlm_checkpoint_is_not_reused_on_resume(monkeypatch, tmp_path: Path) -> None:
+    _prepare_phase0(tmp_path)
+    monkeypatch.setattr("faar.experiment_runner.build_graph", lambda settings: FakeGraph(FAILED_VLM_RESULT))
+    settings = AppSettings(project_root=tmp_path)
+    with pytest.raises(RuntimeError, match="failed and were not scored"):
+        run_profile(settings, profile_name="faar_full", example_ids=["ex2"])
+
+    with pytest.raises(RuntimeError, match="failed and were not scored"):
+        run_profile(settings, profile_name="faar_full", example_ids=["ex2"], resume=True)
+
+
+def test_text_runner_isolates_one_failed_example_from_others(monkeypatch, tmp_path: Path) -> None:
+    _prepare_phase0(tmp_path)
+    calls: list[str] = []
+
+    def flaky_graph(settings):
+        def invoke(state):
+            calls.append(state["example_id"])
+            if state["example_id"] == "ex1":
+                return FakeGraph(FAILED_VLM_RESULT).invoke(state)
+            return FakeGraph(SUCCEEDED_VLM_RESULT).invoke(state)
+
+        return type("G", (), {"invoke": staticmethod(invoke)})()
+
+    monkeypatch.setattr("faar.experiment_runner.build_graph", flaky_graph)
+    settings = AppSettings(project_root=tmp_path)
+
+    with pytest.raises(RuntimeError, match="1 example\\(s\\) failed"):
+        run_profile(settings, profile_name="faar_full", example_ids=["ex1", "ex2"])
+
+    assert calls == ["ex1", "ex2"]
+    succeeded = json.loads(_text_checkpoint(tmp_path, "ex2").read_text(encoding="utf-8"))
+    assert succeeded["action_outcome"]["status"] == "succeeded"
+    failed = json.loads(_text_checkpoint(tmp_path, "ex1").read_text(encoding="utf-8"))
+    assert failed["action_outcome"]["status"] == "failed"
 
 
 def test_text_runner_successful_vlm_still_checkpoints(monkeypatch, tmp_path: Path) -> None:
@@ -250,15 +289,17 @@ def _visual_checkpoint(tmp_path: Path, example_id: str) -> Path:
     return tmp_path / "logs/phase3/colpali" / f"{example_id}.json"
 
 
-def test_visual_runner_failed_vlm_raises_and_creates_no_checkpoint(monkeypatch, tmp_path: Path) -> None:
+def test_visual_runner_failed_vlm_records_failed_checkpoint_and_raises(monkeypatch, tmp_path: Path) -> None:
     _patch_visual(monkeypatch, FAILED_VLM_RESULT)
     settings = AppSettings(project_root=tmp_path)
     repo = FakeRepo(["q1"])
 
-    with pytest.raises(RuntimeError, match="refusing to score or checkpoint a failed row"):
+    with pytest.raises(RuntimeError, match="failed and were not scored"):
         run_visual_baseline(settings, repo, "colpali")
 
-    assert not _visual_checkpoint(tmp_path, "q1").exists()
+    checkpoint = json.loads(_visual_checkpoint(tmp_path, "q1").read_text(encoding="utf-8"))
+    assert checkpoint["action_outcome"]["status"] == "failed"
+    assert "refusing to score or checkpoint a failed row" in checkpoint["error"]
 
 
 def test_visual_runner_successful_vlm_still_checkpoints(monkeypatch, tmp_path: Path) -> None:
@@ -310,7 +351,7 @@ def test_visual_resume_recomputes_legacy_failed_checkpoint(monkeypatch, tmp_path
 
 def test_openai_client_constructed_with_zero_retries(monkeypatch, tmp_path: Path) -> None:
     image_path = tmp_path / "page.png"
-    image_path.write_bytes(b"image")
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"payload")
     monkeypatch.setenv("OPENAI_API_KEY", "test-only-placeholder")
     monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-2024-11-20")
     captured: dict[str, Any] = {}
@@ -339,7 +380,7 @@ def test_openai_client_constructed_with_zero_retries(monkeypatch, tmp_path: Path
 
 def test_anthropic_client_constructed_with_zero_retries(monkeypatch, tmp_path: Path) -> None:
     image_path = tmp_path / "page.png"
-    image_path.write_bytes(b"image")
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"payload")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-only-placeholder")
     captured: dict[str, Any] = {}
 

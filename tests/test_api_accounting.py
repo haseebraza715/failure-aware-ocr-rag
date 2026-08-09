@@ -18,6 +18,8 @@ from faar.api_logging import (
 from faar.recovery import VisualFallback
 from faar.settings import AppSettings
 
+PNG = b"\x89PNG\r\n\x1a\n" + b"payload"
+
 
 def test_openai_standard_cost_defaults(monkeypatch) -> None:
     monkeypatch.delenv("OPENAI_INPUT_USD_PER_MTOK", raising=False)
@@ -78,7 +80,7 @@ def test_openai_request_is_logged_before_execution_and_usage_after(
     tmp_path: Path,
 ) -> None:
     image_path = tmp_path / "page.png"
-    image_path.write_bytes(b"image")
+    image_path.write_bytes(PNG)
     log_path = tmp_path / "logs/vlm_calls.jsonl"
     monkeypatch.setenv("OPENAI_API_KEY", "test-only-placeholder")
     monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-2024-11-20")
@@ -122,7 +124,7 @@ def test_openai_success_carries_normalized_api_usage(
     tmp_path: Path,
 ) -> None:
     image_path = tmp_path / "page.png"
-    image_path.write_bytes(b"image")
+    image_path.write_bytes(PNG)
     log_path = tmp_path / "logs/vlm_calls.jsonl"
     monkeypatch.setenv("OPENAI_API_KEY", "test-only-placeholder")
     monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-2024-11-20")
@@ -163,7 +165,7 @@ def test_openai_failed_request_counts_once_and_carries_api_usage(
     tmp_path: Path,
 ) -> None:
     image_path = tmp_path / "page.png"
-    image_path.write_bytes(b"image")
+    image_path.write_bytes(PNG)
     monkeypatch.setenv("OPENAI_API_KEY", "test-only-placeholder")
     monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-2024-11-20")
 
@@ -219,7 +221,7 @@ def test_anthropic_success_carries_normalized_api_usage(
 ) -> None:
     pytest.importorskip("anthropic")
     image_path = tmp_path / "page.png"
-    image_path.write_bytes(b"image")
+    image_path.write_bytes(PNG)
     log_path = tmp_path / "logs/vlm_calls.jsonl"
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-only-placeholder")
     monkeypatch.setenv("ANTHROPIC_INPUT_USD_PER_MTOK", "3.0")
@@ -261,7 +263,7 @@ def test_disabled_anthropic_alias_paths_skip_without_credentials_or_client(
     backend: str,
 ) -> None:
     image_path = tmp_path / "page.png"
-    image_path.write_bytes(b"image")
+    image_path.write_bytes(PNG)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
     def raiser(*args, **kwargs):
@@ -287,7 +289,7 @@ def test_disabled_openai_path_skips_without_credentials_or_client(
     tmp_path: Path,
 ) -> None:
     image_path = tmp_path / "page.png"
-    image_path.write_bytes(b"image")
+    image_path.write_bytes(PNG)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     def raiser(*args, **kwargs):
