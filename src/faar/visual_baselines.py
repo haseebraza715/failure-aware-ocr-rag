@@ -33,7 +33,57 @@ class VisualRetriever(Protocol):
     def retrieve(self, query: str, top_k: int) -> list[tuple[Path, float]]: ...
 
 
-VISUAL_CACHE_SCHEMA_VERSION = 1
+VISUAL_CACHE_SCHEMA_VERSION = 2
+
+_HASH_PROGRESS_THRESHOLD = 256
+_HASH_PROGRESS_INTERVAL = 128
+
+
+def _stream_sha256(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _compute_content_hashes(
+    image_paths: list[Path],
+    *,
+    chunk_size: int = 1024 * 1024,
+) -> list[list[str]]:
+    """Deterministic ordered [(path, sha256)] identity for the visual corpus.
+
+    Streams one image at a time so the whole corpus is never buffered in
+    memory at once. Prints progress when the corpus is large enough that
+    hashing is likely to take noticeable time.
+    """
+    total = len(image_paths)
+    if total >= _HASH_PROGRESS_THRESHOLD:
+        print(
+            f"[faar] hashing {total} visual corpus images for cache identity...",
+            flush=True,
+        )
+    hashes: list[list[str]] = []
+    for index, path in enumerate(image_paths, start=1):
+        hashes.append([str(path), _stream_sha256(path, chunk_size)])
+        if total >= _HASH_PROGRESS_THRESHOLD and (
+            index % _HASH_PROGRESS_INTERVAL == 0 or index == total
+        ):
+            print(f"[faar] hashed visual corpus {index}/{total}", flush=True)
+    return hashes
+
+
+def _ordered_content_hashes(
+    image_paths: list[Path], recorded: list[tuple[Path, str]] | None
+) -> list[list[str]]:
+    """Ordered path->hash identity, preferring hashes recorded in the locked asset manifest."""
+    if recorded is not None and len(recorded) == len(image_paths):
+        return [[str(path), str(sha)] for path, sha in recorded]
+    return _compute_content_hashes(image_paths)
 
 
 def _visual_cache_key(
@@ -42,6 +92,7 @@ def _visual_cache_key(
     revision: str | None,
     dtype_name: str,
     image_paths: list[Path],
+    content_hashes: list[list[str]],
 ) -> str:
     material = json.dumps(
         {
@@ -49,7 +100,7 @@ def _visual_cache_key(
             "model": model_name,
             "revision": revision,
             "dtype": dtype_name,
-            "image_paths": sorted(str(path) for path in image_paths),
+            "image_hashes": content_hashes,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -65,12 +116,13 @@ def _load_visual_cache(
     revision: str | None,
     dtype_name: str,
     image_paths: list[Path],
+    content_hashes: list[list[str]],
 ) -> np.ndarray | None:
     try:
         meta = json.loads((cache_dir / f"{key}.meta.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    expected_paths = sorted(str(path) for path in image_paths)
+    expected_paths = [str(path) for path in image_paths]
     if not (
         isinstance(meta, dict)
         and meta.get("schema_version") == schema_version
@@ -79,6 +131,7 @@ def _load_visual_cache(
         and meta.get("dtype") == dtype_name
         and meta.get("image_count") == len(image_paths)
         and meta.get("image_paths") == expected_paths
+        and meta.get("image_hashes") == content_hashes
     ):
         return None
     try:
@@ -115,6 +168,7 @@ def _save_visual_cache(
     revision: str | None,
     dtype_name: str,
     image_paths: list[Path],
+    content_hashes: list[list[str]],
 ) -> None:
     buffer = io.BytesIO()
     np.savez(buffer, embeddings=embeddings, allow_pickle=False)
@@ -126,7 +180,8 @@ def _save_visual_cache(
             "model": model_name,
             "revision": revision,
             "dtype": dtype_name,
-            "image_paths": sorted(str(path) for path in image_paths),
+            "image_paths": [str(path) for path in image_paths],
+            "image_hashes": content_hashes,
             "image_count": len(image_paths),
             "created_at": datetime.now(UTC).isoformat(),
         },
@@ -194,6 +249,7 @@ class ColPaliRetriever:
         batch_size: int = 4,
         score_batch_size: int = 32,
         cache_dir: Path | None = None,
+        content_hashes: list[list[str]] | None = None,
     ) -> None:
         torch = import_module("torch")
         image_module = import_module("PIL.Image")
@@ -225,8 +281,15 @@ class ColPaliRetriever:
         cache_data = None
         cache_key = None
         if cache_dir is not None:
+            if content_hashes is None or len(content_hashes) != len(self.image_paths):
+                content_hashes = _compute_content_hashes(self.image_paths)
             cache_key = _visual_cache_key(
-                VISUAL_CACHE_SCHEMA_VERSION, model_name, revision, str(dtype), self.image_paths
+                VISUAL_CACHE_SCHEMA_VERSION,
+                model_name,
+                revision,
+                str(dtype),
+                self.image_paths,
+                content_hashes,
             )
             cache_data = _load_visual_cache(
                 cache_dir,
@@ -236,6 +299,7 @@ class ColPaliRetriever:
                 revision,
                 str(dtype),
                 self.image_paths,
+                content_hashes,
             )
         try:
             if cache_data is not None:
@@ -298,6 +362,7 @@ class ColPaliRetriever:
                         revision,
                         str(dtype),
                         self.image_paths,
+                        content_hashes,
                     )
         finally:
             del image_embeddings, cache_data, cache_key
@@ -365,6 +430,7 @@ class VisRAGRetriever:
         revision: str | None,
         batch_size: int = 4,
         cache_dir: Path | None = None,
+        content_hashes: list[list[str]] | None = None,
     ) -> None:
         torch = import_module("torch")
         image_module = import_module("PIL.Image")
@@ -398,8 +464,15 @@ class VisRAGRetriever:
         cache_data = None
         cache_key = None
         if cache_dir is not None:
+            if content_hashes is None or len(content_hashes) != len(self.image_paths):
+                content_hashes = _compute_content_hashes(self.image_paths)
             cache_key = _visual_cache_key(
-                VISUAL_CACHE_SCHEMA_VERSION, model_name, revision, str(dtype), self.image_paths
+                VISUAL_CACHE_SCHEMA_VERSION,
+                model_name,
+                revision,
+                str(dtype),
+                self.image_paths,
+                content_hashes,
             )
             cache_data = _load_visual_cache(
                 cache_dir,
@@ -409,6 +482,7 @@ class VisRAGRetriever:
                 revision,
                 str(dtype),
                 self.image_paths,
+                content_hashes,
             )
         try:
             if cache_data is not None:
@@ -465,6 +539,7 @@ class VisRAGRetriever:
                         revision,
                         str(dtype),
                         self.image_paths,
+                        content_hashes,
                     )
         finally:
             del image_embeddings, cache_data, cache_key
@@ -502,6 +577,10 @@ def build_visual_retriever(mode: str, repo: BenchmarkRepository, settings: AppSe
     cache_dir = None
     if hasattr(settings, "project_root"):
         cache_dir = Path(os.getenv("FAAR_CACHE_DIR", str(settings.project_root / "cache"))) / "visual_embeddings"
+    recorded_hashes = getattr(repo, "corpus_image_hashes", lambda: None)()
+    content_hashes = None
+    if recorded_hashes is not None and len(recorded_hashes) == len(images):
+        content_hashes = [[str(path), str(sha)] for path, sha in recorded_hashes]
     if mode == "colpali":
         return ColPaliRetriever(
             images,
@@ -510,6 +589,7 @@ def build_visual_retriever(mode: str, repo: BenchmarkRepository, settings: AppSe
             settings.retrieval.visual_batch_size,
             score_batch_size=settings.retrieval.visual_score_batch_size,
             cache_dir=cache_dir,
+            content_hashes=content_hashes,
         )
     if mode == "visrag":
         return VisRAGRetriever(
@@ -518,6 +598,7 @@ def build_visual_retriever(mode: str, repo: BenchmarkRepository, settings: AppSe
             settings.retrieval.visrag_revision,
             settings.retrieval.visual_batch_size,
             cache_dir=cache_dir,
+            content_hashes=content_hashes,
         )
     raise ValueError(f"Unsupported visual baseline: {mode}")
 

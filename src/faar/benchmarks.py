@@ -158,6 +158,16 @@ class BenchmarkRepository:
     def corpus_image_paths(self) -> list[Path]:
         return [Path(page["image_path"]) for page in self._corpus_pages]
 
+    def corpus_image_hashes(self) -> list[tuple[Path, str]] | None:
+        """Return per-page image SHA-256 hashes recorded in the locked manifest, if every page has one."""
+        hashes: list[tuple[Path, str]] = []
+        for page in self._corpus_pages:
+            sha = page.get("image_sha256")
+            if not isinstance(sha, str) or not sha.strip():
+                return None
+            hashes.append((Path(page["image_path"]), sha))
+        return hashes
+
     def corpus_image_page_map(self) -> dict[Path, tuple[str, int]]:
         return {
             Path(page["image_path"]): (str(page["doc_name"]), int(page["page_id"]))

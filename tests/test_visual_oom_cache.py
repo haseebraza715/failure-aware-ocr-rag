@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -105,12 +106,14 @@ def test_cache_hit_skips_reencoding_and_loads_identical_embeddings(
 
     first = visual_baselines.ColPaliRetriever(paths, "mock/colpali", None, batch_size=2, cache_dir=cache_dir)
     assert model.forward_calls == 2
+    content_hashes = visual_baselines._compute_content_hashes(paths)
     key = visual_baselines._visual_cache_key(
         visual_baselines.VISUAL_CACHE_SCHEMA_VERSION,
         "mock/colpali",
         None,
         "torch.float32",
         paths,
+        content_hashes,
     )
     assert (cache_dir / f"{key}.npz").is_file()
     assert (cache_dir / f"{key}.meta.json").is_file()
@@ -152,6 +155,169 @@ def test_cache_misses_on_identity_mismatch(
 
     assert model.forward_calls > calls_after_first
     assert second.image_embeddings.shape[0] == len(changed_paths)
+
+
+def test_cache_misses_when_bytes_change_at_same_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from PIL import Image
+
+    paths = _image_paths(tmp_path, count=4)
+    model = _CountingModel()
+    _install_colpali_fakes(monkeypatch, model)
+    cache_dir = _cache_dir(tmp_path)
+
+    visual_baselines.ColPaliRetriever(paths, "mock/colpali", None, batch_size=2, cache_dir=cache_dir)
+    calls_after_first = model.forward_calls
+
+    Image.new("RGB", (8, 8), color=(255, 0, 0)).save(paths[1])
+
+    second = visual_baselines.ColPaliRetriever(paths, "mock/colpali", None, batch_size=2, cache_dir=cache_dir)
+
+    assert model.forward_calls > calls_after_first
+    assert second.image_embeddings.shape == (4, model.seq, model.dim)
+
+
+def test_cache_misses_when_dtype_changes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    paths = _image_paths(tmp_path, count=4)
+    model = _CountingModel()
+    _install_colpali_fakes(monkeypatch, model)
+    cache_dir = _cache_dir(tmp_path)
+
+    visual_baselines.ColPaliRetriever(paths, "mock/colpali", None, batch_size=2, cache_dir=cache_dir)
+    calls_after_first = model.forward_calls
+
+    monkeypatch.setattr(visual_baselines, "select_dtype", lambda device, torch_module: torch.float16)
+    second = visual_baselines.ColPaliRetriever(paths, "mock/colpali", None, batch_size=2, cache_dir=cache_dir)
+
+    assert model.forward_calls > calls_after_first
+    assert second.image_embeddings.shape == (4, model.seq, model.dim)
+
+
+@pytest.mark.parametrize("mutation", ["corrupt", "incomplete"])
+def test_cache_recomputes_on_invalid_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mutation: str
+) -> None:
+    paths = _image_paths(tmp_path, count=4)
+    model = _CountingModel()
+    _install_colpali_fakes(monkeypatch, model)
+    cache_dir = _cache_dir(tmp_path)
+
+    visual_baselines.ColPaliRetriever(paths, "mock/colpali", None, batch_size=2, cache_dir=cache_dir)
+    calls_after_first = model.forward_calls
+
+    content_hashes = visual_baselines._compute_content_hashes(paths)
+    key = visual_baselines._visual_cache_key(
+        visual_baselines.VISUAL_CACHE_SCHEMA_VERSION,
+        "mock/colpali",
+        None,
+        "torch.float32",
+        paths,
+        content_hashes,
+    )
+    meta_path = cache_dir / f"{key}.meta.json"
+    if mutation == "corrupt":
+        meta_path.write_text("{corrupt", encoding="utf-8")
+    else:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        del meta["image_hashes"]
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    second = visual_baselines.ColPaliRetriever(paths, "mock/colpali", None, batch_size=2, cache_dir=cache_dir)
+
+    assert model.forward_calls > calls_after_first
+    assert second.image_embeddings.shape == (4, model.seq, model.dim)
+
+
+def _install_visrag_fakes(monkeypatch: pytest.MonkeyPatch, encode_calls: list[int]) -> None:
+    class FakeTokenizerClass:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            return object()
+
+    class FakeModelClass:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            class Chain:
+                def to(self, device):
+                    return self
+
+                def eval(self):
+                    return self
+
+            return Chain()
+
+    monkeypatch.setattr(visual_baselines, "torch_device", lambda torch_module: torch.device("cpu"))
+    monkeypatch.setattr(visual_baselines, "select_dtype", lambda device, torch_module: torch.float32)
+    monkeypatch.setattr(visual_baselines, "release_cuda_cache", lambda torch_module: None)
+    monkeypatch.setattr("transformers.AutoTokenizer", FakeTokenizerClass)
+    monkeypatch.setattr("transformers.AutoModel", FakeModelClass)
+
+    def fake_encode(self, values):
+        encode_calls.append(len(values))
+        return np.zeros((len(values), 8), dtype=np.float32)
+
+    monkeypatch.setattr(visual_baselines.VisRAGRetriever, "_encode", fake_encode)
+
+
+@pytest.mark.parametrize("mode", ["colpali", "visrag"])
+def test_both_retrievers_bind_cache_to_image_contents(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mode: str
+) -> None:
+    from PIL import Image
+
+    paths = _image_paths(tmp_path, count=4)
+    cache_dir = _cache_dir(tmp_path)
+    if mode == "colpali":
+        model = _CountingModel()
+        _install_colpali_fakes(monkeypatch, model)
+
+        def build():
+            return visual_baselines.ColPaliRetriever(
+                paths, "mock/colpali", None, batch_size=2, cache_dir=cache_dir
+            )
+
+        def work_count():
+            return model.forward_calls
+    else:
+        encode_calls: list[int] = []
+        _install_visrag_fakes(monkeypatch, encode_calls)
+
+        def build():
+            return visual_baselines.VisRAGRetriever(
+                paths, "mock/visrag", None, batch_size=2, cache_dir=cache_dir
+            )
+
+        def work_count():
+            return len(encode_calls)
+
+    build()
+    after_first = work_count()
+
+    Image.new("RGB", (8, 8), color=(255, 0, 0)).save(paths[2])
+
+    retriever = build()
+    assert work_count() > after_first
+    assert retriever.image_embeddings.shape[0] == 4
+
+
+def test_ordered_content_hashes_prefers_recorded_manifest_hashes(tmp_path: Path) -> None:
+    paths = _image_paths(tmp_path, count=2)
+    recorded = [(paths[0], "a" * 64), (paths[1], "b" * 64)]
+    result = visual_baselines._ordered_content_hashes(paths, recorded)
+    assert result == [[str(paths[0]), "a" * 64], [str(paths[1]), "b" * 64]]
+    computed = visual_baselines._ordered_content_hashes(paths, None)
+    assert computed != result
+
+
+def test_content_hash_changes_when_bytes_change_at_same_path(tmp_path: Path) -> None:
+    from PIL import Image
+
+    paths = _image_paths(tmp_path, count=1)
+    before = visual_baselines._compute_content_hashes(paths)
+    Image.new("RGB", (8, 8), color=(255, 0, 0)).save(paths[0])
+    after = visual_baselines._compute_content_hashes(paths)
+    assert before != after
 
 
 def test_cuda_oom_halves_batch_size_and_recovers(
@@ -200,6 +366,7 @@ def test_build_visual_retriever_points_cache_under_project_root(
             *,
             score_batch_size: int,
             cache_dir: Path | None,
+            content_hashes: list[list[str]] | None = None,
         ) -> None:
             captured["cache_dir"] = cache_dir
 
@@ -229,6 +396,7 @@ def test_build_visual_retriever_no_cache_when_settings_lacks_project_root(
             batch_size: int,
             *,
             cache_dir: Path | None,
+            content_hashes: list[list[str]] | None = None,
         ) -> None:
             captured["cache_dir"] = cache_dir
 
