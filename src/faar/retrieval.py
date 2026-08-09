@@ -10,7 +10,12 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 from sentence_transformers import CrossEncoder, SentenceTransformer
 
-from .resource_limits import enforce_gpu_memory_fraction, select_dtype, torch_device
+from .resource_limits import (
+    enforce_gpu_memory_fraction,
+    enforce_memory_budget,
+    select_dtype,
+    torch_device,
+)
 from .settings import RetrievalSettings
 from .types import Chunk, RetrievalHit
 
@@ -80,6 +85,8 @@ class HybridRetriever:
         self._bm25 = BM25Okapi(self._bm25_tokens)
         self._embedder = _load_embedding_model(settings.embedding_model, settings.embedding_revision)
         self._reranker = _load_reranker(settings.reranker, settings.reranker_revision)
+        torch = import_module("torch")
+        enforce_memory_budget("text retrieval model load", torch)
         corpus_embeddings = self._embedder.encode(
             [chunk.text for chunk in chunks],
             batch_size=settings.embed_batch_size,
@@ -89,6 +96,7 @@ class HybridRetriever:
         self._dense_index = faiss.IndexFlatIP(corpus_embeddings.shape[1])
         self._dense_index.add(corpus_embeddings)
         del corpus_embeddings
+        enforce_memory_budget("text retrieval corpus encode", torch)
 
     def retrieve(self, query: str, top_k: int | None = None) -> list[RetrievalHit]:
         k = top_k or self.settings.top_k

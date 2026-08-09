@@ -5,6 +5,7 @@ import os
 import re
 from datetime import UTC, datetime
 from functools import lru_cache
+from importlib import import_module
 from pathlib import Path
 from uuid import uuid4
 
@@ -22,6 +23,7 @@ from .api_logging import (
     vlm_cost_rates,
     zero_api_usage,
 )
+from .resource_limits import enforce_memory_budget
 from .settings import AppSettings
 from .types import RetrievalHit
 
@@ -45,6 +47,8 @@ def _media_type_for_image(data: bytes) -> str:
 def _load_byt5(model_name: str, revision: str | None):
     tokenizer = AutoTokenizer.from_pretrained(model_name, revision=revision)
     model = AutoModelForSeq2SeqLM.from_pretrained(model_name, revision=revision)
+    torch = import_module("torch")
+    enforce_memory_budget("ByT5 model load", torch)
     return tokenizer, model
 
 

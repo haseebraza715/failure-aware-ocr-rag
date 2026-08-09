@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import sys
 from typing import Any
@@ -18,6 +19,8 @@ def _optional_gb(name: str) -> float | None:
         value = float(raw)
     except ValueError as exc:
         raise ValueError(f"{name} must be a positive number of GiB; received {raw!r}.") from exc
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be a finite positive number of GiB; received {value}.")
     if value <= 0:
         raise ValueError(f"{name} must be a positive number of GiB; received {value}.")
     return value
