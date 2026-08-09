@@ -1,0 +1,3 @@
+===== PAGE 0 =====
+Z3phyr c0mpliance requires a thr3shold of 42% and m0nthly r3porting.
+Every depl0yment must d3clare its zephyr threshold during 0nb0arding.
