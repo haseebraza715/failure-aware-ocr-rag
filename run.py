@@ -21,7 +21,7 @@ from faar.api_logging import openai_cost_rates
 from faar.benchmarks import load_benchmark_repository
 from faar.experiment_runner import run_profile
 from faar.gate_tuning import require_paper_gate_threshold
-from faar.results_aggregator import summarize_examples
+from faar.results_aggregator import summarize_api_usage, summarize_examples
 from faar.run_io import atomic_write_text, select_shard, shard_label
 from faar.settings import AppSettings
 from faar.visual_baselines import run_visual_baseline
@@ -139,8 +139,6 @@ def _run_profile_to_result(
 ) -> dict[str, Any]:
     run_spec["gate_threshold"] = _require_gate_threshold(settings, profile)
     start = time.perf_counter()
-    usage_path = settings.project_root / "logs/vlm_calls.jsonl"
-    start_usage = _read_vlm_usage(usage_path)
     rows = run_profile(
         settings,
         profile_name=profile,
@@ -153,7 +151,7 @@ def _run_profile_to_result(
         num_shards=num_shards,
     )
     summary = summarize_examples(rows)
-    end_usage = _read_vlm_usage(usage_path)
+    api_totals = summarize_api_usage(rows)
     payload = {
         "label": label,
         "profile": profile,
@@ -164,10 +162,10 @@ def _run_profile_to_result(
             "F1": summary["f1"],
             "vlm_rate": summary["vlm_rate"],
             "harm_rate": 0.0 if profile == "naive_rag" else None,
-            "api_requests": end_usage["api_requests"] - start_usage["api_requests"],
-            "prompt_tokens": end_usage["prompt_tokens"] - start_usage["prompt_tokens"],
-            "completion_tokens": end_usage["completion_tokens"] - start_usage["completion_tokens"],
-            "cost_usd": round(end_usage["cost_usd"] - start_usage["cost_usd"], 6),
+            "api_requests": api_totals["api_requests"],
+            "prompt_tokens": api_totals["prompt_tokens"],
+            "completion_tokens": api_totals["completion_tokens"],
+            "cost_usd": api_totals["cost_usd"],
             "runtime_sec": round(time.perf_counter() - start, 4),
         },
         "rows": rows,
@@ -175,27 +173,6 @@ def _run_profile_to_result(
     out.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(out, json.dumps(payload, indent=2) + "\n")
     return payload
-
-
-def _read_vlm_usage(path: Path) -> dict[str, int | float]:
-    if not path.exists():
-        return {"api_requests": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost_usd": 0.0}
-    usage: dict[str, int | float] = {
-        "api_requests": 0,
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
-        "cost_usd": 0.0,
-    }
-    for line in path.read_text().splitlines():
-        if line.strip():
-            record = json.loads(line)
-            if record.get("status") == "started":
-                usage["api_requests"] += 1
-            usage["prompt_tokens"] += int(record.get("prompt_tokens", 0))
-            usage["completion_tokens"] += int(record.get("completion_tokens", 0))
-            usage["cost_usd"] += float(record.get("cost_usd", 0.0))
-    usage["cost_usd"] = round(float(usage["cost_usd"]), 6)
-    return usage
 
 
 def _apply_baseline_harm(
@@ -247,8 +224,6 @@ def _run_visual_baseline_to_result(
     resume: bool = False,
 ) -> dict[str, Any]:
     started = time.perf_counter()
-    usage_path = settings.project_root / "logs/vlm_calls.jsonl"
-    start_usage = _read_vlm_usage(usage_path)
     repo = load_benchmark_repository(settings.project_root, dataset, split)
     result = run_visual_baseline(
         settings,
@@ -261,8 +236,9 @@ def _run_visual_baseline_to_result(
     if isinstance(result, dict):
         payload = result
     else:
-        summary = summarize_examples(result)
-        end_usage = _read_vlm_usage(usage_path)
+        rows = result
+        summary = summarize_examples(rows)
+        api_totals = summarize_api_usage(rows)
         payload = {
             "label": mode,
             "profile": mode,
@@ -273,13 +249,13 @@ def _run_visual_baseline_to_result(
                 "F1": summary["f1"],
                 "vlm_rate": summary["vlm_rate"],
                 "harm_rate": None,
-                "api_requests": end_usage["api_requests"] - start_usage["api_requests"],
-                "prompt_tokens": end_usage["prompt_tokens"] - start_usage["prompt_tokens"],
-                "completion_tokens": end_usage["completion_tokens"] - start_usage["completion_tokens"],
-                "cost_usd": round(end_usage["cost_usd"] - start_usage["cost_usd"], 6),
+                "api_requests": api_totals["api_requests"],
+                "prompt_tokens": api_totals["prompt_tokens"],
+                "completion_tokens": api_totals["completion_tokens"],
+                "cost_usd": api_totals["cost_usd"],
                 "runtime_sec": round(time.perf_counter() - started, 4),
             },
-            "rows": result,
+            "rows": rows,
         }
     payload["run_spec"] = run_spec
     payload.setdefault("summary", {})["harm_rate"] = None

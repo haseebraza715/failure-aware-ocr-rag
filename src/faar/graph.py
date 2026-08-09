@@ -6,6 +6,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from .api_logging import zero_api_usage
 from .answering import answer_from_hits
 from .chunking import build_chunks
 from .data import Phase0Repository
@@ -178,6 +179,7 @@ def build_graph(settings: AppSettings, repo: Phase0Repository | Any | None = Non
                     "reason": "vlm_disabled_by_profile",
                     "answer": "",
                     "used_images": [],
+                    "api_usage": zero_api_usage(),
                 },
                 "action_outcome": {
                     "action": "invoke_vlm",

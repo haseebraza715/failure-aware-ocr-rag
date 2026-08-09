@@ -14,9 +14,11 @@ from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 from .api_logging import (
     estimate_anthropic_cost_usd,
     estimate_openai_cost_usd,
+    make_api_usage,
     make_vlm_logger,
     new_record,
     openai_cost_rates,
+    zero_api_usage,
 )
 from .settings import AppSettings
 from .types import RetrievalHit
@@ -75,6 +77,7 @@ class VisualFallback:
                 "reason": "api_disabled",
                 "answer": "",
                 "used_images": [],
+                "api_usage": zero_api_usage(),
             }
         if self.settings.recovery.vlm_backend == "openai":
             return self._answer_with_openai(question, image_paths)
@@ -87,6 +90,7 @@ class VisualFallback:
             "answer": "",
             "used_images": [str(path) for path in image_paths],
             "fallback_context": fallback_context[:500],
+            "api_usage": zero_api_usage(),
         }
 
     def _answer_with_openai(self, question: str, image_paths: list[Path]) -> dict:
@@ -97,6 +101,7 @@ class VisualFallback:
                 "reason": "no_images_provided",
                 "answer": "",
                 "used_images": [],
+                "api_usage": zero_api_usage(),
             }
         if not os.getenv("OPENAI_API_KEY"):
             raise RuntimeError("OPENAI_API_KEY is required for VLM_BACKEND=openai.")
@@ -155,6 +160,7 @@ class VisualFallback:
                 "response_model": None,
                 "completed_at_utc": completed_at_utc,
                 "cost_rates": cost_rates,
+                "api_usage": make_api_usage(api_requests=1),
             }
         usage = getattr(response, "usage", None)
         prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
@@ -162,6 +168,7 @@ class VisualFallback:
         response_model = getattr(response, "model", None) or self.settings.recovery.openai_model
         completed_at_utc = datetime.now(UTC).isoformat()
         cost_rates = openai_cost_rates()
+        cost_usd = estimate_openai_cost_usd(prompt_tokens, completion_tokens, cost_rates)
         self.logger.log(
             new_record(
                 provider="openai",
@@ -170,7 +177,7 @@ class VisualFallback:
                 status="succeeded",
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
-                cost_usd=estimate_openai_cost_usd(prompt_tokens, completion_tokens, cost_rates),
+                cost_usd=cost_usd,
                 metadata={
                     "request_id": request_id,
                     "image_count": len(image_paths),
@@ -191,6 +198,12 @@ class VisualFallback:
             "response_model": response_model,
             "completed_at_utc": completed_at_utc,
             "cost_rates": cost_rates,
+            "api_usage": make_api_usage(
+                api_requests=1,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost_usd=cost_usd,
+            ),
         }
 
     def _answer_with_anthropic(self, question: str, image_paths: list[Path], fallback_context: str) -> dict:
@@ -262,6 +275,7 @@ class VisualFallback:
                 "request_model": self.settings.recovery.anthropic_model,
                 "response_model": None,
                 "completed_at_utc": completed_at_utc,
+                "api_usage": make_api_usage(api_requests=1),
             }
         usage = getattr(response, "usage", None)
         prompt_tokens = int(getattr(usage, "input_tokens", 0) or 0)
@@ -269,6 +283,7 @@ class VisualFallback:
         text_parts = [getattr(block, "text", "") for block in getattr(response, "content", []) if getattr(block, "type", "") == "text"]
         response_model = getattr(response, "model", None) or self.settings.recovery.anthropic_model
         completed_at_utc = datetime.now(UTC).isoformat()
+        cost_usd = estimate_anthropic_cost_usd(self.settings.recovery.anthropic_model, prompt_tokens, completion_tokens)
         self.logger.log(
             new_record(
                 provider="anthropic",
@@ -277,7 +292,7 @@ class VisualFallback:
                 status="succeeded",
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
-                cost_usd=estimate_anthropic_cost_usd(self.settings.recovery.anthropic_model, prompt_tokens, completion_tokens),
+                cost_usd=cost_usd,
                 metadata={
                     "request_id": request_id,
                     "image_count": len(image_paths),
@@ -296,6 +311,12 @@ class VisualFallback:
             "request_model": self.settings.recovery.anthropic_model,
             "response_model": response_model,
             "completed_at_utc": completed_at_utc,
+            "api_usage": make_api_usage(
+                api_requests=1,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost_usd=cost_usd,
+            ),
         }
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -29,6 +30,12 @@ class FakeGraph:
                 "request_model": "gpt-4o-2024-11-20",
                 "response_model": "gpt-4o-2024-11-20",
                 "completed_at_utc": "2026-07-23T12:00:00+00:00",
+                "api_usage": {
+                    "api_requests": 1,
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "cost_usd": 0.00045,
+                },
             },
             "retrieved_hits": [],
             "corrected_hits": [],
@@ -322,3 +329,226 @@ def test_cli_partial_shard_flags_fail_closed(monkeypatch, tmp_path: Path) -> Non
     with pytest.raises(SystemExit, match="--shard-index requires --num-shards"):
         run.main()
     assert captured == {}
+
+
+def test_text_row_stores_api_usage(monkeypatch, tmp_path: Path) -> None:
+    _prepare_phase0(tmp_path, 1)
+    graph = _patch_graph(monkeypatch)
+    settings = _settings(tmp_path)
+
+    rows = run_profile(settings, profile_name="faar_full", example_ids=["ex1"])
+
+    assert rows[0]["api_usage"] == {
+        "api_requests": 1,
+        "prompt_tokens": 100,
+        "completion_tokens": 20,
+        "cost_usd": 0.00045,
+    }
+
+
+def test_resume_recomputes_checkpoint_with_malformed_api_usage(monkeypatch, tmp_path: Path) -> None:
+    _prepare_phase0(tmp_path, 2)
+    graph = _patch_graph(monkeypatch)
+    settings = _settings(tmp_path)
+    run_profile(settings, profile_name="faar_full", example_ids=["ex1", "ex2"])
+
+    checkpoint = tmp_path / "logs/phase3/faar_full/ex1.json"
+    row = json.loads(checkpoint.read_text())
+    row["api_usage"]["api_requests"] = -1
+    checkpoint.write_text(json.dumps(row))
+    graph.invoked.clear()
+
+    rows = run_profile(settings, profile_name="faar_full", example_ids=["ex1", "ex2"], resume=True)
+
+    assert graph.invoked == ["ex1"]
+    assert len(rows) == 2
+    assert rows[0]["api_usage"] == {
+        "api_requests": 1,
+        "prompt_tokens": 100,
+        "completion_tokens": 20,
+        "cost_usd": 0.00045,
+    }
+
+
+def test_resume_recomputes_checkpoint_without_api_usage(monkeypatch, tmp_path: Path) -> None:
+    _prepare_phase0(tmp_path, 2)
+    graph = _patch_graph(monkeypatch)
+    settings = _settings(tmp_path)
+    run_profile(settings, profile_name="faar_full", example_ids=["ex1", "ex2"])
+
+    checkpoint = tmp_path / "logs/phase3/faar_full/ex1.json"
+    row = json.loads(checkpoint.read_text())
+    del row["api_usage"]
+    checkpoint.write_text(json.dumps(row))
+    graph.invoked.clear()
+
+    rows = run_profile(settings, profile_name="faar_full", example_ids=["ex1", "ex2"], resume=True)
+
+    assert graph.invoked == ["ex1"]
+    assert len(rows) == 2
+
+
+class FakeBenchmarkRepo:
+    dataset = "ohrbench"
+    split = "test"
+    manifest_sha256 = "f" * 64
+
+    def list_example_ids(self) -> list[str]:
+        return ["ex1", "ex2", "ex3", "ex4"]
+
+
+def _prepare_run_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeGraph:
+    monkeypatch.setattr(
+        "faar.experiment_runner.load_benchmark_repository",
+        lambda project_root, dataset, split: FakeBenchmarkRepo(),
+    )
+    graph = FakeGraph()
+    monkeypatch.setattr("faar.experiment_runner.build_graph", lambda settings, **kwargs: graph)
+    monkeypatch.setattr(run, "_require_gate_threshold", lambda settings, profile: None)
+    return graph
+
+
+def _text_run_spec() -> dict[str, Any]:
+    return {"dataset": "ohrbench", "split": "test"}
+
+
+def test_cli_profile_resume_reports_totals_for_cached_and_new_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    graph = _prepare_run_environment(monkeypatch, tmp_path)
+    settings = _settings(tmp_path)
+    out = tmp_path / "faar.json"
+
+    first = run._run_profile_to_result(
+        settings, "faar_full", out, "FAAR", 2, _text_run_spec(), "ohrbench", "test"
+    )
+    assert first["summary"]["api_requests"] == 2
+    assert first["summary"]["prompt_tokens"] == 200
+    assert first["summary"]["completion_tokens"] == 40
+    assert first["summary"]["cost_usd"] == 0.0009
+
+    graph.invoked.clear()
+    partial = run._run_profile_to_result(
+        settings, "faar_full", out, "FAAR", 4, _text_run_spec(), "ohrbench", "test", resume=True
+    )
+
+    assert graph.invoked == ["ex3", "ex4"]
+    assert partial["summary"]["api_requests"] == 4
+    assert partial["summary"]["prompt_tokens"] == 400
+    assert partial["summary"]["completion_tokens"] == 80
+    assert partial["summary"]["cost_usd"] == 0.0018
+
+
+def test_cli_profile_all_cache_resume_keeps_original_totals(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    graph = _prepare_run_environment(monkeypatch, tmp_path)
+    settings = _settings(tmp_path)
+    out = tmp_path / "faar.json"
+
+    first = run._run_profile_to_result(
+        settings, "faar_full", out, "FAAR", 2, _text_run_spec(), "ohrbench", "test"
+    )
+    graph.invoked.clear()
+    resumed = run._run_profile_to_result(
+        settings, "faar_full", out, "FAAR", 2, _text_run_spec(), "ohrbench", "test", resume=True
+    )
+
+    assert graph.invoked == []
+    assert resumed["summary"]["api_requests"] == first["summary"]["api_requests"]
+    assert resumed["summary"]["prompt_tokens"] == first["summary"]["prompt_tokens"]
+    assert resumed["summary"]["completion_tokens"] == first["summary"]["completion_tokens"]
+    assert resumed["summary"]["cost_usd"] == first["summary"]["cost_usd"]
+
+
+class FakeVisualRepo:
+    dataset = "ohrbench"
+    split = "test"
+    manifest_sha256 = "f" * 64
+
+    def list_example_ids(self) -> list[str]:
+        return ["q1", "q2", "q3", "q4"]
+
+    def get_example(self, example_id: str):
+        return SimpleNamespace(
+            example_id=example_id,
+            question=f"Question {example_id}?",
+            correct_answer=f"answer-{example_id}",
+        )
+
+
+class FakeVisualRetriever:
+    def retrieve(self, query: str, top_k: int) -> list[tuple[Path, float]]:
+        return []
+
+
+class FakeVisualFallback:
+    def __init__(self, calls: list[str], settings: AppSettings) -> None:
+        self.calls = calls
+        self.settings = settings
+
+    def answer(self, question: str, image_paths: list[Path], fallback_context: str):
+        self.calls.append("answer")
+        example_id = question.split()[1].rstrip("?")
+        return {
+            "status": "succeeded",
+            "answer": f"answer-{example_id}",
+            "request_model": "gpt-4o-2024-11-20",
+            "response_model": "gpt-4o-2024-11-20",
+            "completed_at_utc": "2026-07-23T12:00:00+00:00",
+            "cost_rates": {
+                "provider": "openai",
+                "currency": "USD",
+                "input_usd_per_million_tokens": 2.5,
+                "output_usd_per_million_tokens": 10.0,
+            },
+            "api_usage": {
+                "api_requests": 1,
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "cost_usd": 0.00045,
+            },
+        }
+
+
+def test_cli_visual_resume_reports_totals_for_cached_and_new_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fallback_calls: list[str] = []
+
+    def make_retriever(*args: Any, **kwargs: Any) -> FakeVisualRetriever:
+        return FakeVisualRetriever()
+
+    def make_fallback(settings: AppSettings) -> FakeVisualFallback:
+        return FakeVisualFallback(fallback_calls, settings)
+
+    monkeypatch.setattr("faar.visual_baselines.build_visual_retriever", make_retriever)
+    monkeypatch.setattr("faar.visual_baselines.VisualFallback", make_fallback)
+    monkeypatch.setattr(
+        run,
+        "load_benchmark_repository",
+        lambda project_root, dataset, split: FakeVisualRepo(),
+    )
+    settings = _settings(tmp_path)
+    out = tmp_path / "colpali.json"
+
+    first = run._run_visual_baseline_to_result(
+        settings, "colpali", out, 2, _text_run_spec(), "ohrbench", "test"
+    )
+    assert first["summary"]["api_requests"] == 2
+    assert first["summary"]["prompt_tokens"] == 200
+    assert first["summary"]["completion_tokens"] == 40
+    assert first["summary"]["cost_usd"] == 0.0009
+
+    partial = run._run_visual_baseline_to_result(
+        settings, "colpali", out, 4, _text_run_spec(), "ohrbench", "test", resume=True
+    )
+
+    assert fallback_calls == ["answer"] * 4
+    assert partial["summary"]["api_requests"] == 4
+    assert partial["summary"]["prompt_tokens"] == 400
+    assert partial["summary"]["completion_tokens"] == 80
+    assert partial["summary"]["cost_usd"] == 0.0018

@@ -42,7 +42,19 @@ def _gate_lock(root: Path) -> None:
 
 
 def _rows(ids: list[str]) -> list[dict]:
-    return [{"example_id": item, "metrics": {"em": 1.0, "f1": 1.0}} for item in ids]
+    return [
+        {
+            "example_id": item,
+            "metrics": {"em": 1.0, "f1": 1.0},
+            "api_usage": {
+                "api_requests": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "cost_usd": 0.0,
+            },
+        }
+        for item in ids
+    ]
 
 
 def _payload(stage: str, args, ids: list[str]) -> dict:
@@ -58,6 +70,9 @@ def _payload(stage: str, args, ids: list[str]) -> dict:
             "F1": 1.0,
             "vlm_rate": 0.0,
             "harm_rate": 0.0,
+            "api_requests": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
             "cost_usd": 0.0,
             "runtime_sec": 1.0,
         },

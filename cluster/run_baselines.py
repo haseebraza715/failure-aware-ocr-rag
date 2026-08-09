@@ -16,6 +16,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from faar.gate_tuning import require_paper_gate_threshold
+from faar.results_aggregator import summarize_api_usage
 
 STAGE_ORDER = ("b0", "b1", "b2", "b3", "b4")
 
@@ -48,7 +49,18 @@ RUN_SPEC_MATCH_KEYS = (
     "model_provenance",
 )
 
-SUMMARY_KEYS = ("EM", "F1", "vlm_rate", "harm_rate", "cost_usd", "runtime_sec")
+SUMMARY_KEYS = (
+    "EM",
+    "F1",
+    "vlm_rate",
+    "harm_rate",
+    "api_requests",
+    "prompt_tokens",
+    "completion_tokens",
+    "cost_usd",
+    "runtime_sec",
+)
+API_COUNT_KEYS = {"api_requests", "prompt_tokens", "completion_tokens"}
 
 _SIGNALS = (signal.SIGTERM, signal.SIGINT)
 
@@ -208,6 +220,10 @@ def _validate_summary(payload: dict, path: Path) -> None:
             raise SystemExit(f"{path} summary.{key} is not numeric.") from exc
         if not math.isfinite(number):
             raise SystemExit(f"{path} summary.{key} is not finite.")
+        if key in API_COUNT_KEYS and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+        ):
+            raise SystemExit(f"{path} summary.{key} must be a nonnegative integer.")
         if key in {"EM", "F1", "vlm_rate", "harm_rate"} and not 0.0 <= number <= 1.0:
             raise SystemExit(f"{path} summary.{key} is outside [0, 1].")
         if key in {"cost_usd", "runtime_sec"} and number < 0.0:
@@ -260,8 +276,14 @@ def _validate_summary_against_rows(payload: dict, path: Path, baseline_payload: 
         "vlm_rate": round(mean(vlm_values), 4),
         "harm_rate": round(mean(harm_values), 4),
     }
+    try:
+        derived.update(summarize_api_usage(rows))
+    except ValueError as exc:
+        raise SystemExit(f"{path} contains invalid API accounting: {exc}.") from exc
     for key, expected in derived.items():
-        observed = round(float(payload["summary"][key]), 4)
+        precision = 6 if key == "cost_usd" else 4
+        observed = round(float(payload["summary"][key]), precision)
+        expected = round(float(expected), precision)
         if observed != expected:
             raise SystemExit(
                 f"{path} summary.{key} is {observed}; rows recompute to {expected}."

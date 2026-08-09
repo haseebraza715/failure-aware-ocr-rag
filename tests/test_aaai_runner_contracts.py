@@ -236,6 +236,12 @@ def test_gate_bypass_profiles_do_not_require_locked_threshold(
                 "example_id": "ex1",
                 "metrics": {"ndcg@5": 0.5, "recall@5": 0.5, "em": 0.0, "f1": 0.5},
                 "action_outcome": {"action": "answer_direct"},
+                "api_usage": {
+                    "api_requests": 0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "cost_usd": 0.0,
+                },
             }
         ]
 
@@ -297,6 +303,12 @@ def test_gate_dependent_result_records_locked_threshold_and_null_harm(
                 "example_id": "ex1",
                 "metrics": {"ndcg@5": 0.5, "recall@5": 0.5, "em": 0.0, "f1": 0.5},
                 "action_outcome": {"action": "answer_direct"},
+                "api_usage": {
+                    "api_requests": 0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "cost_usd": 0.0,
+                },
             }
         ],
     )

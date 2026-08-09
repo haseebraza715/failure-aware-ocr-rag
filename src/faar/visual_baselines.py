@@ -9,7 +9,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
-from .api_logging import openai_cost_rates
+from .api_logging import is_valid_api_usage, openai_cost_rates
 from .benchmarks import BenchmarkRepository
 from .metrics import exact_match, token_f1
 from .recovery import VisualFallback
@@ -263,6 +263,11 @@ def run_visual_baseline(
         image_paths = [path for path, _ in retrieved]
         answer_result = fallback.answer(example.question, image_paths, "")
         prediction = str(answer_result.get("answer", ""))
+        api_usage = answer_result.get("api_usage")
+        if api_usage is None:
+            raise ValueError(f"example {example_id!r} returned no API usage")
+        elif not is_valid_api_usage(api_usage):
+            raise ValueError(f"example {example_id!r} returned invalid API usage")
         row = {
             "profile": mode,
             "example_id": example_id,
@@ -278,6 +283,7 @@ def run_visual_baseline(
                 answer_result.get("cost_rates")
                 or (openai_cost_rates() if settings.recovery.vlm_backend == "openai" else None)
             ),
+            "api_usage": api_usage,
             "action_outcome": {
                 "action": "invoke_vlm",
                 "status": answer_result.get("status", "unknown"),
@@ -352,4 +358,5 @@ def _is_valid_visual_checkpoint(
         and isinstance(row.get("action_outcome"), dict)
         and isinstance(row.get("visual_hits"), list)
         and isinstance(row.get("source_assets"), dict)
+        and is_valid_api_usage(row.get("api_usage"))
     )

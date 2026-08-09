@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -93,6 +94,40 @@ def estimate_openai_cost_usd(
     return (
         prompt_tokens / 1_000_000 * float(rates["input_usd_per_million_tokens"])
         + completion_tokens / 1_000_000 * float(rates["output_usd_per_million_tokens"])
+    )
+
+
+def make_api_usage(
+    api_requests: int = 0,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    cost_usd: float = 0.0,
+) -> dict[str, int | float]:
+    return {
+        "api_requests": int(api_requests),
+        "prompt_tokens": int(prompt_tokens),
+        "completion_tokens": int(completion_tokens),
+        "cost_usd": round(float(cost_usd), 8),
+    }
+
+
+def zero_api_usage() -> dict[str, int | float]:
+    return make_api_usage()
+
+
+def is_valid_api_usage(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    for key in ("api_requests", "prompt_tokens", "completion_tokens"):
+        count = value.get(key)
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            return False
+    cost = value.get("cost_usd")
+    return (
+        not isinstance(cost, bool)
+        and isinstance(cost, (int, float))
+        and math.isfinite(float(cost))
+        and float(cost) >= 0
     )
 
 

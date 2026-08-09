@@ -20,6 +20,12 @@ class FakeGraph:
                 "request_model": "gpt-4o-2024-11-20",
                 "response_model": "gpt-4o-2024-11-20",
                 "completed_at_utc": "2026-07-23T12:00:00+00:00",
+                "api_usage": {
+                    "api_requests": 0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "cost_usd": 0.0,
+                },
             },
             "retrieved_hits": [],
             "corrected_hits": [],

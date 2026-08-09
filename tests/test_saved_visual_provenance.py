@@ -51,6 +51,12 @@ class FakeVisualFallback:
                 "input_usd_per_million_tokens": 2.5,
                 "output_usd_per_million_tokens": 10.0,
             },
+            "api_usage": {
+                "api_requests": 1,
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "cost_usd": 0.00045,
+            },
         }
 
 

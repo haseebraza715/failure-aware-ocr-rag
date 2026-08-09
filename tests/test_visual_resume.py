@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from faar.results_aggregator import summarize_api_usage
 from faar.run_io import safe_checkpoint_stem
 from faar.settings import AppSettings
 from faar.visual_baselines import run_visual_baseline
@@ -59,6 +60,12 @@ class FakeFallback:
                 "currency": "USD",
                 "input_usd_per_million_tokens": 2.5,
                 "output_usd_per_million_tokens": 10.0,
+            },
+            "api_usage": {
+                "api_requests": 1,
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "cost_usd": 0.00045,
             },
         }
 
@@ -314,3 +321,110 @@ def test_visual_checkpoint_uses_safe_stem_and_reuses(monkeypatch: pytest.MonkeyP
     resumed = run_visual_baseline(settings, repo, "colpali", resume=True)
     assert built == []
     assert [row["example_id"] for row in resumed] == ["folder/q1"]
+
+
+def test_visual_row_stores_api_usage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    retriever_calls: list[str] = []
+    fallback_calls: list[str] = []
+    built: list[str] = []
+    _patch_visual(monkeypatch, retriever_calls, fallback_calls, built)
+    settings = AppSettings(project_root=tmp_path)
+    repo = FakeRepo(["q1"])
+
+    rows = run_visual_baseline(settings, repo, "colpali")
+
+    assert rows[0]["api_usage"] == {
+        "api_requests": 1,
+        "prompt_tokens": 100,
+        "completion_tokens": 20,
+        "cost_usd": 0.00045,
+    }
+
+
+def test_visual_resume_recomputes_checkpoint_with_malformed_api_usage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    retriever_calls: list[str] = []
+    fallback_calls: list[str] = []
+    built: list[str] = []
+    _patch_visual(monkeypatch, retriever_calls, fallback_calls, built)
+    settings = AppSettings(project_root=tmp_path)
+    repo = FakeRepo(["q1", "q2", "q3"])
+    run_visual_baseline(settings, repo, "colpali")
+
+    checkpoint = _checkpoint_dir(tmp_path) / "q2.json"
+    row = json.loads(checkpoint.read_text(encoding="utf-8"))
+    row["api_usage"]["api_requests"] = -1
+    checkpoint.write_text(json.dumps(row), encoding="utf-8")
+    built.clear()
+    retriever_calls.clear()
+    fallback_calls.clear()
+
+    rows = run_visual_baseline(settings, repo, "colpali", resume=True)
+
+    assert built == ["retriever", "fallback"]
+    assert retriever_calls == ["retrieve"]
+    assert fallback_calls == ["answer"]
+    assert [row["example_id"] for row in rows] == ["q1", "q2", "q3"]
+
+
+def test_visual_resume_recomputes_checkpoint_without_api_usage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    retriever_calls: list[str] = []
+    fallback_calls: list[str] = []
+    built: list[str] = []
+    _patch_visual(monkeypatch, retriever_calls, fallback_calls, built)
+    settings = AppSettings(project_root=tmp_path)
+    repo = FakeRepo(["q1", "q2", "q3"])
+    run_visual_baseline(settings, repo, "colpali")
+
+    checkpoint = _checkpoint_dir(tmp_path) / "q2.json"
+    row = json.loads(checkpoint.read_text(encoding="utf-8"))
+    del row["api_usage"]
+    checkpoint.write_text(json.dumps(row), encoding="utf-8")
+    built.clear()
+    retriever_calls.clear()
+    fallback_calls.clear()
+
+    rows = run_visual_baseline(settings, repo, "colpali", resume=True)
+
+    assert built == ["retriever", "fallback"]
+    assert fallback_calls == ["answer"]
+    assert [row["example_id"] for row in rows] == ["q1", "q2", "q3"]
+    assert rows[1]["api_usage"] == {
+        "api_requests": 1,
+        "prompt_tokens": 100,
+        "completion_tokens": 20,
+        "cost_usd": 0.00045,
+    }
+
+
+def test_visual_partial_resume_totals_cached_plus_new_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    retriever_calls: list[str] = []
+    fallback_calls: list[str] = []
+    built: list[str] = []
+    _patch_visual(monkeypatch, retriever_calls, fallback_calls, built)
+    settings = AppSettings(project_root=tmp_path)
+    repo = FakeRepo(["q1", "q2", "q3", "q4"])
+    run_visual_baseline(settings, repo, "colpali", max_examples=2)
+
+    built.clear()
+    retriever_calls.clear()
+    fallback_calls.clear()
+    rows = run_visual_baseline(settings, repo, "colpali", max_examples=4, resume=True)
+
+    assert fallback_calls == ["answer"] * 2
+    assert [row["example_id"] for row in rows] == ["q1", "q2", "q3", "q4"]
+    totals = summarize_api_usage(rows)
+    assert totals == {
+        "api_requests": 4,
+        "prompt_tokens": 400,
+        "completion_tokens": 80,
+        "cost_usd": 0.0018,
+    }

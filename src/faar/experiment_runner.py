@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .api_logging import openai_cost_rates
+from .api_logging import is_valid_api_usage, openai_cost_rates, zero_api_usage
 from .benchmarks import load_benchmark_repository
 from .data import Phase0Repository
 from .experiment_profiles import apply_profile
@@ -76,6 +76,13 @@ def run_profile(
         gold = result["example"].correct_answer
         prediction = result.get("answer", "")
         visual_result = result.get("visual_result") or {}
+        api_usage = visual_result.get("api_usage")
+        if api_usage is None:
+            if visual_result:
+                raise ValueError(f"example {example_id!r} returned no API usage")
+            api_usage = zero_api_usage()
+        elif not is_valid_api_usage(api_usage):
+            raise ValueError(f"example {example_id!r} returned invalid API usage")
         row = {
             "profile": profile_name,
             "example_id": example_id,
@@ -93,6 +100,7 @@ def run_profile(
                 visual_result.get("cost_rates")
                 or (openai_cost_rates() if settings.recovery.vlm_backend == "openai" else None)
             ),
+            "api_usage": api_usage,
             "metrics": {
                 "ndcg@5": ndcg_at_k(hit_texts, gold, k=5),
                 "recall@5": recall_at_k(hit_texts, gold, k=5),
@@ -146,4 +154,5 @@ def _is_valid_checkpoint(
         row.get("example_id") == example_id
         and row.get("profile") == profile_name
         and (row.get("run_metadata") or {}).get("run_fingerprint") == fingerprint
+        and is_valid_api_usage(row.get("api_usage"))
     )
