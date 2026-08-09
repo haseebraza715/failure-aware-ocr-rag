@@ -50,7 +50,7 @@ def _prepare_repository(tmp_path: Path) -> None:
 def test_a4_cli_selects_no_backtrack_profile(monkeypatch, tmp_path: Path) -> None:
     captured: dict[str, object] = {}
 
-    def fake_run_profile(settings, profile, out, label, max_examples, run_spec, dataset, split):
+    def fake_run_profile(settings, profile, out, label, max_examples, run_spec, dataset, split, **kwargs):
         captured["profile"] = profile
         payload = {"summary": {"EM": 0.0, "F1": 0.0, "vlm_rate": 0.0, "harm_rate": 0.0}}
         out.parent.mkdir(parents=True, exist_ok=True)

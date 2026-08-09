@@ -16,11 +16,12 @@ SRC = Path(__file__).resolve().parent / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from evaluate import evaluate_results, load_rows
+from evaluate import load_rows
 from faar.api_logging import openai_cost_rates
 from faar.benchmarks import load_benchmark_repository
 from faar.experiment_runner import run_profile
 from faar.gate_tuning import require_paper_gate_threshold
+from faar.metrics import token_f1
 from faar.results_aggregator import summarize_api_usage, summarize_examples
 from faar.run_io import atomic_write_text, select_shard, shard_label
 from faar.settings import AppSettings
@@ -136,6 +137,7 @@ def _run_profile_to_result(
     resume: bool = False,
     shard_index: int | None = None,
     num_shards: int | None = None,
+    publish: bool = True,
 ) -> dict[str, Any]:
     run_spec["gate_threshold"] = _require_gate_threshold(settings, profile)
     start = time.perf_counter()
@@ -170,9 +172,32 @@ def _run_profile_to_result(
         },
         "rows": rows,
     }
-    out.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(out, json.dumps(payload, indent=2) + "\n")
+    if publish:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(out, json.dumps(payload, indent=2) + "\n")
     return payload
+
+
+def _baseline_harm_rate(
+    rows: list[dict[str, Any]],
+    baseline_rows: list[dict[str, Any]],
+) -> float:
+    if not rows:
+        raise ValueError("harm_rate cannot be recomputed against a baseline without per-example rows.")
+    baseline_by_id = {row.get("example_id"): row for row in baseline_rows}
+    harmed = 0.0
+    for row in rows:
+        row_metrics = row.get("metrics") or {}
+        prediction = row.get("predicted_answer", row.get("answer", ""))
+        gold = row.get("gold_answer", row.get("correct_answer", ""))
+        f1 = float(row_metrics.get("f1", token_f1(prediction, gold)))
+        baseline = baseline_by_id.get(row.get("example_id"))
+        baseline_metrics = baseline.get("metrics") or {}
+        baseline_prediction = baseline.get("predicted_answer", baseline.get("answer", ""))
+        baseline_gold = baseline.get("gold_answer", baseline.get("correct_answer", ""))
+        baseline_f1 = float(baseline_metrics.get("f1", token_f1(baseline_prediction, baseline_gold)))
+        harmed += 1.0 if f1 < baseline_f1 else 0.0
+    return round(harmed / len(rows), 4)
 
 
 def _apply_baseline_harm(
@@ -189,8 +214,12 @@ def _apply_baseline_harm(
         label=str(payload.get("label") or "run"),
         run_spec=run_spec,
     )
-    result_ids = _validated_example_ids(load_rows(output_path), output_path)
-    baseline_ids = _validated_example_ids(load_rows(baseline_path), baseline_path)
+    result_rows = payload.get("rows")
+    if not isinstance(result_rows, list):
+        result_rows = load_rows(output_path)
+    result_ids = _validated_example_ids(result_rows, output_path)
+    baseline_rows = load_rows(baseline_path)
+    baseline_ids = _validated_example_ids(baseline_rows, baseline_path)
     missing = sorted(result_ids - baseline_ids)
     if missing:
         preview = ", ".join(missing[:10])
@@ -198,7 +227,7 @@ def _apply_baseline_harm(
             f"Baseline {baseline_path} does not cover every result example ID; "
             f"missing {len(missing)} IDs: {preview}."
         )
-    payload["summary"]["harm_rate"] = evaluate_results(output_path, baseline_path=baseline_path)["harm_rate"]
+    payload["summary"]["harm_rate"] = _baseline_harm_rate(result_rows, baseline_rows)
     atomic_write_text(output_path, json.dumps(payload, indent=2) + "\n")
     return payload
 
@@ -222,6 +251,7 @@ def _run_visual_baseline_to_result(
     split: str,
     *,
     resume: bool = False,
+    publish: bool = True,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     repo = load_benchmark_repository(settings.project_root, dataset, split)
@@ -259,8 +289,9 @@ def _run_visual_baseline_to_result(
         }
     payload["run_spec"] = run_spec
     payload.setdefault("summary", {})["harm_rate"] = None
-    out.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(out, json.dumps(payload, indent=2) + "\n")
+    if publish:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(out, json.dumps(payload, indent=2) + "\n")
     return payload
 
 
@@ -353,6 +384,7 @@ def main() -> None:
             args.dataset,
             args.split,
             resume=args.resume,
+            publish=False,
         )
         payload = _apply_baseline_harm(
             payload,
@@ -374,7 +406,7 @@ def main() -> None:
         )
         _require_key_for_paid_vlm(settings.recovery.vlm_backend)
         payload = _run_profile_to_result(
-            settings, "faar_full", text_out, f"FAAR {args.dataset} {args.split}", args.max_examples, run_spec, args.dataset, args.split, **text_kwargs
+            settings, "faar_full", text_out, f"FAAR {args.dataset} {args.split}", args.max_examples, run_spec, args.dataset, args.split, publish=False, **text_kwargs
         )
         payload = _apply_baseline_harm(
             payload,
@@ -399,7 +431,7 @@ def main() -> None:
         )
         _require_key_for_paid_vlm(settings.recovery.vlm_backend)
         payload = _run_profile_to_result(
-            settings, ablation_profile, text_out, args.ablate, args.max_examples, run_spec, args.dataset, args.split, **text_kwargs
+            settings, ablation_profile, text_out, args.ablate, args.max_examples, run_spec, args.dataset, args.split, publish=False, **text_kwargs
         )
         payload = _apply_baseline_harm(
             payload,
@@ -423,7 +455,7 @@ def main() -> None:
             run_spec=run_spec,
         )
         _require_key_for_paid_vlm(settings.recovery.vlm_backend)
-    payload = _run_profile_to_result(settings, profile, text_out, label, args.max_examples, run_spec, args.dataset, args.split, **text_kwargs)
+    payload = _run_profile_to_result(settings, profile, text_out, label, args.max_examples, run_spec, args.dataset, args.split, publish=baseline_id == "B0", **text_kwargs)
     payload = _apply_baseline_harm(
         payload,
         text_out,

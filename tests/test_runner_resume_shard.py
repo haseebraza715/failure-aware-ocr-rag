@@ -229,7 +229,7 @@ def test_cli_resume_flag_reaches_text_profile_path(monkeypatch, tmp_path: Path) 
         ["run.py", "--mode", "faar", "--resume", "--baseline", str(baseline_path), "--out", str(tmp_path / "faar.json")],
     )
     run.main()
-    assert captured["kwargs"] == {"resume": True}
+    assert captured["kwargs"] == {"resume": True, "publish": False}
 
 
 def test_cli_shard_flags_suffix_output_and_flow_to_runner(monkeypatch, tmp_path: Path) -> None:
@@ -242,7 +242,7 @@ def test_cli_shard_flags_suffix_output_and_flow_to_runner(monkeypatch, tmp_path:
         ["run.py", "--mode", "faar", "--shard-index", "0", "--num-shards", "2", "--baseline", str(baseline_path), "--out", str(tmp_path / "faar.json")],
     )
     run.main()
-    assert captured["kwargs"] == {"shard_index": 0, "num_shards": 2}
+    assert captured["kwargs"] == {"shard_index": 0, "num_shards": 2, "publish": False}
     assert captured["out"].name == "faar_shard1of2.json"
 
 
@@ -256,7 +256,7 @@ def test_cli_defaults_unchanged_without_flags(monkeypatch, tmp_path: Path) -> No
         ["run.py", "--mode", "faar", "--baseline", str(baseline_path), "--out", str(tmp_path / "faar.json")],
     )
     run.main()
-    assert captured["kwargs"] == {}
+    assert captured["kwargs"] == {"publish": False}
     assert captured["out"].name == "faar.json"
 
 

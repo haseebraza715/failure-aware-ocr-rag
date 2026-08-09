@@ -62,7 +62,7 @@ def test_a1_cli_uses_the_no_gate_profile(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(runner, "_validate_baseline", lambda *args, **kwargs: None)
     monkeypatch.setattr(runner, "_apply_baseline_harm", lambda payload, *args, **kwargs: payload)
 
-    def fake_run_profile_to_result(settings, profile, out, label, max_examples, run_spec, dataset, split):
+    def fake_run_profile_to_result(settings, profile, out, label, max_examples, run_spec, dataset, split, **kwargs):
         captured["profile"] = profile
         captured["label"] = label
         payload = {"summary": {"EM": 0.0, "F1": 0.0, "vlm_rate": 0.0, "harm_rate": 0.0}}

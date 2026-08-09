@@ -182,6 +182,7 @@ def test_saved_run_provenance_records_openai_cost_rates(
         run_spec: dict[str, Any],
         dataset: str,
         split: str,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         payload = _result(profile, [])
         payload["run_spec"] = run_spec
@@ -414,6 +415,7 @@ def test_b2_requires_paid_vlm_api_key(
         run_spec: dict[str, Any],
         dataset: str,
         split: str,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         payload = _result(profile, [_row("ex1", 0.25)])
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -462,6 +464,7 @@ def test_baseline_seed_provenance_mismatch_fails(
         run_spec: dict[str, Any],
         dataset: str,
         split: str,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         payload = _result(profile, [_row("ex1", 0.25)])
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -548,6 +551,7 @@ def test_baseline_missing_example_id_coverage_fails(
         run_spec: dict[str, Any],
         dataset: str,
         split: str,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         payload = _result(profile, [_row("ex1", 0.25), _row("ex2", 0.5)])
         out.parent.mkdir(parents=True, exist_ok=True)
