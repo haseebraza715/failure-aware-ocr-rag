@@ -3,27 +3,36 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class RetrievalSettings(BaseModel):
-    chunk_size_words: int = 180
-    chunk_overlap_words: int = 40
-    top_k: int = 5
-    semantic_backtrack_top_k: int = 8
+    chunk_size_words: int = Field(default=180, gt=0)
+    chunk_overlap_words: int = Field(default=40, ge=0)
+    top_k: int = Field(default=5, ge=1)
+    semantic_backtrack_top_k: int = Field(default=8, ge=1)
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     embedding_revision: str = "8b3219a92973c328a8e22fadcfa821b5dc75636a"
     embedding_backend: str = "local-hash-v1"
     embedding_batch_size: int = Field(default=64, gt=0, le=1024)
     max_chunks: int = Field(default=10_000, gt=0)
 
+    @model_validator(mode="after")
+    def _validate_chunk_geometry(self) -> RetrievalSettings:
+        if self.chunk_overlap_words >= self.chunk_size_words:
+            raise ValueError(
+                f"chunk_overlap_words ({self.chunk_overlap_words}) must be smaller than "
+                f"chunk_size_words ({self.chunk_size_words})"
+            )
+        return self
+
 
 class GateSettings(BaseModel):
-    quality_threshold: float = 0.52
-    structural_threshold: int = 1
-    weird_char_threshold: float = 0.10
-    lexical_floor: float = 0.10
-    dense_floor: float = 0.20
+    quality_threshold: float = Field(default=0.52, ge=0.0, le=1.0)
+    structural_threshold: int = Field(default=1, ge=0)
+    weird_char_threshold: float = Field(default=0.10, ge=0.0, le=1.0)
+    lexical_floor: float = Field(default=0.10, ge=0.0, le=1.0)
+    dense_floor: float = Field(default=0.20, ge=0.0, le=1.0)
 
 
 class CorrectionSettings(BaseModel):
@@ -33,11 +42,20 @@ class CorrectionSettings(BaseModel):
     should record the values alongside their artifacts.
     """
 
-    min_weird_char_ratio: float = 0.08
-    min_length_ratio: float = 0.6
-    max_length_ratio: float = 1.4
-    min_token_overlap: float = 0.5
-    max_noise_increase: float = 0.01
+    min_weird_char_ratio: float = Field(default=0.08, ge=0.0)
+    min_length_ratio: float = Field(default=0.6, ge=0.0)
+    max_length_ratio: float = Field(default=1.4, ge=0.0)
+    min_token_overlap: float = Field(default=0.5, ge=0.0, le=1.0)
+    max_noise_increase: float = Field(default=0.01, ge=0.0)
+
+    @model_validator(mode="after")
+    def _validate_length_ratio_bounds(self) -> CorrectionSettings:
+        if self.min_length_ratio > self.max_length_ratio:
+            raise ValueError(
+                f"min_length_ratio ({self.min_length_ratio}) must not exceed "
+                f"max_length_ratio ({self.max_length_ratio})"
+            )
+        return self
 
 
 class RecoverySettings(BaseModel):

@@ -32,6 +32,8 @@ def token_f1(prediction: str, gold: str) -> float:
 
 
 def recall_at_k(hit_texts: list[str], gold: str, k: int = 5) -> float:
+    if k <= 0:
+        return 0.0
     gold_norm = normalize_text(gold)
     for text in hit_texts[:k]:
         if gold_norm and gold_norm in normalize_text(text):
@@ -40,6 +42,8 @@ def recall_at_k(hit_texts: list[str], gold: str, k: int = 5) -> float:
 
 
 def ndcg_at_k(hit_texts: list[str], gold: str, k: int = 5) -> float:
+    if k <= 0:
+        return 0.0
     gold_norm = normalize_text(gold)
     relevances = [1.0 if gold_norm and gold_norm in normalize_text(text) else 0.0 for text in hit_texts[:k]]
     dcg = 0.0
