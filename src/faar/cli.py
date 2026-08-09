@@ -78,7 +78,12 @@ def run_example(
     settings.validate_runtime_paths()
     settings.logs_dir.mkdir(parents=True, exist_ok=True)
     graph = build_graph(settings)
-    result = graph.invoke({"example_id": example_id, "question": question})
+    try:
+        result = graph.invoke({"example_id": example_id, "question": question})
+    except Exception as exc:
+        raise typer.BadParameter(
+            f"Pipeline failed for example {example_id!r}: {type(exc).__name__}: {exc}"
+        ) from exc
     run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run_metadata = {
         "run_id": run_id,
@@ -125,7 +130,7 @@ def run_example(
         "top_hits": [hit.to_dict() for hit in result.get("corrected_hits") or result.get("retrieved_hits", [])],
     }
     destination = output or settings.logs_dir / f"{example_id}.json"
-    destination.write_text(json.dumps(payload, indent=2))
+    destination.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     typer.echo(json.dumps(payload, indent=2))
     typer.echo(f"\nSaved log to {destination}")
 
@@ -280,13 +285,8 @@ def aggregate_phase3(
     base = settings.project_root / "logs/phase3"
     artifacts_dir = settings.project_root / "artifacts/phase3"
     artifacts_dir.mkdir(parents=True, exist_ok=True)
-    all_rows = []
-    for profile_name in sorted(PROFILES):
-        profile_dir = base / profile_name
-        if not profile_dir.exists():
-            continue
-        for path in sorted(profile_dir.glob("*.json")):
-            all_rows.append(json.loads(path.read_text()))
+    rows_by_profile = load_phase3_rows(base, profiles=sorted(PROFILES))
+    all_rows = [row for rows in rows_by_profile.values() for row in rows]
     summary = summarize_by_profile(all_rows)
     write_json(
         artifacts_dir / "metrics_summary.json", {"profiles": summary, "generated_at_utc": datetime.now(UTC).isoformat()}

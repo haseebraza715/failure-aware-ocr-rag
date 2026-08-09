@@ -30,8 +30,8 @@ def load_phase3_rows(logs_root: Path, profiles: Iterable[str] | None = None) -> 
         if profile_dir.exists():
             for path in sorted(profile_dir.glob("*.json")):
                 try:
-                    payload = json.loads(path.read_text())
-                except json.JSONDecodeError:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
                     continue
                 if isinstance(payload, dict):
                     rows.append(payload)

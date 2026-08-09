@@ -15,6 +15,14 @@ def _empty_recovery_outcomes() -> dict[str, Any]:
     }
 
 
+def _metric_summary(row: dict[str, Any], metric_name: str) -> float:
+    metrics = row.get("metrics") or {}
+    try:
+        return float(metrics.get(metric_name, 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def summarize_examples(rows: list[dict[str, Any]]) -> dict[str, Any]:
     if not rows:
         return {
@@ -26,10 +34,10 @@ def summarize_examples(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "visual_fallback_rate": 0.0,
             "recovery_outcomes": _empty_recovery_outcomes(),
         }
-    ndcg = mean(row["metrics"]["ndcg@5"] for row in rows)
-    recall = mean(row["metrics"]["recall@5"] for row in rows)
-    em = mean(row["metrics"]["em"] for row in rows)
-    f1 = mean(row["metrics"]["f1"] for row in rows)
+    ndcg = mean(_metric_summary(row, "ndcg@5") for row in rows)
+    recall = mean(_metric_summary(row, "recall@5") for row in rows)
+    em = mean(_metric_summary(row, "em") for row in rows)
+    f1 = mean(_metric_summary(row, "f1") for row in rows)
     # Measure fallback usage by executed action (action_outcome), not planned route
     # (policy_action). This avoids over-counting in profiles that reroute to direct answer.
     visual_rate = mean(1.0 if (row.get("action_outcome") or {}).get("action") == "invoke_vlm" else 0.0 for row in rows)
@@ -69,5 +77,5 @@ def summarize_examples(rows: list[dict[str, Any]]) -> dict[str, Any]:
 def summarize_by_profile(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in records:
-        grouped.setdefault(row["profile"], []).append(row)
+        grouped.setdefault(row.get("profile", "unknown"), []).append(row)
     return {profile: summarize_examples(rows) for profile, rows in grouped.items()}
