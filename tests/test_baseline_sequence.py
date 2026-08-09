@@ -377,13 +377,77 @@ def test_gate_lock_required_for_b2(tmp_path: Path) -> None:
     run_baselines.validate_gate_lock(tmp_path)
 
 
-def test_missing_gate_lock_stops_at_b2_after_b0_and_b1(monkeypatch, tmp_path: Path) -> None:
+def test_missing_gate_lock_launches_zero_stages(monkeypatch, tmp_path: Path) -> None:
     args = _args(tmp_path)
     fake, calls = _successful_run_child(tmp_path, args)
     monkeypatch.setattr(run_baselines, "run_child", fake)
     with pytest.raises(SystemExit, match="B2 requires"):
         run_baselines.main(["--project-root", str(tmp_path)])
-    assert [_stage_from_command(command) for command in calls] == ["b0", "b1"]
+    assert calls == []
+
+
+def test_invalid_gate_lock_launches_zero_stages(monkeypatch, tmp_path: Path) -> None:
+    config = tmp_path / "config"
+    config.mkdir(parents=True, exist_ok=True)
+    (config / "gate_threshold.json").write_text(
+        json.dumps({"source_split": "test", "threshold": "not-a-number"}) + "\n",
+        encoding="utf-8",
+    )
+    args = _args(tmp_path)
+    fake, calls = _successful_run_child(tmp_path, args)
+    monkeypatch.setattr(run_baselines, "run_child", fake)
+    with pytest.raises(SystemExit, match="B2 gate lock is invalid"):
+        run_baselines.main(["--project-root", str(tmp_path)])
+    assert calls == []
+
+
+def test_validation_b0_only_workflow_runs_without_gate_lock(monkeypatch, tmp_path: Path) -> None:
+    args = _args(tmp_path, stop_after="b0")
+    fake, calls = _successful_run_child(tmp_path, args)
+    monkeypatch.setattr(run_baselines, "run_child", fake)
+    result = run_baselines.main(
+        ["--project-root", str(tmp_path), "--dataset", DATASET, "--split", SPLIT, "--seed", str(SEED), "--stop-after", "b0"]
+    )
+    assert result == 0
+    assert [_stage_from_command(command) for command in calls] == ["b0"]
+    b0_command = calls[0]
+    assert b0_command[b0_command.index("--gate") + 1] == "off"
+    assert b0_command[b0_command.index("--recovery") + 1] == "off"
+
+
+def test_resume_validates_b0_before_gate_lock_and_launches_zero_stages(
+    monkeypatch, tmp_path: Path
+) -> None:
+    args = _args(tmp_path, resume=True)
+    _write_output(tmp_path, "b0", args, IDS)
+    payload = _payload("b0", args, IDS)
+    payload["run_spec"]["seed"] = 7
+    b0 = run_baselines.output_path(tmp_path, DATASET, SPLIT, "b0")
+    b0.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    monkeypatch.setattr(run_baselines, "run_child", _never)
+    with pytest.raises(SystemExit) as excinfo:
+        run_baselines.main(["--project-root", str(tmp_path), "--resume"])
+    assert "run_spec.seed" in str(excinfo.value)
+
+
+def test_resume_rejects_missing_gate_lock_before_launching_missing_stages(
+    monkeypatch, tmp_path: Path
+) -> None:
+    args = _args(tmp_path, resume=True)
+    _write_output(tmp_path, "b0", args, IDS)
+    monkeypatch.setattr(run_baselines, "run_child", _never)
+    with pytest.raises(SystemExit, match="B2 requires"):
+        run_baselines.main(["--project-root", str(tmp_path), "--resume"])
+
+
+def test_b2_remains_mandatory_without_lock_even_when_stopping_after_b1(
+    monkeypatch, tmp_path: Path
+) -> None:
+    fake, calls = _successful_run_child(tmp_path, _args(tmp_path))
+    monkeypatch.setattr(run_baselines, "run_child", fake)
+    with pytest.raises(SystemExit, match="B2 requires"):
+        run_baselines.main(["--project-root", str(tmp_path), "--stop-after", "b1"])
+    assert calls == []
 
 
 def test_resume_rejects_null_summary_metric(monkeypatch, tmp_path: Path) -> None:

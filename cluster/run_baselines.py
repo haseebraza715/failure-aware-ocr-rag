@@ -110,6 +110,13 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--cpu-only", action="store_true")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--stop-after",
+        choices=STAGE_ORDER,
+        default="b4",
+        help="Stop after this stage. Only 'b0' skips the B2 gate-lock prerequisite, "
+        "so validation B0 can be run before gate tuning.",
+    )
     return parser.parse_args(argv)
 
 
@@ -421,13 +428,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.max_examples is not None and args.max_examples < 1:
         raise SystemExit("--max-examples must be at least 1.")
     if not args.resume:
-        for stage in STAGE_ORDER:
+        for stage in STAGE_ORDER[: STAGE_ORDER.index(args.stop_after) + 1]:
             out = output_path(root, args.dataset, args.split, stage)
             if out.exists():
                 raise SystemExit(f"Refusing to run: target output already exists: {out}")
     if args.dry_run:
         b0_path = output_path(root, args.dataset, args.split, "b0")
-        for stage in STAGE_ORDER:
+        for stage in STAGE_ORDER[: STAGE_ORDER.index(args.stop_after) + 1]:
             out = output_path(root, args.dataset, args.split, stage)
             baseline = b0_path if stage != "b0" else None
             command = launcher_command(args, stage_run_args(stage, args, out, baseline))
@@ -435,9 +442,31 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     b0_path = output_path(root, args.dataset, args.split, "b0")
     baseline_payload: dict | None = None
+    if args.resume and b0_path.is_file():
+        # Resume must validate existing B0 before its provenance is trusted for
+        # the gate-lock check; a tampered B0 fails here before any stage runs.
+        baseline_payload = validate_output(b0_path, "b0", args, None)
+    # Validate the B2 gate lock before launching any stage so a missing or
+    # invalid lock never spends API/GPU resources on B0 or paid B1.
+    gate_lock = None
+    if args.stop_after != "b0":
+        baseline_mp = (
+            baseline_payload["run_spec"].get("model_provenance")
+            if baseline_payload is not None
+            else None
+        )
+        gate_lock = validate_gate_lock(
+            root,
+            dataset=args.dataset,
+            model_provenance=baseline_mp,
+        )
+        print(
+            f"[run-baselines] gate lock validated for B2 (threshold {gate_lock['threshold']})",
+            flush=True,
+        )
     previous = _install_signal_handlers()
     try:
-        for stage in STAGE_ORDER:
+        for stage in STAGE_ORDER[: STAGE_ORDER.index(args.stop_after) + 1]:
             if _pending_signal is not None:
                 return 128 + _pending_signal
             gate_lock = None
@@ -478,7 +507,11 @@ def main(argv: list[str] | None = None) -> int:
                 baseline_payload = payload
         if _pending_signal is not None:
             return 128 + _pending_signal
-        print("[run-baselines] all stages complete: B0 B1 B2 B3 B4", flush=True)
+        completed = STAGE_ORDER[: STAGE_ORDER.index(args.stop_after) + 1]
+        print(
+            "[run-baselines] stages complete: " + " ".join(stage.upper() for stage in completed),
+            flush=True,
+        )
         return 0
     finally:
         _restore_signal_handlers(previous)
