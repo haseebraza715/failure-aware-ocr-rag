@@ -107,7 +107,7 @@ class VisualFallback:
             }
         if not os.getenv("OPENAI_API_KEY"):
             raise RuntimeError("OPENAI_API_KEY is required for VLM_BACKEND=openai.")
-        client = OpenAI()
+        client = OpenAI(max_retries=0)
         request_id = str(uuid4())
         content: list[dict] = [{"type": "text", "text": f"Answer the question using only the page image.\n\nQuestion: {question}"}]
         for path in image_paths:
@@ -216,7 +216,7 @@ class VisualFallback:
         except ImportError as exc:  # pragma: no cover - optional external runtime
             raise RuntimeError("The `anthropic` package is required for VLM_BACKEND=claude-sonnet-4-5.") from exc
 
-        client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), max_retries=0)
         request_id = str(uuid4())
         content: list[dict] = [
             {

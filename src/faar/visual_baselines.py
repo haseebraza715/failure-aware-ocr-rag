@@ -346,6 +346,12 @@ def run_visual_baseline(
         retrieved = retriever.retrieve(example.question, settings.retrieval.top_k)
         image_paths = [path for path, _ in retrieved]
         answer_result = fallback.answer(example.question, image_paths, "")
+        if answer_result.get("status") == "failed":
+            raise RuntimeError(
+                f"example {example_id!r}: paid VLM call failed with reason "
+                f"{answer_result.get('reason', 'vlm_call_failed')!r}; "
+                "refusing to score or checkpoint a failed row"
+            )
         prediction = str(answer_result.get("answer", ""))
         api_usage = answer_result.get("api_usage")
         if api_usage is None:
@@ -440,6 +446,7 @@ def _is_valid_visual_checkpoint(
         and isinstance(row.get("gold_answer"), str)
         and isinstance(row.get("predicted_answer"), str)
         and isinstance(row.get("action_outcome"), dict)
+        and row["action_outcome"].get("status") != "failed"
         and isinstance(row.get("visual_hits"), list)
         and isinstance(row.get("source_assets"), dict)
         and is_valid_api_usage(row.get("api_usage"))

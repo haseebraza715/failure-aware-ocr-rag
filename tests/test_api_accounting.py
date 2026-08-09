@@ -95,7 +95,7 @@ def test_openai_request_is_logged_before_execution_and_usage_after(
             )
 
     fake_client = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions()))
-    monkeypatch.setattr("faar.recovery.OpenAI", lambda: fake_client)
+    monkeypatch.setattr("faar.recovery.OpenAI", lambda **kwargs: fake_client)
     settings = AppSettings(project_root=tmp_path)
     settings.recovery.vlm_backend = "openai"
     settings.recovery.log_vlm_calls = True
@@ -138,7 +138,7 @@ def test_openai_success_carries_normalized_api_usage(
             )
 
     fake_client = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions()))
-    monkeypatch.setattr("faar.recovery.OpenAI", lambda: fake_client)
+    monkeypatch.setattr("faar.recovery.OpenAI", lambda **kwargs: fake_client)
     settings = AppSettings(project_root=tmp_path)
     settings.recovery.vlm_backend = "openai"
     settings.recovery.log_vlm_calls = True
@@ -172,7 +172,7 @@ def test_openai_failed_request_counts_once_and_carries_api_usage(
             raise RuntimeError("provider down")
 
     fake_client = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions()))
-    monkeypatch.setattr("faar.recovery.OpenAI", lambda: fake_client)
+    monkeypatch.setattr("faar.recovery.OpenAI", lambda **kwargs: fake_client)
     settings = AppSettings(project_root=tmp_path)
     settings.recovery.vlm_backend = "openai"
 
@@ -185,6 +185,11 @@ def test_openai_failed_request_counts_once_and_carries_api_usage(
         "completion_tokens": 0,
         "cost_usd": 0.0,
     }
+
+    records = [json.loads(line) for line in (tmp_path / "logs/vlm_calls.jsonl").read_text().splitlines()]
+    assert [record["status"] for record in records] == ["started", "failed"]
+    assert records[0]["metadata"]["request_id"] == records[-1]["metadata"]["request_id"]
+    assert records[-1]["metadata"]["error"] == "RuntimeError"
 
 
 def test_skipped_fallback_paths_count_zero_api_usage(tmp_path: Path) -> None:

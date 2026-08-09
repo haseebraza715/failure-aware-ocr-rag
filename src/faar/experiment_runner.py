@@ -76,6 +76,12 @@ def run_profile(
         gold = result["example"].correct_answer
         prediction = result.get("answer", "")
         visual_result = result.get("visual_result") or {}
+        if visual_result.get("status") == "failed":
+            raise RuntimeError(
+                f"example {example_id!r}: paid VLM call failed with reason "
+                f"{visual_result.get('reason', 'vlm_call_failed')!r}; "
+                "refusing to score or checkpoint a failed row"
+            )
         api_usage = visual_result.get("api_usage")
         if api_usage is None:
             if visual_result:
@@ -159,6 +165,8 @@ def _is_valid_checkpoint(
         and (row.get("run_metadata") or {}).get("run_fingerprint") == fingerprint
         and is_valid_api_usage(row.get("api_usage"))
     ):
+        return False
+    if (row.get("action_outcome") or {}).get("status") == "failed":
         return False
     if settings.experiment.random_recovery and row.get("failure_type") == "random":
         expected = random_recovery_type(settings.experiment.random_seed, example_id)
