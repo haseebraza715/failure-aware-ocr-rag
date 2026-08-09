@@ -7,6 +7,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Iterable
 
+from .metrics import token_f1
 from .results_aggregator import summarize_api_usage
 
 
@@ -126,11 +127,18 @@ def _harm_rate(rows: list[dict[str, Any]], baseline_rows: list[dict[str, Any]]) 
         raise ValueError(f"Harm analysis cannot compare rows not covered by baseline B0: {ids}")
     if not rows:
         return 0.0
-    harmed = sum(
-        float((row.get("metrics") or {}).get("f1", 0.0))
-        < float((baseline_by_id[str(row.get("example_id"))].get("metrics") or {}).get("f1", 0.0))
-        for row in rows
-    )
+    harmed = 0.0
+    for row in rows:
+        row_metrics = row.get("metrics") or {}
+        prediction = row.get("predicted_answer", row.get("answer", ""))
+        gold = row.get("gold_answer", row.get("correct_answer", ""))
+        f1 = float(row_metrics.get("f1", token_f1(prediction, gold)))
+        baseline = baseline_by_id[str(row.get("example_id"))]
+        baseline_metrics = baseline.get("metrics") or {}
+        baseline_prediction = baseline.get("predicted_answer", baseline.get("answer", ""))
+        baseline_gold = baseline.get("gold_answer", baseline.get("correct_answer", ""))
+        baseline_f1 = float(baseline_metrics.get("f1", token_f1(baseline_prediction, baseline_gold)))
+        harmed += 1.0 if f1 < baseline_f1 else 0.0
     return round(harmed / len(rows), 4)
 
 
