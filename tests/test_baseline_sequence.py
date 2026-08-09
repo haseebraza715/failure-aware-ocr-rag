@@ -193,7 +193,8 @@ def test_stage_commands_constructed_correctly(tmp_path: Path) -> None:
     for stage in ("b0", "b1", "b2"):
         assert "--resume" in run_baselines.stage_run_args(stage, resume_args, b0, None)
     for stage in ("b3", "b4"):
-        assert "--resume" not in run_baselines.stage_run_args(stage, resume_args, b0, b0)
+        assert "--resume" in run_baselines.stage_run_args(stage, resume_args, b0, b0)
+    assert "--resume" not in run_baselines.stage_run_args("b0", _args(tmp_path), b0, None)
 
 
 def test_stops_immediately_on_stage_failure(monkeypatch, tmp_path: Path) -> None:

@@ -115,7 +115,7 @@ def stage_run_args(
 ) -> list[str]:
     run_args = common_run_args(args, out)
     run_args += STAGE_ARGS[stage]
-    if args.resume and stage in {"b0", "b1", "b2"}:
+    if args.resume:
         run_args.append("--resume")
     if baseline is not None:
         run_args += ["--baseline", str(baseline)]

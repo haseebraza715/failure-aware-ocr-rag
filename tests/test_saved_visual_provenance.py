@@ -84,3 +84,9 @@ def test_saved_visual_baseline_row_contains_vlm_provenance(monkeypatch, tmp_path
     assert saved_row["completed_at_utc"] == "2026-07-23T12:00:00+00:00"
     assert saved_row["cost_rates"]["input_usd_per_million_tokens"] == 2.5
     assert saved_row["cost_rates"]["output_usd_per_million_tokens"] == 10.0
+    run_metadata = saved_row["run_metadata"]
+    assert run_metadata["profile"] == "colpali"
+    assert run_metadata["run_fingerprint"]
+    assert run_metadata["vlm_backend"] == "openai"
+    assert run_metadata["selection"] == {"max_examples": None}
+    assert run_metadata["cost_rates"]["input_usd_per_million_tokens"] == 2.5

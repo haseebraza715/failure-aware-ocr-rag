@@ -273,6 +273,28 @@ def test_cli_visual_path_rejects_shard_flags(monkeypatch, tmp_path: Path) -> Non
     assert visual_calls == []
 
 
+def test_cli_visual_resume_reaches_baseline(monkeypatch, tmp_path: Path) -> None:
+    _isolate_cli(monkeypatch, tmp_path)
+    monkeypatch.setattr(run, "load_benchmark_repository", lambda *args, **kwargs: object())
+    visual_calls: list[dict[str, Any]] = []
+
+    def fake_visual_baseline(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        visual_calls.append({"args": args, "kwargs": kwargs})
+        return {"summary": {"EM": 0.0, "F1": 0.0, "vlm_rate": 0.0, "harm_rate": 0.0}, "rows": []}
+
+    monkeypatch.setattr(run, "run_visual_baseline", fake_visual_baseline, raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run.py", "--mode", "colpali", "--resume", "--out", str(tmp_path / "vis.json")],
+    )
+    run.main()
+    assert len(visual_calls) == 1
+    assert visual_calls[0]["kwargs"]["resume"] is True
+    assert visual_calls[0]["kwargs"]["max_examples"] is None
+    assert visual_calls[0]["args"][2] == "colpali"
+
+
 def test_empty_shard_does_not_build_graph(monkeypatch, tmp_path: Path) -> None:
     _prepare_phase0(tmp_path, 1)
     calls: list[object] = []

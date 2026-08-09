@@ -243,12 +243,21 @@ def _run_visual_baseline_to_result(
     run_spec: dict[str, Any],
     dataset: str,
     split: str,
+    *,
+    resume: bool = False,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     usage_path = settings.project_root / "logs/vlm_calls.jsonl"
     start_usage = _read_vlm_usage(usage_path)
     repo = load_benchmark_repository(settings.project_root, dataset, split)
-    result = run_visual_baseline(settings, repo, mode, max_examples=max_examples)
+    result = run_visual_baseline(
+        settings,
+        repo,
+        mode,
+        max_examples=max_examples,
+        resume=resume,
+        output_dir=out.parent / f"{out.stem}_rows",
+    )
     if isinstance(result, dict):
         payload = result
     else:
@@ -351,8 +360,8 @@ def main() -> None:
     }
 
     if args.mode in {"colpali", "visrag"}:
-        if args.resume or args.shard_index is not None or args.num_shards is not None:
-            raise SystemExit("--resume and shard flags are not supported for visual modes yet.")
+        if args.shard_index is not None or args.num_shards is not None:
+            raise SystemExit("Shard flags are not supported for visual modes.")
         _validate_baseline(
             args.baseline,
             label=f"--mode {args.mode}",
@@ -367,6 +376,7 @@ def main() -> None:
             run_spec,
             args.dataset,
             args.split,
+            resume=args.resume,
         )
         payload = _apply_baseline_harm(
             payload,
