@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +10,8 @@ import pytest
 import torch
 
 from faar import visual_baselines
+from faar.benchmarks import BenchmarkRepository
+from faar.data import DatasetUnavailableError
 from faar.settings import AppSettings
 
 
@@ -318,6 +321,126 @@ def test_content_hash_changes_when_bytes_change_at_same_path(tmp_path: Path) -> 
     Image.new("RGB", (8, 8), color=(255, 0, 0)).save(paths[0])
     after = visual_baselines._compute_content_hashes(paths)
     assert before != after
+
+
+def _hash_repository(tmp_path: Path) -> BenchmarkRepository:
+    """Real BenchmarkRepository whose corpus pages record verified image_sha256 claims."""
+    from PIL import Image
+
+    image_dir = tmp_path / "images"
+    ocr_dir = tmp_path / "ocr"
+    image_dir.mkdir()
+    ocr_dir.mkdir()
+    corpus_pages = []
+    for page_id in (1, 2):
+        image_path = image_dir / f"doc_page_{page_id}.png"
+        Image.new("RGB", (8, 8), color=(page_id * 40, 0, 0)).save(image_path)
+        (ocr_dir / f"doc_page_{page_id}.txt").write_text(f"OCR {page_id}")
+        corpus_pages.append(
+            {
+                "corpus_id": f"doc:p{page_id}",
+                "doc_name": "doc",
+                "page_id": page_id,
+                "ocr_text_path": str(ocr_dir / f"doc_page_{page_id}.txt"),
+                "image_path": str(image_path),
+                "image_sha256": hashlib.sha256(image_path.read_bytes()).hexdigest(),
+            }
+        )
+    records = [
+        {
+            "example_id": "e1",
+            "doc_name": "doc",
+            "question": "Q",
+            "correct_answer": "A",
+            "page_ids": [1],
+            "corpus_ids": ["doc:p1", "doc:p2"],
+        }
+    ]
+    return BenchmarkRepository(
+        records,
+        corpus_pages,
+        tmp_path,
+        "ohrbench",
+        "test",
+        document_inventory={"doc": [1, 2]},
+    )
+
+
+def test_verified_unchanged_corpus_hits_visual_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repository = _hash_repository(tmp_path)
+    model = _CountingModel()
+    _install_colpali_fakes(monkeypatch, model)
+    cache_dir = _cache_dir(tmp_path)
+    settings = AppSettings(project_root=tmp_path)
+
+    first = visual_baselines.build_visual_retriever("colpali", repository, settings)
+    assert model.forward_calls > 0
+    calls_after_first = model.forward_calls
+
+    second = visual_baselines.build_visual_retriever("colpali", repository, settings)
+    assert model.forward_calls == calls_after_first
+    assert torch.equal(first.image_embeddings, second.image_embeddings)
+    assert second.image_embeddings.shape[0] == 2
+
+
+def test_hash_verification_fails_before_model_or_cache_use(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from PIL import Image
+
+    repository = _hash_repository(tmp_path)
+    Image.new("RGB", (8, 8), color=(255, 0, 0)).save(repository.corpus_image_paths()[0])
+    settings = AppSettings(project_root=tmp_path)
+
+    def fail_construction(*args, **kwargs):
+        raise AssertionError("retriever must not be constructed when hash verification fails")
+
+    monkeypatch.setattr(visual_baselines, "ColPaliRetriever", fail_construction)
+    monkeypatch.setattr(visual_baselines, "VisRAGRetriever", fail_construction)
+    with pytest.raises(DatasetUnavailableError, match="hash mismatch"):
+        visual_baselines.build_visual_retriever("colpali", repository, settings)
+
+
+@pytest.mark.parametrize("mode", ["colpali", "visrag"])
+def test_both_retrievers_receive_verified_identities(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mode: str
+) -> None:
+    repository = _hash_repository(tmp_path)
+    captured: dict[str, object] = {}
+    settings = AppSettings(project_root=tmp_path)
+
+    def make_colpali(
+        image_paths,
+        model_name,
+        revision,
+        batch_size,
+        *,
+        score_batch_size,
+        cache_dir,
+        content_hashes=None,
+    ):
+        captured["content_hashes"] = content_hashes
+        return object()
+
+    def make_visrag(
+        image_paths,
+        model_name,
+        revision,
+        batch_size,
+        *,
+        cache_dir,
+        content_hashes=None,
+    ):
+        captured["content_hashes"] = content_hashes
+        return object()
+
+    monkeypatch.setattr(visual_baselines, "ColPaliRetriever", make_colpali)
+    monkeypatch.setattr(visual_baselines, "VisRAGRetriever", make_visrag)
+    visual_baselines.build_visual_retriever(mode, repository, settings)
+    expected = [[str(path), sha] for path, sha in repository.corpus_image_hashes()]
+    assert captured["content_hashes"] == expected
 
 
 def test_cuda_oom_halves_batch_size_and_recovers(

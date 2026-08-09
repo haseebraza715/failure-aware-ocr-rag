@@ -7,11 +7,16 @@ from pathlib import Path
 from typing import Any
 
 from .asset_paths import AssetPathError, resolve_project_asset, to_relative_project_path
+from .asset_preparation import sha256_file
 from .chunking import build_page_chunks
 from .data import DatasetUnavailableError
 from .ohr_inventory import load_resolved_ohr_document_inventory
 from .settings import RetrievalSettings
 from .types import Phase0Example
+
+
+_IMAGE_HASH_PROGRESS_THRESHOLD = 256
+_IMAGE_HASH_PROGRESS_INTERVAL = 128
 
 
 def _normalise_dataset(dataset: str) -> str:
@@ -46,6 +51,7 @@ class BenchmarkRepository:
         self.manifest_sha256 = manifest_sha256
         self._records = {str(record["example_id"]): record for record in records}
         self._corpus_pages = [self._normalise_corpus_page(page) for page in corpus_pages]
+        self._verified_image_hashes: list[tuple[Path, str]] | None = None
         self._document_inventory = {
             str(doc_name): sorted({int(page_id) for page_id in page_ids})
             for doc_name, page_ids in (document_inventory or {}).items()
@@ -158,15 +164,78 @@ class BenchmarkRepository:
     def corpus_image_paths(self) -> list[Path]:
         return [Path(page["image_path"]) for page in self._corpus_pages]
 
+    def _image_hash_mismatch_error(self, page: dict[str, Any], expected: str, actual: str) -> DatasetUnavailableError:
+        page_id = str(page.get("corpus_id") or f"{page.get('doc_name')}:p{page.get('page_id')}")
+        return DatasetUnavailableError(
+            f"{self.dataset} {self.split} corpus image hash mismatch for {page_id} "
+            f"({page['image_path']}): manifest records {expected}, file content hashes to {actual}. "
+            "The image changed at the same path; re-render and update the locked asset manifest."
+        )
+
     def corpus_image_hashes(self) -> list[tuple[Path, str]] | None:
-        """Return per-page image SHA-256 hashes recorded in the locked manifest, if every page has one."""
-        hashes: list[tuple[Path, str]] = []
+        """Return the verified ordered per-page image SHA-256 mapping, or None to byte-hash.
+
+        Recorded manifest hashes are claims, not facts. Every recorded hash is
+        checked against the current image bytes by streaming each file before
+        any retrieval or cache lookup. A mismatch (including a replaced image
+        at the same path) fails closed so stale embeddings can never be reused.
+
+        Policy: when the manifest records a hash for every corpus page, all of
+        them are verified and the verified mapping is returned. If any page
+        lacks an image_sha256 field, the manifest carries no authoritative
+        identity and None is returned so callers fall back to hashing the
+        bytes themselves (OHR and ArXivQA manifests). A present but malformed
+        hash is a corrupt lock and fails closed.
+        """
+        if self._verified_image_hashes is not None:
+            return self._verified_image_hashes
+        recorded: list[tuple[dict[str, Any], Path, str]] = []
         for page in self._corpus_pages:
-            sha = page.get("image_sha256")
-            if not isinstance(sha, str) or not sha.strip():
+            raw = page.get("image_sha256")
+            if raw is None:
                 return None
-            hashes.append((Path(page["image_path"]), sha))
-        return hashes
+            if not isinstance(raw, str):
+                page_id = str(page.get("corpus_id") or f"{page.get('doc_name')}:p{page.get('page_id')}")
+                raise DatasetUnavailableError(
+                    f"{self.dataset} {self.split} corpus image {page_id} records a malformed "
+                    f"image_sha256 ({raw!r}); expected a 64-character hexadecimal string."
+                )
+            sha = raw.strip().lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", sha):
+                page_id = str(page.get("corpus_id") or f"{page.get('doc_name')}:p{page.get('page_id')}")
+                raise DatasetUnavailableError(
+                    f"{self.dataset} {self.split} corpus image {page_id} records a malformed "
+                    f"image_sha256 ({raw!r}); expected a 64-character hexadecimal string."
+                )
+            recorded.append((page, Path(page["image_path"]), sha))
+        total = len(recorded)
+        if total >= _IMAGE_HASH_PROGRESS_THRESHOLD:
+            print(
+                f"[faar] verifying {total} recorded image hashes for {self.dataset} {self.split}...",
+                flush=True,
+            )
+        verified: list[tuple[Path, str]] = []
+        for index, (page, image_path, expected) in enumerate(recorded, start=1):
+            try:
+                actual = sha256_file(image_path)
+            except OSError as exc:
+                page_id = str(page.get("corpus_id") or f"{page.get('doc_name')}:p{page.get('page_id')}")
+                raise DatasetUnavailableError(
+                    f"{self.dataset} {self.split} corpus image {page_id} ({image_path}) cannot be "
+                    f"hashed: {exc}. Expected manifest hash {expected}."
+                ) from exc
+            if actual != expected:
+                raise self._image_hash_mismatch_error(page, expected, actual)
+            verified.append((image_path, actual))
+            if total >= _IMAGE_HASH_PROGRESS_THRESHOLD and (
+                index % _IMAGE_HASH_PROGRESS_INTERVAL == 0 or index == total
+            ):
+                print(
+                    f"[faar] verified image hashes {index}/{total} for {self.dataset} {self.split}",
+                    flush=True,
+                )
+        self._verified_image_hashes = verified
+        return verified
 
     def corpus_image_page_map(self) -> dict[Path, tuple[str, int]]:
         return {
