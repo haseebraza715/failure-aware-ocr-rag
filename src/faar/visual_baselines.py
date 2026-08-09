@@ -28,6 +28,39 @@ class VisualRetriever(Protocol):
     def retrieve(self, query: str, top_k: int) -> list[tuple[Path, float]]: ...
 
 
+def _validate_batch_shape(
+    batch_shape: tuple[int, ...],
+    expected_rows: int,
+    reference: Any | None,
+    *,
+    what: str,
+) -> None:
+    if not batch_shape:
+        raise ValueError(f"{what} batch produced a scalar; expected {expected_rows} rows")
+    if batch_shape[0] != expected_rows:
+        raise ValueError(f"{what} batch produced {batch_shape[0]} rows, expected {expected_rows}")
+    if reference is not None and tuple(batch_shape[1:]) != tuple(reference.shape[1:]):
+        raise ValueError(
+            f"{what} batch produced per-row shape {tuple(batch_shape[1:])}, "
+            f"expected {tuple(reference.shape[1:])}"
+        )
+
+
+def _validate_batch_storage(batch: Any, reference: Any | None, *, what: str) -> None:
+    if reference is None:
+        return
+    if batch.dtype != reference.dtype:
+        raise ValueError(
+            f"{what} batch produced dtype {batch.dtype}, expected {reference.dtype}"
+        )
+    batch_device = getattr(batch, "device", None)
+    reference_device = getattr(reference, "device", None)
+    if batch_device != reference_device:
+        raise ValueError(
+            f"{what} batch produced device {batch_device}, expected {reference_device}"
+        )
+
+
 class ColPaliRetriever:
     def __init__(
         self,
@@ -64,53 +97,86 @@ class ColPaliRetriever:
         )
         enforce_memory_budget("ColPali model load", torch)
         self.processor = processor_class.from_pretrained(model_name, revision=revision)
-        embeddings = []
+        image_embeddings = None
         try:
             for start in range(0, len(self.image_paths), batch_size):
+                stop = min(start + batch_size, len(self.image_paths))
                 images = []
                 inputs = None
                 outputs = None
+                batch_embeddings = None
                 try:
-                    for path in self.image_paths[start : start + batch_size]:
+                    for path in self.image_paths[start:stop]:
                         with image_module.open(path) as source:
                             images.append(source.convert("RGB"))
                     enforce_memory_budget("ColPali batch", torch)
                     inputs = self.processor(images=images).to(self.device)
                     with torch.inference_mode():
                         outputs = self.model(**inputs)
-                    embeddings.append(outputs.embeddings.detach().cpu())
+                    batch_embeddings = outputs.embeddings.detach().cpu()
+                    _validate_batch_shape(
+                        batch_embeddings.shape,
+                        expected_rows=stop - start,
+                        reference=image_embeddings,
+                        what="ColPali embedding",
+                    )
+                    _validate_batch_storage(
+                        batch_embeddings, image_embeddings, what="ColPali embedding"
+                    )
+                    if image_embeddings is None:
+                        image_embeddings = torch.empty(
+                            (len(self.image_paths), *batch_embeddings.shape[1:]),
+                            dtype=batch_embeddings.dtype,
+                            device=batch_embeddings.device,
+                        )
+                    image_embeddings[start:stop] = batch_embeddings
                 finally:
                     for image in images:
                         image.close()
-                    del images, inputs, outputs
-            self.image_embeddings = torch.cat(embeddings, dim=0)
+                    del images, inputs, outputs, batch_embeddings
+            self.image_embeddings = image_embeddings
         finally:
-            del embeddings
+            del image_embeddings
             release_cuda_cache(torch)
 
     def retrieve(self, query: str, top_k: int) -> list[tuple[Path, float]]:
         torch = import_module("torch")
 
         inputs = self.processor(text=[query]).to(self.device)
+        query_embeddings = None
+        batch_scores = None
+        scores = None
         try:
             with torch.no_grad():
                 query_embeddings = self.model(**inputs).embeddings.detach().cpu()
-            score_slices = []
             for start in range(0, len(self.image_paths), self.score_batch_size):
                 stop = min(start + self.score_batch_size, len(self.image_paths))
                 enforce_memory_budget("ColPali score batch", torch)
-                score_slices.append(
-                    self.processor.score_retrieval(
-                        query_embeddings,
-                        self.image_embeddings[start:stop],
-                    )[0]
+                batch_scores = self.processor.score_retrieval(
+                    query_embeddings,
+                    self.image_embeddings[start:stop],
+                )[0]
+                _validate_batch_shape(
+                    batch_scores.shape,
+                    expected_rows=stop - start,
+                    reference=scores,
+                    what="ColPali score",
                 )
-            scores = torch.cat(score_slices, dim=0)
+                _validate_batch_storage(batch_scores, scores, what="ColPali score")
+                if scores is None:
+                    scores = torch.empty(
+                        (len(self.image_paths), *batch_scores.shape[1:]),
+                        dtype=batch_scores.dtype,
+                        device=batch_scores.device,
+                    )
+                scores[start:stop] = batch_scores
+            indices = torch.topk(
+                scores, k=min(top_k, len(self.image_paths))
+            ).indices.tolist()
+            return [(self.image_paths[index], float(scores[index])) for index in indices]
         finally:
-            del inputs
+            del inputs, query_embeddings, batch_scores, scores
             release_cuda_cache(torch)
-        indices = torch.topk(scores, k=min(top_k, len(self.image_paths))).indices.tolist()
-        return [(self.image_paths[index], float(scores[index])) for index in indices]
 
 
 class VisRAGRetriever:
@@ -151,22 +217,40 @@ class VisRAGRetriever:
             .eval()
         )
         enforce_memory_budget("VisRAG model load", torch)
-        chunks = []
+        image_embeddings = None
         try:
             for start in range(0, len(self.image_paths), self.batch_size):
+                stop = min(start + self.batch_size, len(self.image_paths))
                 images = []
+                batch_embeddings = None
                 try:
-                    for path in image_paths[start : start + self.batch_size]:
+                    for path in self.image_paths[start:stop]:
                         with image_module.open(path) as source:
                             images.append(source.convert("RGB"))
                     enforce_memory_budget("VisRAG batch", torch)
-                    chunks.append(self._encode(images))
+                    batch_embeddings = self._encode(images)
+                    _validate_batch_shape(
+                        batch_embeddings.shape,
+                        expected_rows=stop - start,
+                        reference=image_embeddings,
+                        what="VisRAG embedding",
+                    )
+                    _validate_batch_storage(
+                        batch_embeddings, image_embeddings, what="VisRAG embedding"
+                    )
+                    if image_embeddings is None:
+                        image_embeddings = np.empty(
+                            (len(self.image_paths), *batch_embeddings.shape[1:]),
+                            dtype=batch_embeddings.dtype,
+                        )
+                    image_embeddings[start:stop] = batch_embeddings
                 finally:
                     for image in images:
                         image.close()
-            self.image_embeddings = np.concatenate(chunks, axis=0)
+                    del images, batch_embeddings
+            self.image_embeddings = image_embeddings
         finally:
-            del chunks
+            del image_embeddings
             release_cuda_cache(torch)
 
     def _encode(self, values: list[Any]) -> np.ndarray:

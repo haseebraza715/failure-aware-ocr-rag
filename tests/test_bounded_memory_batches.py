@@ -449,6 +449,178 @@ def test_colpali_scores_corpus_in_bounded_batches(monkeypatch, tmp_path: Path) -
     assert chunked == unchunked
 
 
+def test_colpali_embeddings_never_cat_and_preserve_order(monkeypatch, tmp_path: Path) -> None:
+    paths = _image_paths(tmp_path, count=5)
+    released: list[str] = []
+
+    class OrderedModel:
+        def __init__(self, seq: int = 4, dim: int = 8) -> None:
+            self.seq = seq
+            self.dim = dim
+            self.encoded = 0
+
+        def __call__(self, **inputs):
+            n = inputs.get("_n", 1)
+            start = self.encoded * self.seq * self.dim
+            stop = start + n * self.seq * self.dim
+            self.encoded += n
+            return _FakeOutput(torch.arange(start, stop, dtype=torch.float32).reshape(n, self.seq, self.dim))
+
+        def to(self, device):
+            return self
+
+        def eval(self):
+            return self
+
+    model = OrderedModel()
+
+    class FakeModelClass:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            return model
+
+    class FakeProcessorClass:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            return _FakeProcessor()
+
+    def fail_cat(*args, **kwargs):
+        raise AssertionError("torch.cat must not be used for bounded batching")
+
+    monkeypatch.setattr(visual_baselines, "torch_device", lambda torch_module: torch.device("cpu"))
+    monkeypatch.setattr(visual_baselines, "select_dtype", lambda device, torch_module: torch.float32)
+    monkeypatch.setattr(visual_baselines, "release_cuda_cache", lambda torch_module: released.append("cache"))
+    monkeypatch.setattr("transformers.ColPaliForRetrieval", FakeModelClass)
+    monkeypatch.setattr("transformers.ColPaliProcessor", FakeProcessorClass)
+    monkeypatch.setattr(torch, "cat", fail_cat)
+
+    retriever = visual_baselines.ColPaliRetriever(paths, "mock/colpali", None, batch_size=2)
+
+    assert model.encoded == 5
+    assert retriever.image_embeddings.shape == (5, model.seq, model.dim)
+    expected = torch.arange(5 * model.seq * model.dim, dtype=torch.float32).reshape(5, model.seq, model.dim)
+    assert torch.equal(retriever.image_embeddings, expected)
+    assert "cache" in released
+
+
+def test_colpali_scores_never_cat_and_preserve_order(monkeypatch, tmp_path: Path) -> None:
+    paths = _image_paths(tmp_path, count=5)
+    processor = _FakeProcessor()
+    model = _FakeEmbeddingModel()
+    released: list[str] = []
+
+    class FakeModelClass:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            return model
+
+    class FakeProcessorClass:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            return processor
+
+    def fail_cat(*args, **kwargs):
+        raise AssertionError("torch.cat must not be used for bounded batching")
+
+    monkeypatch.setattr(visual_baselines, "torch_device", lambda torch_module: torch.device("cpu"))
+    monkeypatch.setattr(visual_baselines, "select_dtype", lambda device, torch_module: torch.float32)
+    monkeypatch.setattr(visual_baselines, "release_cuda_cache", lambda torch_module: released.append("cache"))
+    monkeypatch.setattr("transformers.ColPaliForRetrieval", FakeModelClass)
+    monkeypatch.setattr("transformers.ColPaliProcessor", FakeProcessorClass)
+    monkeypatch.setattr(torch, "cat", fail_cat)
+
+    retriever = visual_baselines.ColPaliRetriever(
+        paths, "mock/colpali", None, batch_size=2, score_batch_size=2
+    )
+    released.clear()
+
+    hits = retriever.retrieve("some question", top_k=5)
+    chunked = [(path, score) for path, score in hits]
+
+    assert processor.score_batches == [2, 2, 1]
+    assert all(count <= 2 for count in processor.score_batches)
+    assert "cache" in released
+
+    query_embeddings = model(**processor(text=["some question"])).embeddings.detach().cpu()
+    full_scores = processor.score_retrieval(query_embeddings, retriever.image_embeddings)[0]
+    indices = torch.topk(full_scores, k=5).indices.tolist()
+    unchunked = [(paths[index], float(full_scores[index])) for index in indices]
+
+    assert chunked == unchunked
+
+
+def test_visrag_embeddings_never_concatenate_and_preserve_order(monkeypatch, tmp_path: Path) -> None:
+    paths = _image_paths(tmp_path, count=5)
+    dim = 8
+    released: list[str] = []
+    encode_calls: list[tuple[int, int]] = []
+
+    def fake_encode(self, values: list) -> np.ndarray:
+        rows = len(values)
+        offset = sum(size for _, size in encode_calls)
+        encode_calls.append((offset, rows))
+        return np.arange(offset * dim, (offset + rows) * dim, dtype=np.float32).reshape(rows, dim)
+
+    class FakeTokenizerClass:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            return object()
+
+    class FakeModelClass:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            class Chain:
+                def to(self, device):
+                    return self
+
+                def eval(self):
+                    return self
+
+            return Chain()
+
+    def fail_concatenate(*args, **kwargs):
+        raise AssertionError("np.concatenate must not be used for bounded batching")
+
+    monkeypatch.setattr(visual_baselines, "torch_device", lambda torch_module: torch.device("cpu"))
+    monkeypatch.setattr(visual_baselines, "select_dtype", lambda device, torch_module: torch.float32)
+    monkeypatch.setattr(visual_baselines, "release_cuda_cache", lambda torch_module: released.append("cache"))
+    monkeypatch.setattr("transformers.AutoTokenizer", FakeTokenizerClass)
+    monkeypatch.setattr("transformers.AutoModel", FakeModelClass)
+    monkeypatch.setattr(visual_baselines.VisRAGRetriever, "_encode", fake_encode)
+    monkeypatch.setattr(np, "concatenate", fail_concatenate)
+
+    retriever = visual_baselines.VisRAGRetriever(paths, "mock/visrag", None, batch_size=2)
+
+    assert encode_calls == [(0, 2), (2, 2), (4, 1)]
+    assert retriever.image_embeddings.shape == (5, dim)
+    expected = np.arange(5 * dim, dtype=np.float32).reshape(5, dim)
+    assert np.array_equal(retriever.image_embeddings, expected)
+    assert "cache" in released
+
+
+def test_visual_batch_shape_validation_rejects_scalar_and_mismatch() -> None:
+    with pytest.raises(ValueError, match="produced a scalar"):
+        visual_baselines._validate_batch_shape((), 1, None, what="embedding")
+    with pytest.raises(ValueError, match="produced 2 rows, expected 1"):
+        visual_baselines._validate_batch_shape((2, 4), 1, None, what="embedding")
+    with pytest.raises(ValueError, match="per-row shape"):
+        visual_baselines._validate_batch_shape(
+            (1, 5),
+            1,
+            np.empty((2, 4), dtype=np.float32),
+            what="embedding",
+        )
+
+
+def test_visual_batch_storage_validation_rejects_dtype_mismatch() -> None:
+    with pytest.raises(ValueError, match="produced dtype"):
+        visual_baselines._validate_batch_storage(
+            np.empty((1, 4), dtype=np.float64),
+            np.empty((2, 4), dtype=np.float32),
+            what="embedding",
+        )
+
+
 def test_colpali_empty_corpus_fails_clearly(monkeypatch) -> None:
     monkeypatch.setattr(visual_baselines, "torch_device", lambda torch_module: "cpu")
     with pytest.raises(ValueError, match="non-empty visual corpus"):
