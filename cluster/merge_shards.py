@@ -15,7 +15,10 @@ validated by cluster/run_baselines.py on later resumes.
 The full shard set must be supplied: every index in range(num_shards)
 must be declared exactly once, and the merged example ids must match the
 baseline when one is given. A partial set is rejected before any shard
-metadata is cleared or the merged file is published.
+metadata is cleared or the merged file is published. An entirely empty
+merge is rejected unless an authoritative expected-ID source explicitly
+declares an empty selection; an empty experiment result is never published
+as an apparently complete run.
 """
 
 from __future__ import annotations
@@ -116,9 +119,43 @@ def _validate_shard_set(
         )
 
 
+def _validated_baseline_ids(payload: dict, path: Path) -> list[str]:
+    """Derive expected example ids from a B0 result, validating its structure.
+
+    The payload must be a JSON object whose rows is a list of objects, each
+    with a unique nonempty example_id. A malformed baseline is never treated
+    as an authoritative expected-ID source.
+    """
+    if not isinstance(payload, dict):
+        raise SystemExit(f"baseline result must be a JSON object: {path}")
+    rows = payload.get("rows")
+    if not isinstance(rows, list):
+        raise SystemExit(f"baseline result has no rows list: {path}")
+    ids: list[str] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise SystemExit(f"baseline row {index} is not an object: {path}")
+        value = row.get("example_id")
+        if not isinstance(value, str) or not value.strip():
+            raise SystemExit(f"baseline row {index} has a missing or empty example_id: {path}")
+        ids.append(value.strip())
+    if len(ids) != len(set(ids)):
+        raise SystemExit(f"baseline contains duplicate example_ids: {path}")
+    return ids
+
+
+def _validate_expected_id_source(expected_example_ids: list[str]) -> None:
+    for index, value in enumerate(expected_example_ids):
+        if not isinstance(value, str) or not value.strip():
+            raise SystemExit(f"expected example id at index {index} is empty.")
+    if len(expected_example_ids) != len(set(expected_example_ids)):
+        raise SystemExit("expected example ids contain duplicates.")
+
+
 def _validate_expected_ids(
     merged_rows: list[dict[str, Any]], expected_example_ids: list[str]
 ) -> None:
+    _validate_expected_id_source(expected_example_ids)
     merged_ids = [str(row["example_id"]) for row in merged_rows]
     expected_set = set(expected_example_ids)
     merged_set = set(merged_ids)
@@ -128,6 +165,17 @@ def _validate_expected_ids(
         raise SystemExit(
             f"merged rows do not match the expected example ids from the baseline "
             f"(missing {len(missing)}, extra {len(extra)})."
+        )
+
+
+def _validate_merged_not_empty(rows: list[dict[str, Any]], expected_example_ids: list[str] | None) -> None:
+    if rows:
+        return
+    if expected_example_ids is None:
+        raise SystemExit(
+            "merged shards contain no rows; refusing to publish an entirely empty result. "
+            "An empty merge is only allowed when an authoritative expected-ID source "
+            "explicitly declares an empty selection."
         )
 
 
@@ -169,6 +217,8 @@ def merge_shards(
         rows.extend(payload["rows"])
     if expected_example_ids is not None:
         _validate_expected_ids(rows, expected_example_ids)
+    else:
+        _validate_merged_not_empty(rows, expected_example_ids)
     examples_summary = summarize_examples(rows)
     api = summarize_api_usage(rows)
     merged = {
@@ -207,13 +257,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.baseline is not None:
         if not args.baseline.is_file():
             raise SystemExit(f"baseline result does not exist: {args.baseline}")
-        baseline_payload = json.loads(args.baseline.read_text(encoding="utf-8"))
-        baseline_rows = list(baseline_payload.get("rows", []))
-        expected_example_ids = [str(row.get("example_id", "")) for row in baseline_rows]
+        try:
+            baseline_payload = json.loads(args.baseline.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise SystemExit(f"baseline result is unreadable JSON: {args.baseline}: {exc}") from exc
+        expected_example_ids = _validated_baseline_ids(baseline_payload, args.baseline)
     payload = merge_shards(args.shards, expected_example_ids=expected_example_ids)
     if baseline_payload is not None:
         try:
-            payload["summary"]["harm_rate"] = _harm_rate(payload["rows"], baseline_rows)
+            payload["summary"]["harm_rate"] = _harm_rate(payload["rows"], baseline_payload["rows"])
         except ValueError as exc:
             raise SystemExit(f"cannot compute harm_rate against baseline {args.baseline}: {exc}") from exc
     atomic_write_text(args.out, json.dumps(payload, indent=2) + "\n")

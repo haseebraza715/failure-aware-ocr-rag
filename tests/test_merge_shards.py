@@ -228,3 +228,100 @@ def test_merge_rejects_rows_missing_from_baseline_expected_ids(tmp_path: Path) -
     with pytest.raises(SystemExit) as excinfo:
         merge_shards.merge_shards([zero, one], expected_example_ids=["e1", "e2"])
     assert "do not match the expected example ids" in str(excinfo.value)
+
+
+def test_merge_rejects_entirely_empty_shard_set(tmp_path: Path) -> None:
+    zero = tmp_path / "shard0.json"
+    one = tmp_path / "shard1.json"
+    _shard(zero, [], shard_index=0, num_shards=2)
+    _shard(one, [], shard_index=1, num_shards=2)
+    with pytest.raises(SystemExit) as excinfo:
+        merge_shards.merge_shards([zero, one])
+    assert "no rows" in str(excinfo.value)
+    assert "entirely empty result" in str(excinfo.value)
+
+
+def test_merge_all_empty_does_not_create_output(tmp_path: Path) -> None:
+    zero = tmp_path / "shard0.json"
+    one = tmp_path / "shard1.json"
+    _shard(zero, [], shard_index=0, num_shards=2)
+    _shard(one, [], shard_index=1, num_shards=2)
+    out = tmp_path / "b2_merged.json"
+    with pytest.raises(SystemExit, match="entirely empty result"):
+        merge_shards.main(["--out", str(out), str(zero), str(one)])
+    assert not out.exists()
+
+
+def test_merge_all_empty_does_not_overwrite_existing_output(tmp_path: Path) -> None:
+    zero = tmp_path / "shard0.json"
+    one = tmp_path / "shard1.json"
+    _shard(zero, [], shard_index=0, num_shards=2)
+    _shard(one, [], shard_index=1, num_shards=2)
+    out = tmp_path / "b2_merged.json"
+    out.write_text("existing", encoding="utf-8")
+    with pytest.raises(SystemExit, match="entirely empty result"):
+        merge_shards.main(["--out", str(out), str(zero), str(one)])
+    assert out.read_text(encoding="utf-8") == "existing"
+
+
+def test_merge_allows_empty_merge_only_with_explicit_empty_expected_ids(tmp_path: Path) -> None:
+    zero = tmp_path / "shard0.json"
+    one = tmp_path / "shard1.json"
+    _shard(zero, [], shard_index=0, num_shards=2)
+    _shard(one, [], shard_index=1, num_shards=2)
+    merged = merge_shards.merge_shards([zero, one], expected_example_ids=[])
+    assert merged["rows"] == []
+    assert merged["summary"]["EM"] == 0.0
+    assert merged["run_spec"]["shard_index"] is None
+
+
+def test_merge_rejects_expected_ids_with_duplicates(tmp_path: Path) -> None:
+    zero = tmp_path / "shard0.json"
+    one = tmp_path / "shard1.json"
+    _shard(zero, [_row("e1")], shard_index=0, num_shards=2)
+    _shard(one, [_row("e2")], shard_index=1, num_shards=2)
+    with pytest.raises(SystemExit, match="expected example ids contain duplicates"):
+        merge_shards.merge_shards([zero, one], expected_example_ids=["e1", "e1"])
+    with pytest.raises(SystemExit, match="expected example id at index 0 is empty"):
+        merge_shards.merge_shards([zero, one], expected_example_ids=["", "e2"])
+
+
+def test_merge_rejects_baseline_with_duplicate_ids(tmp_path: Path) -> None:
+    zero = tmp_path / "shard0.json"
+    one = tmp_path / "shard1.json"
+    baseline = tmp_path / "b0.json"
+    _shard(zero, [_row("e1")], shard_index=0, num_shards=2)
+    _shard(one, [_row("e2")], shard_index=1, num_shards=2)
+    _shard(baseline, [_row("e1"), _row("e1")], shard_index=0)
+    out = tmp_path / "merged.json"
+    with pytest.raises(SystemExit, match="duplicate example_ids"):
+        merge_shards.main(["--out", str(out), "--baseline", str(baseline), str(zero), str(one)])
+    assert not out.exists()
+
+
+def test_merge_rejects_baseline_with_missing_or_empty_ids(tmp_path: Path) -> None:
+    zero = tmp_path / "shard0.json"
+    one = tmp_path / "shard1.json"
+    baseline = tmp_path / "b0.json"
+    _shard(zero, [_row("e1")], shard_index=0, num_shards=2)
+    _shard(one, [_row("e2")], shard_index=1, num_shards=2)
+    empty_id = _row("e1")
+    empty_id["example_id"] = ""
+    _shard(baseline, [empty_id], shard_index=0)
+    out = tmp_path / "merged.json"
+    with pytest.raises(SystemExit, match="missing or empty example_id"):
+        merge_shards.main(["--out", str(out), "--baseline", str(baseline), str(zero), str(one)])
+    assert not out.exists()
+
+
+def test_merge_rejects_baseline_that_is_not_an_object(tmp_path: Path) -> None:
+    zero = tmp_path / "shard0.json"
+    one = tmp_path / "shard1.json"
+    baseline = tmp_path / "b0.json"
+    _shard(zero, [_row("e1")], shard_index=0, num_shards=2)
+    _shard(one, [_row("e2")], shard_index=1, num_shards=2)
+    baseline.write_text("[1, 2]", encoding="utf-8")
+    out = tmp_path / "merged.json"
+    with pytest.raises(SystemExit, match="must be a JSON object"):
+        merge_shards.main(["--out", str(out), "--baseline", str(baseline), str(zero), str(one)])
+    assert not out.exists()
