@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import sys
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
@@ -215,6 +216,25 @@ def test_stops_immediately_on_stage_failure(monkeypatch, tmp_path: Path) -> None
         run_baselines.main(["--project-root", str(tmp_path)])
     assert "stage b1 exited with code 1" in str(excinfo.value)
     assert [_stage_from_command(command) for command in calls] == ["b0", "b1"]
+
+
+def test_cancellation_stops_future_stages(monkeypatch, tmp_path: Path) -> None:
+    _gate_lock(tmp_path)
+    args = _args(tmp_path)
+    monkeypatch.setattr(run_baselines, "_pending_signal", None)
+    calls = []
+
+    def fake(command, cwd):
+        calls.append(command)
+        stage = _stage_from_command(command)
+        _write_output(tmp_path, stage, args, IDS)
+        run_baselines._pending_signal = signal.SIGTERM
+        return 0
+
+    monkeypatch.setattr(run_baselines, "run_child", fake)
+    result = run_baselines.main(["--project-root", str(tmp_path)])
+    assert result == 128 + signal.SIGTERM
+    assert [_stage_from_command(command) for command in calls] == ["b0"]
 
 
 def test_resume_reuses_valid_outputs_without_launching(monkeypatch, tmp_path: Path, capsys) -> None:

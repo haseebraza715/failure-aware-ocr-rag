@@ -266,6 +266,54 @@ def test_run_child_propagates_exit_code(tmp_path: Path) -> None:
     assert code == 7
 
 
+def test_signal_with_no_child_yet_is_remembered(monkeypatch) -> None:
+    monkeypatch.setattr(launcher, "_CHILD", None)
+    monkeypatch.setattr(launcher, "_pending_signal", None)
+    monkeypatch.setattr(launcher, "_forwarded_signal", None)
+    launcher._forward(signal.SIGINT, None)
+    assert launcher._pending_signal == signal.SIGINT
+    assert launcher._forwarded_signal == signal.SIGINT
+    assert launcher._CHILD is None
+
+
+def test_pending_signal_before_popen_prevents_spawn(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(launcher, "_pending_signal", signal.SIGTERM)
+    monkeypatch.setattr(launcher, "_forwarded_signal", None)
+    spawns = []
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda *args, **kwargs: spawns.append(args))
+    code = launcher.run_child([sys.executable, "-c", "pass"], cwd=tmp_path)
+    assert code == 128 + signal.SIGTERM
+    assert spawns == []
+
+
+def test_forwarded_signal_child_exits_zero_yields_128_plus_signal(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(launcher, "_CHILD", None)
+    monkeypatch.setattr(launcher, "_pending_signal", None)
+    monkeypatch.setattr(launcher, "_forwarded_signal", None)
+    forwarded = []
+
+    class _FakeProc:
+        def poll(self) -> None:
+            return None
+
+        def send_signal(self, signum: int) -> None:
+            forwarded.append(signum)
+
+        def wait(self) -> int:
+            return 0
+
+    def _popen_with_delayed_signal(*args, **kwargs) -> _FakeProc:
+        os.kill(os.getpid(), signal.SIGTERM)
+        return _FakeProc()
+
+    monkeypatch.setattr(launcher.subprocess, "Popen", _popen_with_delayed_signal)
+    code = launcher.run_child([sys.executable, "-c", "pass"], cwd=tmp_path)
+    assert code == 128 + signal.SIGTERM
+    assert forwarded == [signal.SIGTERM]
+    assert launcher._pending_signal == signal.SIGTERM
+    assert launcher._forwarded_signal == signal.SIGTERM
+
+
 def _write_fake_runpy(tmp_path: Path) -> None:
     (tmp_path / "run.py").write_text(
         "\n".join(
@@ -327,7 +375,7 @@ def test_launcher_forwards_sigterm_and_propagates_exit(tmp_path: Path) -> None:
     try:
         assert _wait_for_ready(out, proc), f"child never became ready; stderr={err.read_text()}"
         proc.send_signal(signal.SIGTERM)
-        assert proc.wait(timeout=20) == 0
+        assert proc.wait(timeout=20) == 128 + signal.SIGTERM
     finally:
         if proc.poll() is None:
             proc.kill()

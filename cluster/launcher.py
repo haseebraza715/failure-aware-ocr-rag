@@ -238,27 +238,46 @@ def build_child_command(root: Path, run_args: list[str], python_executable: str 
     return [python, str(run_py), *run_args]
 
 
+_SIGNALS = (signal.SIGTERM, signal.SIGINT)
+
 _CHILD: subprocess.Popen[str] | None = None
+_pending_signal: int | None = None
+_forwarded_signal: int | None = None
+
+
+def _forward(signum: int, frame: Any) -> None:
+    global _pending_signal, _forwarded_signal
+    _pending_signal = signum
+    _forwarded_signal = signum
+    child = _CHILD
+    if child is not None and child.poll() is None:
+        try:
+            child.send_signal(signum)
+        except ProcessLookupError:
+            pass
 
 
 def run_child(argv: list[str], *, cwd: Path) -> int:
     global _CHILD
-
-    def forward(signum: int, frame: Any) -> None:
-        child = _CHILD
-        if child is not None and child.poll() is None:
+    if _pending_signal is not None:
+        return 128 + _pending_signal
+    previous = {}
+    for signum in _SIGNALS:
+        previous[signum] = signal.getsignal(signum)
+        signal.signal(signum, _forward)
+    try:
+        if _pending_signal is not None:
+            return 128 + _pending_signal
+        _CHILD = subprocess.Popen(argv, cwd=str(cwd), env=os.environ.copy())
+        if _pending_signal is not None:
             try:
-                child.send_signal(signum)
+                _CHILD.send_signal(_pending_signal)
             except ProcessLookupError:
                 pass
-
-    previous = {}
-    for signum in (signal.SIGTERM, signal.SIGINT):
-        previous[signum] = signal.getsignal(signum)
-        signal.signal(signum, forward)
-    try:
-        _CHILD = subprocess.Popen(argv, cwd=str(cwd), env=os.environ.copy())
-        return _CHILD.wait()
+        child_code = _CHILD.wait()
+        if _forwarded_signal is not None:
+            return 128 + _forwarded_signal
+        return child_code
     finally:
         _CHILD = None
         for signum, handler in previous.items():

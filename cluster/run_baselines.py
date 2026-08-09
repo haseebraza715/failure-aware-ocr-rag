@@ -50,7 +50,36 @@ RUN_SPEC_MATCH_KEYS = (
 
 SUMMARY_KEYS = ("EM", "F1", "vlm_rate", "harm_rate", "cost_usd", "runtime_sec")
 
+_SIGNALS = (signal.SIGTERM, signal.SIGINT)
+
 _CHILD: subprocess.Popen[str] | None = None
+_pending_signal: int | None = None
+_forwarded_signal: int | None = None
+
+
+def _forward(signum: int, frame: object) -> None:
+    global _pending_signal, _forwarded_signal
+    _pending_signal = signum
+    _forwarded_signal = signum
+    child = _CHILD
+    if child is not None and child.poll() is None:
+        try:
+            child.send_signal(signum)
+        except ProcessLookupError:
+            pass
+
+
+def _install_signal_handlers() -> dict[int, object]:
+    previous = {}
+    for signum in _SIGNALS:
+        previous[signum] = signal.getsignal(signum)
+        signal.signal(signum, _forward)
+    return previous
+
+
+def _restore_signal_handlers(previous: dict[int, object]) -> None:
+    for signum, handler in previous.items():
+        signal.signal(signum, handler)
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -325,26 +354,25 @@ def _validate_output_scope(value: str, label: str) -> None:
 
 def run_child(argv: list[str], cwd: Path) -> int:
     global _CHILD
-
-    def forward(signum: int, frame: object) -> None:
-        child = _CHILD
-        if child is not None and child.poll() is None:
+    if _pending_signal is not None:
+        return 128 + _pending_signal
+    previous = _install_signal_handlers()
+    try:
+        if _pending_signal is not None:
+            return 128 + _pending_signal
+        _CHILD = subprocess.Popen(argv, cwd=str(cwd), env=os.environ.copy())
+        if _pending_signal is not None:
             try:
-                child.send_signal(signum)
+                _CHILD.send_signal(_pending_signal)
             except ProcessLookupError:
                 pass
-
-    previous = {}
-    for signum in (signal.SIGTERM, signal.SIGINT):
-        previous[signum] = signal.getsignal(signum)
-        signal.signal(signum, forward)
-    try:
-        _CHILD = subprocess.Popen(argv, cwd=str(cwd), env=os.environ.copy())
-        return _CHILD.wait()
+        child_code = _CHILD.wait()
+        if _forwarded_signal is not None:
+            return 128 + _forwarded_signal
+        return child_code
     finally:
         _CHILD = None
-        for signum, handler in previous.items():
-            signal.signal(signum, handler)
+        _restore_signal_handlers(previous)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -371,32 +399,42 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     b0_path = output_path(root, args.dataset, args.split, "b0")
     baseline_payload: dict | None = None
-    for stage in STAGE_ORDER:
-        gate_lock = validate_gate_lock(root) if stage == "b2" else None
-        out = output_path(root, args.dataset, args.split, stage)
-        baseline = b0_path if stage != "b0" else None
-        if out.exists():
-            if not args.resume:
-                raise SystemExit(f"Refusing to run: target output already exists: {out}")
-            payload = validate_output(out, stage, args, baseline_payload)
-            print(f"[run-baselines] reuse {stage}: {out}", flush=True)
-        else:
-            command = launcher_command(args, stage_run_args(stage, args, out, baseline))
-            print(f"[run-baselines] launch {stage}: {out}", flush=True)
-            try:
-                code = run_child(command, root)
-            except OSError as exc:
-                raise SystemExit(f"failed to launch {stage}: {exc}") from exc
-            if code != 0:
-                raise SystemExit(f"stage {stage} exited with code {code}; stopping.")
-            payload = validate_output(out, stage, args, baseline_payload)
-            print(f"[run-baselines] done {stage}: {out}", flush=True)
-        if gate_lock is not None and payload["run_spec"].get("gate_threshold") != float(gate_lock["threshold"]):
-            raise SystemExit(f"{out} run_spec.gate_threshold does not match the locked B2 threshold.")
-        if stage == "b0":
-            baseline_payload = payload
-    print("[run-baselines] all stages complete: B0 B1 B2 B3 B4", flush=True)
-    return 0
+    previous = _install_signal_handlers()
+    try:
+        for stage in STAGE_ORDER:
+            if _pending_signal is not None:
+                return 128 + _pending_signal
+            gate_lock = validate_gate_lock(root) if stage == "b2" else None
+            out = output_path(root, args.dataset, args.split, stage)
+            baseline = b0_path if stage != "b0" else None
+            if out.exists():
+                if not args.resume:
+                    raise SystemExit(f"Refusing to run: target output already exists: {out}")
+                payload = validate_output(out, stage, args, baseline_payload)
+                print(f"[run-baselines] reuse {stage}: {out}", flush=True)
+            else:
+                command = launcher_command(args, stage_run_args(stage, args, out, baseline))
+                print(f"[run-baselines] launch {stage}: {out}", flush=True)
+                try:
+                    code = run_child(command, root)
+                except OSError as exc:
+                    raise SystemExit(f"failed to launch {stage}: {exc}") from exc
+                if _pending_signal is not None:
+                    return 128 + _pending_signal
+                if code != 0:
+                    raise SystemExit(f"stage {stage} exited with code {code}; stopping.")
+                payload = validate_output(out, stage, args, baseline_payload)
+                print(f"[run-baselines] done {stage}: {out}", flush=True)
+            if gate_lock is not None and payload["run_spec"].get("gate_threshold") != float(gate_lock["threshold"]):
+                raise SystemExit(f"{out} run_spec.gate_threshold does not match the locked B2 threshold.")
+            if stage == "b0":
+                baseline_payload = payload
+        if _pending_signal is not None:
+            return 128 + _pending_signal
+        print("[run-baselines] all stages complete: B0 B1 B2 B3 B4", flush=True)
+        return 0
+    finally:
+        _restore_signal_handlers(previous)
 
 
 if __name__ == "__main__":
