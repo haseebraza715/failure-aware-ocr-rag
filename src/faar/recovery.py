@@ -26,6 +26,21 @@ from .settings import AppSettings
 from .types import RetrievalHit
 
 
+def _media_type_for_image(data: bytes) -> str:
+    header = data[:16]
+    if header.startswith(b"\x89PNG"):
+        return "image/png"
+    if header.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if header.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if len(header) >= 12 and header[:4] == b"RIFF" and header[8:12] == b"WEBP":
+        return "image/webp"
+    if header.startswith(b"%PDF"):
+        return "application/pdf"
+    return "image/png"
+
+
 @lru_cache(maxsize=1)
 def _load_byt5(model_name: str, revision: str | None):
     tokenizer = AutoTokenizer.from_pretrained(model_name, revision=revision)
@@ -114,11 +129,13 @@ class VisualFallback:
         request_id = str(uuid4())
         content: list[dict] = [{"type": "text", "text": f"Answer the question using only the page image.\n\nQuestion: {question}"}]
         for path in image_paths:
-            encoded = base64.b64encode(path.read_bytes()).decode("utf-8")
+            raw = path.read_bytes()
+            encoded = base64.b64encode(raw).decode("utf-8")
+            media_type = _media_type_for_image(raw)
             content.append(
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{encoded}"},
+                    "image_url": {"url": f"data:{media_type};base64,{encoded}"},
                 }
             )
         try:
@@ -231,11 +248,13 @@ class VisualFallback:
             }
         ]
         for path in image_paths:
-            encoded = base64.b64encode(path.read_bytes()).decode("utf-8")
+            raw = path.read_bytes()
+            encoded = base64.b64encode(raw).decode("utf-8")
+            media_type = _media_type_for_image(raw)
             content.append(
                 {
                     "type": "image",
-                    "source": {"type": "base64", "media_type": "image/png", "data": encoded},
+                    "source": {"type": "base64", "media_type": media_type, "data": encoded},
                 }
             )
         self.logger.log(
