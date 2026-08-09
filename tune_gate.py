@@ -26,7 +26,7 @@ def main() -> None:
     search["source_results"] = str(args.baseline)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(search, indent=2) + "\n")
-    write_locked_threshold(args.lock, search)
+    write_locked_threshold(args.lock, search, source=args.baseline)
     print(json.dumps(search, indent=2))
 
 

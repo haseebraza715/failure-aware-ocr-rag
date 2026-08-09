@@ -6,6 +6,7 @@ models or calling external services.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -64,6 +65,43 @@ def _b0_result(
     payload["profile"] = "naive_rag"
     payload["run_spec"] = run_spec
     return payload
+
+
+def _locked_gate_threshold(tmp_path: Path, **overrides: Any) -> None:
+    threshold_path = tmp_path / "config/gate_threshold.json"
+    threshold_path.parent.mkdir(parents=True)
+    source = tmp_path / "results/baselines/ohrbench/val/b0.json"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        json.dumps(
+            {
+                "profile": "naive_rag",
+                "run_spec": {
+                    "profile": "naive_rag",
+                    "dataset": "ohrbench",
+                    "split": "val",
+                    "model_provenance": {"vlm": {"model": "gpt-4o-2024-11-20"}},
+                },
+                "rows": [],
+            }
+        )
+    )
+    payload = {
+        "source_split": "val",
+        "source_path": str(source),
+        "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "dataset": "ohrbench",
+        "split": "val",
+        "model_provenance": {"vlm": {"model": "gpt-4o-2024-11-20"}},
+        "gate_source_metric": "em",
+        "signal": "BGE-reranker-v2-m3 top-1 score",
+        "threshold": 0.4,
+        "precision": 0.8,
+        "recall": 0.75,
+        "f1": 0.77,
+    }
+    payload.update(overrides)
+    threshold_path.write_text(json.dumps(payload))
 
 
 def _isolate_cli(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AppSettings:
@@ -274,11 +312,7 @@ def test_gate_dependent_profile_rejects_sub_bar_locked_threshold(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "config/gate_threshold.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps({"source_split": "val", "threshold": 0.4, "precision": 0.6, "recall": 0.7})
-    )
+    _locked_gate_threshold(tmp_path, precision=0.6)
     settings = AppSettings(project_root=tmp_path)
     calls: list[Any] = []
     monkeypatch.setattr(run, "run_profile", lambda *args, **kwargs: calls.append(args) or [])
@@ -300,11 +334,7 @@ def test_gate_dependent_result_records_locked_threshold_and_null_harm(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    threshold_path = tmp_path / "config/gate_threshold.json"
-    threshold_path.parent.mkdir(parents=True)
-    threshold_path.write_text(
-        json.dumps({"source_split": "val", "threshold": 0.4, "precision": 0.8, "recall": 0.75})
-    )
+    _locked_gate_threshold(tmp_path)
     settings = AppSettings(project_root=tmp_path)
     monkeypatch.setattr(
         run,

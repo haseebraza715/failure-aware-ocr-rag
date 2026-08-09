@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import signal
 import sys
@@ -21,14 +22,43 @@ SPLIT = "test"
 SEED = 42
 IDS = ["id-a", "id-b"]
 
+_BASE_MODEL_PROVENANCE = {
+    "embedding": {"repository": "nvidia/NV-Embed-v2", "revision": "locked"},
+    "reranker": {"repository": "BAAI/bge-reranker-v2-m3", "revision": "locked"},
+}
+
 
 def _gate_lock(root: Path) -> None:
     config = root / "config"
     config.mkdir(parents=True, exist_ok=True)
+    source = root / "results/baselines/ohrbench/val/b0.json"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(
+        json.dumps(
+            {
+                "profile": "naive_rag",
+                "run_spec": {
+                    "profile": "naive_rag",
+                    "dataset": DATASET,
+                    "split": "val",
+                    "model_provenance": _BASE_MODEL_PROVENANCE,
+                },
+                "rows": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     (config / "gate_threshold.json").write_text(
         json.dumps(
             {
                 "source_split": "val",
+                "source_path": str(source),
+                "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                "dataset": DATASET,
+                "split": "val",
+                "model_provenance": _BASE_MODEL_PROVENANCE,
+                "gate_source_metric": "em",
                 "signal": "BGE-reranker-v2-m3 top-1 score",
                 "threshold": 0.5,
                 "precision": 0.8,

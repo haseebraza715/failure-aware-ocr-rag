@@ -72,7 +72,7 @@ def _isolate_cli(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AppSettings
     monkeypatch.setattr(AppSettings, "validate_runtime_paths", lambda self: None)
     monkeypatch.setattr(run, "_require_key_for_paid_vlm", lambda backend: None)
     monkeypatch.setattr(run, "_validate_baseline", lambda *args, **kwargs: None)
-    monkeypatch.setattr(run, "_require_gate_threshold", lambda settings, profile: None)
+    monkeypatch.setattr(run, "_require_gate_threshold", lambda settings, profile, run_spec: None)
     return settings
 
 

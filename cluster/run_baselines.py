@@ -179,14 +179,25 @@ def launcher_command(args: argparse.Namespace, run_args: list[str]) -> list[str]
     return command
 
 
-def validate_gate_lock(root: Path) -> dict:
+def validate_gate_lock(
+    root: Path,
+    *,
+    dataset: str | None = None,
+    split: str | None = None,
+    model_provenance: dict | None = None,
+) -> dict:
     path = root / "config" / "gate_threshold.json"
     if not path.is_file():
         raise SystemExit(
             f"B2 requires a locked gate threshold at {path}; run tune_gate.py on validation results first."
         )
     try:
-        return require_paper_gate_threshold(path)
+        return require_paper_gate_threshold(
+            path,
+            dataset=dataset,
+            split=split,
+            model_provenance=model_provenance,
+        )
     except (OSError, ValueError) as exc:
         raise SystemExit(f"B2 gate lock is invalid at {path}: {exc}") from exc
 
@@ -426,7 +437,19 @@ def main(argv: list[str] | None = None) -> int:
         for stage in STAGE_ORDER:
             if _pending_signal is not None:
                 return 128 + _pending_signal
-            gate_lock = validate_gate_lock(root) if stage == "b2" else None
+            gate_lock = None
+            if stage == "b2":
+                baseline_mp = (
+                    baseline_payload["run_spec"].get("model_provenance")
+                    if baseline_payload is not None
+                    else None
+                )
+                gate_lock = validate_gate_lock(
+                    root,
+                    dataset=args.dataset,
+                    split=args.split,
+                    model_provenance=baseline_mp,
+                )
             out = output_path(root, args.dataset, args.split, stage)
             baseline = b0_path if stage != "b0" else None
             if out.exists():

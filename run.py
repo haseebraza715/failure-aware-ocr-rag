@@ -48,12 +48,34 @@ BASELINE_MATCH_KEYS = (
     "model_provenance",
 )
 
+ABLATION_PROFILE_MAP = {
+    "no_gate": "faar_no_gate",
+    "no_diagnosis": "faar_no_diagnosis",
+    "no_wordlevel_llm": "faar_symspell",
+    "no_semantic_retry": "faar_no_backtrack",
+}
 
-def _require_gate_threshold(settings: AppSettings, profile: str) -> float | None:
+
+def _run_profile_for_args(args: argparse.Namespace) -> str:
+    if args.mode in {"colpali", "visrag"}:
+        return args.mode
+    if args.mode == "faar":
+        return "faar_full"
+    if args.ablate:
+        return ABLATION_PROFILE_MAP[args.ablate]
+    return BASELINE_MAP[(args.gate or "on", args.recovery or "off")][1]
+
+
+def _require_gate_threshold(settings: AppSettings, profile: str, run_spec: dict[str, Any]) -> float | None:
     if profile in GATE_BYPASS_PROFILES:
         return None
     try:
-        payload = require_paper_gate_threshold(settings.gate_threshold_path)
+        payload = require_paper_gate_threshold(
+            settings.gate_threshold_path,
+            dataset=str(run_spec.get("dataset") or "") or None,
+            split=str(run_spec.get("split") or "") or None,
+            model_provenance=run_spec.get("model_provenance") or None,
+        )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     threshold = float(payload["threshold"])
@@ -139,7 +161,7 @@ def _run_profile_to_result(
     num_shards: int | None = None,
     publish: bool = True,
 ) -> dict[str, Any]:
-    run_spec["gate_threshold"] = _require_gate_threshold(settings, profile)
+    run_spec["gate_threshold"] = _require_gate_threshold(settings, profile, run_spec)
     start = time.perf_counter()
     rows = run_profile(
         settings,
@@ -348,6 +370,7 @@ def main() -> None:
     settings = _settings_from_args(args)
     settings.validate_runtime_paths()
     run_spec = {
+        "profile": _run_profile_for_args(args),
         "dataset": args.dataset,
         "split": args.split,
         "seed": args.seed,
@@ -416,12 +439,7 @@ def main() -> None:
         return
 
     if args.ablate:
-        ablation_profile = {
-            "no_gate": "faar_no_gate",
-            "no_diagnosis": "faar_no_diagnosis",
-            "no_wordlevel_llm": "faar_symspell",
-            "no_semantic_retry": "faar_no_backtrack",
-        }[args.ablate]
+        ablation_profile = ABLATION_PROFILE_MAP[args.ablate]
         _validate_baseline(
             args.baseline,
             label=f"--ablate {args.ablate}",

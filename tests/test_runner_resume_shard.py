@@ -404,7 +404,7 @@ def _prepare_run_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     )
     graph = FakeGraph()
     monkeypatch.setattr("faar.experiment_runner.build_graph", lambda settings, **kwargs: graph)
-    monkeypatch.setattr(run, "_require_gate_threshold", lambda settings, profile: None)
+    monkeypatch.setattr(run, "_require_gate_threshold", lambda settings, profile, run_spec: None)
     return graph
 
 
