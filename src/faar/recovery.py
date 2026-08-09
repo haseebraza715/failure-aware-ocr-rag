@@ -69,10 +69,12 @@ class VisualFallback:
         self.settings = settings
         self.logger = make_vlm_logger(settings.project_root, enabled=settings.recovery.log_vlm_calls)
 
+    _PAID_BACKENDS = {"openai", "claude-sonnet-4-5", "anthropic", "claude"}
+
     def answer(self, question: str, image_paths: list[Path], fallback_context: str) -> dict:
-        if not self.settings.recovery.api_enabled and self.settings.recovery.vlm_backend == "openai":
+        if not self.settings.recovery.api_enabled and self.settings.recovery.vlm_backend in self._PAID_BACKENDS:
             return {
-                "backend": "openai",
+                "backend": "openai" if self.settings.recovery.vlm_backend == "openai" else "anthropic",
                 "status": "skipped",
                 "reason": "api_disabled",
                 "answer": "",

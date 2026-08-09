@@ -247,3 +247,57 @@ def test_anthropic_success_carries_normalized_api_usage(
     assert records[-1]["cost_usd"] == round(
         estimate_anthropic_cost_usd("claude-sonnet-4-5", 100, 20), 8
     )
+
+
+@pytest.mark.parametrize("backend", ["claude-sonnet-4-5", "anthropic", "claude"])
+def test_disabled_anthropic_alias_paths_skip_without_credentials_or_client(
+    monkeypatch,
+    tmp_path: Path,
+    backend: str,
+) -> None:
+    image_path = tmp_path / "page.png"
+    image_path.write_bytes(b"image")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    def raiser(*args, **kwargs):
+        raise AssertionError("anthropic dispatch must not occur when api_enabled=False")
+
+    monkeypatch.setattr(VisualFallback, "_answer_with_anthropic", raiser)
+    settings = AppSettings(project_root=tmp_path)
+    settings.recovery.vlm_backend = backend
+    settings.recovery.api_enabled = False
+
+    result = VisualFallback(settings).answer("Question?", [image_path], "ctx")
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "api_disabled"
+    assert result["backend"] == "anthropic"
+    assert result["answer"] == ""
+    assert result["used_images"] == []
+    assert result["api_usage"] == {"api_requests": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost_usd": 0.0}
+
+
+def test_disabled_openai_path_skips_without_credentials_or_client(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    image_path = tmp_path / "page.png"
+    image_path.write_bytes(b"image")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    def raiser(*args, **kwargs):
+        raise AssertionError("openai dispatch must not occur when api_enabled=False")
+
+    monkeypatch.setattr(VisualFallback, "_answer_with_openai", raiser)
+    settings = AppSettings(project_root=tmp_path)
+    settings.recovery.vlm_backend = "openai"
+    settings.recovery.api_enabled = False
+
+    result = VisualFallback(settings).answer("Question?", [image_path], "ctx")
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "api_disabled"
+    assert result["backend"] == "openai"
+    assert result["answer"] == ""
+    assert result["used_images"] == []
+    assert result["api_usage"] == {"api_requests": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost_usd": 0.0}

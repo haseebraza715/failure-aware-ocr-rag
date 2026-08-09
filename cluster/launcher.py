@@ -332,10 +332,22 @@ def run_requires_vlm(run_args: list[str]) -> bool:
     )
 
 
+def explicit_vlm_backend(run_args: list[str]) -> str | None:
+    for index, token in enumerate(run_args):
+        if token == "--vlm":
+            if index + 1 < len(run_args) and run_args[index + 1].strip():
+                return run_args[index + 1]
+        elif token.startswith("--vlm="):
+            value = token.split("=", 1)[1]
+            if value.strip():
+                return value
+    return None
+
+
 def validate_required_keys(root: Path, run_args: list[str] | None = None) -> None:
     if run_args is not None and not run_requires_vlm(run_args):
         return
-    backend = os.getenv("VLM_BACKEND", "openai")
+    backend = explicit_vlm_backend(run_args or []) or os.getenv("VLM_BACKEND", "openai")
     required = required_key_for_backend(backend)
     if required is None:
         return

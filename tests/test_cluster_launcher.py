@@ -66,6 +66,55 @@ def test_required_key_for_backend() -> None:
     assert launcher.required_key_for_backend("mock") is None
 
 
+@pytest.mark.parametrize(
+    "run_args",
+    [
+        ["--mode", "faar", "--vlm", "claude-sonnet-4-5"],
+        ["--mode=colpali", "--vlm=anthropic"],
+        ["--ablate", "no_gate", "--vlm", "claude"],
+        ["--recovery", "always_vlm", "--vlm", "claude-sonnet-4-5"],
+    ],
+)
+def test_explicit_vlm_arg_resolves_before_env_and_requires_anthropic_key(
+    monkeypatch, tmp_path: Path, run_args: list[str]
+) -> None:
+    monkeypatch.delenv("VLM_BACKEND", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-dummy")
+    assert launcher.run_requires_vlm(run_args) is True
+    with pytest.raises(launcher.LaunchError, match="ANTHROPIC_API_KEY"):
+        launcher.validate_required_keys(tmp_path, run_args)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-dummy")
+    launcher.validate_required_keys(tmp_path, run_args)
+
+
+def test_explicit_vlm_openai_overrides_claude_env(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("VLM_BACKEND", "claude-sonnet-4-5")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-dummy")
+    launcher.validate_required_keys(tmp_path, ["--mode", "faar", "--vlm", "openai"])
+    monkeypatch.delenv("OPENAI_API_KEY")
+    with pytest.raises(launcher.LaunchError, match="OPENAI_API_KEY"):
+        launcher.validate_required_keys(tmp_path, ["--mode", "faar", "--vlm", "openai"])
+
+
+def test_explicit_vlm_claude_overrides_openai_env(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("VLM_BACKEND", "openai")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-dummy")
+    with pytest.raises(launcher.LaunchError, match="ANTHROPIC_API_KEY"):
+        launcher.validate_required_keys(tmp_path, ["--mode", "faar", "--vlm", "claude-sonnet-4-5"])
+
+
+def test_explicit_vlm_on_b0_does_not_require_a_key(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("VLM_BACKEND", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    args = ["--gate", "off", "--recovery", "off", "--out", "results/b0.json", "--vlm", "claude-sonnet-4-5"]
+    assert launcher.run_requires_vlm(args) is False
+    launcher.validate_required_keys(tmp_path, args)
+
+
 def test_build_child_command_plain_argv_no_shell(tmp_path: Path) -> None:
     (tmp_path / "run.py").write_text("", encoding="utf-8")
     argv = launcher.build_child_command(tmp_path, ["--gate", "on", "--out", "results/x.json"], "/usr/bin/python3")
