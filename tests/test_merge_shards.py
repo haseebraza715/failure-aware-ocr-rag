@@ -126,3 +126,105 @@ def test_merge_cli_computes_harm_against_baseline(tmp_path: Path) -> None:
     payload = json.loads(out.read_text())
     assert payload["summary"]["harm_rate"] == 0.0
     assert payload["rows"][0]["example_id"] == "e1"
+
+
+def test_merge_rejects_one_of_eight_shards(tmp_path: Path) -> None:
+    only = tmp_path / "b2_shard1of8.json"
+    _shard(only, [_row("e1")], shard_index=0, num_shards=8)
+    with pytest.raises(SystemExit) as excinfo:
+        merge_shards.merge_shards([only])
+    assert "incomplete shard set for num_shards=8" in str(excinfo.value)
+    assert "missing shard indices [1, 2, 3, 4, 5, 6, 7]" in str(excinfo.value)
+
+
+def test_merge_rejects_missing_middle_shard(tmp_path: Path) -> None:
+    zero = tmp_path / "shard0.json"
+    two = tmp_path / "shard2.json"
+    _shard(zero, [_row("e1")], shard_index=0, num_shards=3)
+    _shard(two, [_row("e3")], shard_index=2, num_shards=3)
+    with pytest.raises(SystemExit) as excinfo:
+        merge_shards.merge_shards([zero, two])
+    assert "missing shard indices [1]" in str(excinfo.value)
+
+
+def test_merge_rejects_duplicate_shard_index_with_disjoint_ids(tmp_path: Path) -> None:
+    first = tmp_path / "dup_a.json"
+    second = tmp_path / "dup_b.json"
+    _shard(first, [_row("e1")], shard_index=0, num_shards=2)
+    _shard(second, [_row("e2")], shard_index=0, num_shards=2)
+    with pytest.raises(SystemExit) as excinfo:
+        merge_shards.merge_shards([first, second])
+    assert "shard index 0 declared by" in str(excinfo.value)
+
+
+def test_merge_rejects_out_of_range_and_negative_indices(tmp_path: Path) -> None:
+    out_of_range = tmp_path / "oor.json"
+    _shard(out_of_range, [_row("e1")], shard_index=2, num_shards=2)
+    with pytest.raises(SystemExit) as excinfo:
+        merge_shards.merge_shards([out_of_range])
+    assert "shard_index=2" in str(excinfo.value)
+    assert "[0, 2)" in str(excinfo.value)
+
+    negative = tmp_path / "neg.json"
+    _shard(negative, [_row("e1")], shard_index=-1, num_shards=2)
+    with pytest.raises(SystemExit) as excinfo:
+        merge_shards.merge_shards([negative])
+    assert "shard_index=-1" in str(excinfo.value)
+
+
+def test_merge_rejects_boolean_index_and_count(tmp_path: Path) -> None:
+    bool_index = tmp_path / "bool_index.json"
+    _shard(bool_index, [_row("e1")], shard_index=True, num_shards=2)
+    with pytest.raises(SystemExit) as excinfo:
+        merge_shards.merge_shards([bool_index])
+    assert "non-boolean integer" in str(excinfo.value)
+    assert "shard_index" in str(excinfo.value)
+
+    bool_count = tmp_path / "bool_count.json"
+    _shard(bool_count, [_row("e1")], shard_index=0, num_shards=True)
+    with pytest.raises(SystemExit) as excinfo:
+        merge_shards.merge_shards([bool_count])
+    assert "non-boolean integer" in str(excinfo.value)
+    assert "num_shards" in str(excinfo.value)
+
+    zero_count = tmp_path / "zero_count.json"
+    _shard(zero_count, [_row("e1")], shard_index=0, num_shards=0)
+    with pytest.raises(SystemExit) as excinfo:
+        merge_shards.merge_shards([zero_count])
+    assert "positive integer" in str(excinfo.value)
+
+
+def test_merge_accepts_complete_valid_shard_set(tmp_path: Path) -> None:
+    paths = []
+    for index in range(8):
+        path = tmp_path / f"b2_shard{index}of8.json"
+        _shard(path, [_row(f"e{index}")], shard_index=index, num_shards=8)
+        paths.append(path)
+    merged = merge_shards.merge_shards(paths)
+    assert [row["example_id"] for row in merged["rows"]] == [f"e{i}" for i in range(8)]
+    assert merged["run_spec"]["shard_index"] is None
+    assert merged["run_spec"]["num_shards"] is None
+
+
+def test_merge_accepts_valid_empty_shards_when_count_exceeds_examples(tmp_path: Path) -> None:
+    zero = tmp_path / "shard0.json"
+    one = tmp_path / "shard1.json"
+    two = tmp_path / "shard2.json"
+    _shard(zero, [_row("e1")], shard_index=0, num_shards=3)
+    _shard(one, [], shard_index=1, num_shards=3)
+    _shard(two, [], shard_index=2, num_shards=3)
+    merged = merge_shards.merge_shards([zero, one, two])
+    assert [row["example_id"] for row in merged["rows"]] == ["e1"]
+    assert merged["summary"]["EM"] == 1.0
+
+
+def test_merge_rejects_rows_missing_from_baseline_expected_ids(tmp_path: Path) -> None:
+    zero = tmp_path / "shard0.json"
+    one = tmp_path / "shard1.json"
+    baseline = tmp_path / "b0.json"
+    _shard(zero, [_row("e1")], shard_index=0, num_shards=2)
+    _shard(one, [], shard_index=1, num_shards=2)
+    _shard(baseline, [_row("e1"), _row("e2")], shard_index=0)
+    with pytest.raises(SystemExit) as excinfo:
+        merge_shards.merge_shards([zero, one], expected_example_ids=["e1", "e2"])
+    assert "do not match the expected example ids" in str(excinfo.value)
