@@ -32,6 +32,8 @@ _RUN_SPEC_MATCH_KEYS = (
     "model_provenance",
 )
 
+_VLM_MATCH_KEYS = ("vlm_backend", "vlm_model", "vlm_cost_rates")
+
 
 def _require_unique_example_ids(rows: list[dict[str, Any]], path: Path) -> None:
     seen: set[str] = set()
@@ -60,11 +62,16 @@ def _validate_analysis_inputs(baseline_path: Path, result_paths: list[Path]) -> 
         raise ValueError(f"{baseline_path} contains no baseline rows.")
     _require_unique_example_ids(baseline_rows, baseline_path)
     baseline_ids = {str(row["example_id"]).strip() for row in baseline_rows}
+    vlm_signatures: list[tuple[Any, ...]] = []
     for result_path in result_paths:
         result = load_result(result_path)
         run_spec = result.get("run_spec")
         if not isinstance(run_spec, dict):
             raise ValueError(f"{result_path} has no run_spec provenance.")
+        for key in _VLM_MATCH_KEYS:
+            if key not in run_spec:
+                raise ValueError(f"{result_path} run_spec is missing {key}.")
+        vlm_signatures.append(tuple(run_spec[key] for key in _VLM_MATCH_KEYS))
         for key in _RUN_SPEC_MATCH_KEYS:
             if key not in baseline_spec:
                 raise ValueError(f"{baseline_path} run_spec is missing {key}.")
@@ -83,6 +90,11 @@ def _validate_analysis_inputs(baseline_path: Path, result_paths: list[Path]) -> 
         omitted = sorted(baseline_ids - result_ids)
         if omitted:
             raise ValueError(f"{result_path} omits baseline B0 rows: {omitted}")
+    if any(signature != vlm_signatures[0] for signature in vlm_signatures):
+        raise ValueError(
+            "Final analysis requires matching vlm_backend, vlm_model, and vlm_cost_rates "
+            "across all non-B0 results so providers/models/rates cannot be mixed."
+        )
     return baseline
 
 
