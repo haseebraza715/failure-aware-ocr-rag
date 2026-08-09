@@ -22,7 +22,7 @@ def _row(example_id: str, f1: float) -> dict[str, Any]:
         "example_id": example_id,
         "predicted_answer": "prediction",
         "gold_answer": "gold",
-        "metrics": {"em": 0.0, "f1": f1},
+        "metrics": {"ndcg@5": 0.0, "recall@5": 0.0, "em": 0.0, "f1": f1},
         "action_outcome": {"action": "answer_direct"},
     }
 
@@ -94,9 +94,19 @@ def test_visual_modes_dispatch_to_visual_baseline_runner(
     baseline_path.write_text(json.dumps(_b0_result(settings, [_row("ex1", 0.75)])))
     calls: list[dict[str, Any]] = []
 
-    def fake_visual_baseline(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    def fake_visual_baseline(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
         calls.append({"args": args, "kwargs": kwargs})
-        return _result(mode, [_row("ex1", 0.25)])
+        return [
+            {
+                **_row("ex1", 0.25),
+                "api_usage": {
+                    "api_requests": 1,
+                    "prompt_tokens": 10,
+                    "completion_tokens": 5,
+                    "cost_usd": 0.0001,
+                },
+            }
+        ]
 
     monkeypatch.setattr(run, "run_visual_baseline", fake_visual_baseline, raising=False)
     monkeypatch.setattr(

@@ -153,6 +153,35 @@ def test_visual_stage_publishes_once_with_computed_harm(
 
 
 @pytest.mark.parametrize("mode", ["colpali", "visrag"], ids=["b3", "b4"])
+def test_visual_stage_dict_return_fails_before_publication(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    settings = _isolate_cli(monkeypatch, tmp_path)
+    baseline = _write_b0(tmp_path, settings, "ex1")
+    out = tmp_path / f"{mode}.json"
+    monkeypatch.setattr(run, "load_benchmark_repository", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        run,
+        "run_visual_baseline",
+        lambda *args, **kwargs: {"summary": {}, "rows": [_row("ex1", 0.25, action="invoke_vlm")]},
+    )
+    writes = _capture_atomic_writes(monkeypatch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run.py", "--mode", mode, "--baseline", str(baseline), "--out", str(out)],
+    )
+
+    with pytest.raises(SystemExit, match="expected list\\[dict\\] per-example rows"):
+        run.main()
+
+    assert writes == []
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("mode", ["colpali", "visrag"], ids=["b3", "b4"])
 def test_visual_stage_harm_failure_leaves_no_public_output(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

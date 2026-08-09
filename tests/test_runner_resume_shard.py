@@ -265,9 +265,9 @@ def test_cli_visual_path_rejects_shard_flags(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setattr(run, "load_benchmark_repository", lambda *args, **kwargs: object())
     visual_calls: list[dict[str, Any]] = []
 
-    def fake_visual_baseline(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    def fake_visual_baseline(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
         visual_calls.append({"args": args, "kwargs": kwargs})
-        return {"summary": {"EM": 0.0, "F1": 0.0, "vlm_rate": 0.0, "harm_rate": 0.0}, "rows": []}
+        return []
 
     monkeypatch.setattr(run, "run_visual_baseline", fake_visual_baseline, raising=False)
     monkeypatch.setattr(
@@ -285,9 +285,9 @@ def test_cli_visual_resume_reaches_baseline(monkeypatch, tmp_path: Path) -> None
     monkeypatch.setattr(run, "load_benchmark_repository", lambda *args, **kwargs: object())
     visual_calls: list[dict[str, Any]] = []
 
-    def fake_visual_baseline(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    def fake_visual_baseline(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
         visual_calls.append({"args": args, "kwargs": kwargs})
-        return {"summary": {"EM": 0.0, "F1": 0.0, "vlm_rate": 0.0, "harm_rate": 0.0}, "rows": []}
+        return []
 
     monkeypatch.setattr(run, "run_visual_baseline", fake_visual_baseline, raising=False)
     monkeypatch.setattr(

@@ -216,7 +216,10 @@ def _apply_baseline_harm(
     )
     result_rows = payload.get("rows")
     if not isinstance(result_rows, list):
-        result_rows = load_rows(output_path)
+        raise SystemExit(
+            f"Result payload is missing in-memory rows for harm computation "
+            f"(got {type(result_rows).__name__}); refusing to re-read the output path."
+        )
     result_ids = _validated_example_ids(result_rows, output_path)
     baseline_rows = load_rows(baseline_path)
     baseline_ids = _validated_example_ids(baseline_rows, baseline_path)
@@ -255,7 +258,7 @@ def _run_visual_baseline_to_result(
 ) -> dict[str, Any]:
     started = time.perf_counter()
     repo = load_benchmark_repository(settings.project_root, dataset, split)
-    result = run_visual_baseline(
+    rows = run_visual_baseline(
         settings,
         repo,
         mode,
@@ -263,32 +266,31 @@ def _run_visual_baseline_to_result(
         resume=resume,
         output_dir=out.parent / f"{out.stem}_rows",
     )
-    if isinstance(result, dict):
-        payload = result
-    else:
-        rows = result
-        summary = summarize_examples(rows)
-        api_totals = summarize_api_usage(rows)
-        payload = {
-            "label": mode,
-            "profile": mode,
-            "created_at_utc": datetime.now(UTC).isoformat(),
-            "run_spec": run_spec,
-            "summary": {
-                "EM": summary["em"],
-                "F1": summary["f1"],
-                "vlm_rate": summary["vlm_rate"],
-                "harm_rate": None,
-                "api_requests": api_totals["api_requests"],
-                "prompt_tokens": api_totals["prompt_tokens"],
-                "completion_tokens": api_totals["completion_tokens"],
-                "cost_usd": api_totals["cost_usd"],
-                "runtime_sec": round(time.perf_counter() - started, 4),
-            },
-            "rows": rows,
-        }
-    payload["run_spec"] = run_spec
-    payload.setdefault("summary", {})["harm_rate"] = None
+    if not isinstance(rows, list):
+        raise SystemExit(
+            f"run_visual_baseline({mode}) returned {type(rows).__name__}; "
+            "expected list[dict] per-example rows."
+        )
+    summary = summarize_examples(rows)
+    api_totals = summarize_api_usage(rows)
+    payload = {
+        "label": mode,
+        "profile": mode,
+        "created_at_utc": datetime.now(UTC).isoformat(),
+        "run_spec": run_spec,
+        "summary": {
+            "EM": summary["em"],
+            "F1": summary["f1"],
+            "vlm_rate": summary["vlm_rate"],
+            "harm_rate": None,
+            "api_requests": api_totals["api_requests"],
+            "prompt_tokens": api_totals["prompt_tokens"],
+            "completion_tokens": api_totals["completion_tokens"],
+            "cost_usd": api_totals["cost_usd"],
+            "runtime_sec": round(time.perf_counter() - started, 4),
+        },
+        "rows": rows,
+    }
     if publish:
         out.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(out, json.dumps(payload, indent=2) + "\n")
