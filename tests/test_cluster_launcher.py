@@ -114,7 +114,7 @@ def test_derive_limits_from_preflight() -> None:
     )
     assert launcher.derive_max_rss_gb(payload) == 32.0
     assert launcher.derive_min_gpu_free_gb(payload) == 3.2
-    assert launcher.derive_gpu_memory_fraction(payload) == 0.5
+    assert launcher.derive_gpu_memory_fraction(payload, 8.0) == 0.5
     assert launcher.derive_threads(payload) == 4
 
 
@@ -127,17 +127,89 @@ def test_derive_limits_respect_scheduler_budget() -> None:
     assert launcher.derive_max_rss_gb(payload) == 36.0
 
 
-def test_derive_gpu_fraction_bounded_when_busy() -> None:
+def test_derive_gpu_fraction_is_budget_over_total_and_rejects_oversize(monkeypatch) -> None:
+    monkeypatch.delenv("FAAR_MAX_GPU_MEMORY_FRACTION", raising=False)
     payload = _gpu_payload(devices=[{"total_memory_bytes": 16 * GIB, "free_memory_bytes": 4 * GIB}])
-    assert launcher.derive_gpu_memory_fraction(payload) == 0.1
-    payload = _gpu_payload(devices=[{"total_memory_bytes": 16 * GIB, "free_memory_bytes": 2 * GIB}])
-    assert launcher.derive_gpu_memory_fraction(payload) == 0.1
+    assert launcher.derive_gpu_memory_fraction(payload, 8.0) == 0.5
+    assert launcher.derive_gpu_memory_fraction(payload, 1.6) == 0.1
+    with pytest.raises(launcher.LaunchError, match="exceeds the visible GPU"):
+        launcher.derive_gpu_memory_fraction(payload, 20.0)
+    with pytest.raises(launcher.LaunchError, match="invalid GPU budget"):
+        launcher.derive_gpu_memory_fraction(payload, float("inf"))
 
 
-def test_check_one_gpu_rejects_busy_shared_device() -> None:
+def test_check_gpu_free_vram_requires_budget_plus_reserve() -> None:
     payload = _gpu_payload(devices=[{"total_memory_bytes": 16 * GIB, "free_memory_bytes": 4 * GIB}])
-    with pytest.raises(launcher.LaunchError, match="at least 30% free VRAM"):
-        launcher.check_one_gpu(payload, cpu_only=False)
+    with pytest.raises(launcher.LaunchError, match="co-tenant reserve"):
+        launcher.check_gpu_free_vram(payload, 8.0, 3.2)
+    launcher.check_gpu_free_vram(payload, 0.8, 3.2)
+    launcher.check_gpu_free_vram(payload, 0.0, 3.2)
+    launcher.check_gpu_free_vram(_gpu_payload(devices=[]), 8.0, 3.2)
+
+
+def test_check_gpu_free_vram_rejects_missing_total() -> None:
+    payload = _gpu_payload(devices=[{"index": 0}])
+    with pytest.raises(launcher.LaunchError, match="total VRAM"):
+        launcher.check_gpu_free_vram(payload, 8.0, 3.2)
+
+
+def test_parse_gpu_budget_gb_rejects_invalid_values() -> None:
+    assert launcher.parse_gpu_budget_gb("8") == 8.0
+    assert launcher.parse_gpu_budget_gb("8.5") == 8.5
+    for bad in ("", "abc", "-1", "0", "nan", "inf", "  "):
+        with pytest.raises(launcher.LaunchError, match="FAAR_GPU_BUDGET_GB"):
+            launcher.parse_gpu_budget_gb(bad)
+
+
+def test_parse_gpu_memory_fraction_rejects_invalid_values() -> None:
+    assert launcher.parse_gpu_memory_fraction("0.5") == 0.5
+    assert launcher.parse_gpu_memory_fraction("1") == 1.0
+    for bad in ("", "abc", "0", "-0.5", "1.5", "nan", "inf"):
+        with pytest.raises(launcher.LaunchError, match="FAAR_MAX_GPU_MEMORY_FRACTION"):
+            launcher.parse_gpu_memory_fraction(bad)
+
+
+def test_resolve_gpu_budget_fails_closed_without_budget_or_fraction(monkeypatch) -> None:
+    monkeypatch.delenv("FAAR_GPU_BUDGET_GB", raising=False)
+    monkeypatch.delenv("FAAR_MAX_GPU_MEMORY_FRACTION", raising=False)
+    payload = _gpu_payload(devices=[{"total_memory_bytes": 16 * GIB, "free_memory_bytes": 16 * GIB}])
+    with pytest.raises(launcher.LaunchError, match="explicit FAAR_GPU_BUDGET_GB"):
+        launcher.resolve_gpu_budget(payload)
+    assert launcher.resolve_gpu_budget(payload, cpu_only=True) is None
+
+
+def test_resolve_gpu_budget_rejects_ambiguous_dual_limits(monkeypatch) -> None:
+    monkeypatch.setenv("FAAR_GPU_BUDGET_GB", "8")
+    monkeypatch.setenv("FAAR_MAX_GPU_MEMORY_FRACTION", "0.25")
+    payload = _gpu_payload(devices=[{"total_memory_bytes": 16 * GIB, "free_memory_bytes": 16 * GIB}])
+    with pytest.raises(launcher.LaunchError, match="Set only one"):
+        launcher.resolve_gpu_budget(payload)
+    monkeypatch.delenv("FAAR_MAX_GPU_MEMORY_FRACTION")
+    assert launcher.resolve_gpu_budget(payload) == 8.0
+    with pytest.raises(launcher.LaunchError, match="exceeds the visible GPU"):
+        monkeypatch.setenv("FAAR_GPU_BUDGET_GB", "20")
+        launcher.resolve_gpu_budget(payload)
+
+
+def test_resolve_gpu_budget_accepts_explicit_fraction_for_backward_compat(monkeypatch) -> None:
+    monkeypatch.delenv("FAAR_GPU_BUDGET_GB", raising=False)
+    monkeypatch.setenv("FAAR_MAX_GPU_MEMORY_FRACTION", "0.25")
+    payload = _gpu_payload(devices=[{"total_memory_bytes": 16 * GIB, "free_memory_bytes": 16 * GIB}])
+    assert launcher.resolve_gpu_budget(payload) == 4.0
+    monkeypatch.setenv("FAAR_MAX_GPU_MEMORY_FRACTION", "1.5")
+    with pytest.raises(launcher.LaunchError, match="FAAR_MAX_GPU_MEMORY_FRACTION"):
+        launcher.resolve_gpu_budget(payload)
+
+
+def test_resolve_min_gpu_free_gb_explicit_overrides_derived(monkeypatch) -> None:
+    payload = _gpu_payload(devices=[{"total_memory_bytes": 16 * GIB, "free_memory_bytes": 16 * GIB}])
+    monkeypatch.delenv("FAAR_MIN_GPU_FREE_GB", raising=False)
+    assert launcher.resolve_min_gpu_free_gb(payload) == 3.2
+    monkeypatch.setenv("FAAR_MIN_GPU_FREE_GB", "5")
+    assert launcher.resolve_min_gpu_free_gb(payload) == 5.0
+    monkeypatch.setenv("FAAR_MIN_GPU_FREE_GB", "0")
+    with pytest.raises(launcher.LaunchError, match="FAAR_MIN_GPU_FREE_GB"):
+        launcher.resolve_min_gpu_free_gb(payload)
 
 
 def test_derive_threads_falls_back_to_cpu_count() -> None:
@@ -154,7 +226,7 @@ def test_set_derived_env_only_when_absent(monkeypatch) -> None:
     monkeypatch.delenv("FAAR_MAX_GPU_MEMORY_FRACTION", raising=False)
     monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
     monkeypatch.delenv("MKL_NUM_THREADS", raising=False)
-    derived = launcher.set_derived_env(payload)
+    derived = launcher.set_derived_env(payload, gpu_budget_gb=8.0)
     assert derived["FAAR_MAX_RSS_GB"] == "32.0"
     assert derived["FAAR_MIN_GPU_FREE_GB"] == "3.2"
     assert derived["FAAR_MAX_GPU_MEMORY_FRACTION"] == "0.5"
@@ -163,11 +235,18 @@ def test_set_derived_env_only_when_absent(monkeypatch) -> None:
 
     monkeypatch.setenv("FAAR_MAX_RSS_GB", "99")
     monkeypatch.setenv("OMP_NUM_THREADS", "1")
-    derived2 = launcher.set_derived_env(payload)
+    derived2 = launcher.set_derived_env(payload, gpu_budget_gb=8.0)
     assert "FAAR_MAX_RSS_GB" not in derived2
     assert "OMP_NUM_THREADS" not in derived2
     assert os.environ["FAAR_MAX_RSS_GB"] == "99"
     assert os.environ["OMP_NUM_THREADS"] == "1"
+
+
+def test_set_derived_env_fails_closed_without_budget(monkeypatch) -> None:
+    payload = _gpu_payload(devices=[{"total_memory_bytes": 16 * GIB, "free_memory_bytes": 16 * GIB}])
+    monkeypatch.delenv("FAAR_MAX_GPU_MEMORY_FRACTION", raising=False)
+    with pytest.raises(launcher.LaunchError, match="explicit budget"):
+        launcher.set_derived_env(payload)
 
 
 def test_cpu_only_does_not_derive_gpu_guards(monkeypatch) -> None:
@@ -177,6 +256,48 @@ def test_cpu_only_does_not_derive_gpu_guards(monkeypatch) -> None:
     assert "FAAR_MAX_GPU_MEMORY_FRACTION" not in derived
     assert "FAAR_MIN_GPU_FREE_GB" not in os.environ
     assert "FAAR_MAX_GPU_MEMORY_FRACTION" not in os.environ
+
+
+def test_cpu_only_ignores_invalid_gpu_only_environment(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("FAAR_GPU_BUDGET_GB", "invalid")
+    monkeypatch.setenv("FAAR_MIN_GPU_FREE_GB", "invalid")
+    monkeypatch.setattr(launcher, "load_preflight", lambda root: _gpu_payload(devices=[]))
+    monkeypatch.setattr(launcher, "write_preflight_report", lambda payload, path: None)
+    monkeypatch.setattr(launcher, "validate_hf_cache", lambda: None)
+    monkeypatch.setattr(launcher, "validate_required_keys", lambda root, run_args: None)
+    monkeypatch.setattr(launcher, "build_child_command", lambda root, run_args, executable: ["child"])
+    monkeypatch.setattr(launcher, "run_child", lambda argv, cwd: 0)
+
+    assert launcher.main(["--project-root", str(tmp_path), "--cpu-only"]) == 0
+
+
+def test_gpu_main_enforces_budget_before_child(monkeypatch, tmp_path: Path) -> None:
+    payload = _gpu_payload(
+        devices=[
+            {
+                "index": 0,
+                "total_memory_bytes": 16 * GIB,
+                "free_memory_bytes": 16 * GIB,
+            }
+        ]
+    )
+    monkeypatch.setenv("FAAR_GPU_BUDGET_GB", "8.1")
+    monkeypatch.setattr(launcher, "load_preflight", lambda root: payload)
+    monkeypatch.setattr(launcher, "write_preflight_report", lambda payload, path: None)
+    monkeypatch.setattr(launcher, "validate_hf_cache", lambda: None)
+    monkeypatch.setattr(launcher, "validate_required_keys", lambda root, run_args: None)
+    monkeypatch.setattr(launcher, "build_child_command", lambda root, run_args, executable: ["child"])
+    child_env: dict[str, str] = {}
+
+    def capture_child(argv, cwd) -> int:
+        child_env.update(os.environ)
+        return 0
+
+    monkeypatch.setattr(launcher, "run_child", capture_child)
+
+    assert launcher.main(["--project-root", str(tmp_path)]) == 0
+    assert float(child_env["FAAR_MAX_GPU_MEMORY_FRACTION"]) == 8.1 / 16
+    assert child_env["FAAR_MIN_GPU_FREE_GB"] == "3.2"
 
 
 def test_validate_hf_cache_default_created(monkeypatch, tmp_path: Path) -> None:
@@ -441,6 +562,7 @@ def test_launcher_missing_key_fails_before_child(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["FAAR_PREFLIGHT_JSON"] = str(preflight_file)
     env["HF_HOME"] = str(tmp_path / "hf")
+    env["FAAR_GPU_BUDGET_GB"] = "8"
     env.pop("OPENAI_API_KEY", None)
     env.pop("VLM_BACKEND", None)
     result = subprocess.run(

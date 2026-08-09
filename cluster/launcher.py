@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import signal
 import subprocess
@@ -67,12 +68,102 @@ def check_one_gpu(preflight_payload: dict[str, Any], *, cpu_only: bool) -> None:
             f"Expected exactly one logical GPU, but preflight found {count}. "
             "Request one scheduler GPU, or limit visibility before a non-scheduler launch."
         )
+
+
+def _gpu_total_bytes(preflight_payload: dict[str, Any]) -> float:
+    devices = (preflight_payload.get("torch") or {}).get("devices") or []
+    if not devices:
+        return 0.0
+    return float(devices[0].get("total_memory_bytes") or 0)
+
+
+def _parse_positive_gb(name: str, raw: str) -> float:
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise LaunchError(f"{name} must be a positive number of GiB; received {raw!r}.") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise LaunchError(f"{name} must be a positive finite number of GiB; received {value!r}.")
+    return value
+
+
+def parse_gpu_budget_gb(raw: str) -> float:
+    return _parse_positive_gb("FAAR_GPU_BUDGET_GB", raw)
+
+
+def parse_gpu_memory_fraction(raw: str) -> float:
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise LaunchError(
+            f"FAAR_MAX_GPU_MEMORY_FRACTION must be a positive finite fraction in (0, 1]; "
+            f"received {raw!r}."
+        ) from exc
+    if not math.isfinite(value) or not 0 < value <= 1:
+        raise LaunchError(
+            f"FAAR_MAX_GPU_MEMORY_FRACTION must be a positive finite fraction in (0, 1]; "
+            f"received {value!r}."
+        )
+    return value
+
+
+def resolve_gpu_budget(preflight_payload: dict[str, Any], *, cpu_only: bool = False) -> float | None:
+    if cpu_only:
+        return None
+    raw_budget = os.getenv("FAAR_GPU_BUDGET_GB")
+    raw_fraction = os.getenv("FAAR_MAX_GPU_MEMORY_FRACTION")
+    if (
+        raw_budget is not None
+        and raw_budget.strip()
+        and raw_fraction is not None
+        and raw_fraction.strip()
+    ):
+        raise LaunchError(
+            "Set only one of FAAR_GPU_BUDGET_GB or FAAR_MAX_GPU_MEMORY_FRACTION; "
+            "two GPU limits are ambiguous."
+        )
+    if raw_budget is not None and raw_budget.strip():
+        budget = parse_gpu_budget_gb(raw_budget)
+        total = _gpu_total_bytes(preflight_payload)
+        if total and budget > total / GIB:
+            raise LaunchError(
+                f"FAAR_GPU_BUDGET_GB={budget:.2f} GiB exceeds the visible GPU's total VRAM "
+                f"({total / GIB:.2f} GiB). Refusing to silently clamp an oversized budget."
+            )
+        return budget
+    if raw_fraction is not None and raw_fraction.strip():
+        fraction = parse_gpu_memory_fraction(raw_fraction)
+        total = _gpu_total_bytes(preflight_payload)
+        if not total:
+            raise LaunchError(
+                "Cannot validate FAAR_MAX_GPU_MEMORY_FRACTION without GPU total VRAM in preflight."
+            )
+        return fraction * total / GIB
+    raise LaunchError(
+        "GPU run requires an explicit FAAR_GPU_BUDGET_GB chosen after hardware preflight, "
+        "or an explicitly supplied FAAR_MAX_GPU_MEMORY_FRACTION for backward compatibility. "
+        "Refusing to invent model VRAM needs."
+    )
+
+
+def check_gpu_free_vram(
+    preflight_payload: dict[str, Any], budget_gb: float, reserve_gb: float
+) -> None:
+    if budget_gb <= 0:
+        return
+    devices = (preflight_payload.get("torch") or {}).get("devices") or []
+    if not devices:
+        return
     total = int(devices[0].get("total_memory_bytes") or 0)
     free = int(devices[0].get("free_memory_bytes") or 0)
-    if total and free / total < 0.3:
+    if not total:
+        raise LaunchError("preflight did not report GPU total VRAM; cannot verify the free-VRAM floor.")
+    required = budget_gb + reserve_gb
+    if free < required * GIB:
         raise LaunchError(
-            f"Only {free / GIB:.2f} GiB of {total / GIB:.2f} GiB VRAM is free. "
-            "Wait for at least 30% free VRAM so the job can retain a 20% co-tenant reserve."
+            f"Only {free / GIB:.2f} GiB of {total / GIB:.2f} GiB VRAM is free; "
+            f"the run needs {budget_gb:.2f} GiB for the process plus "
+            f"{reserve_gb:.2f} GiB for the co-tenant reserve ({required:.2f} GiB total)."
         )
 
 
@@ -104,15 +195,29 @@ def derive_min_gpu_free_gb(preflight_payload: dict[str, Any], reserve_fraction: 
     return round(total * reserve_fraction / GIB, 2)
 
 
-def derive_gpu_memory_fraction(preflight_payload: dict[str, Any]) -> float:
-    devices = (preflight_payload.get("torch") or {}).get("devices") or []
-    if devices:
-        total = devices[0].get("total_memory_bytes") or 0
-        free = devices[0].get("free_memory_bytes") or 0
-        if total:
-            free_fraction = free / total
-            return round(min(0.5, max(0.1, free_fraction - 0.2)), 3)
-    return 0.5
+def resolve_min_gpu_free_gb(preflight_payload: dict[str, Any]) -> float:
+    raw = os.getenv("FAAR_MIN_GPU_FREE_GB")
+    if raw is not None and raw.strip():
+        return _parse_positive_gb("FAAR_MIN_GPU_FREE_GB", raw)
+    return derive_min_gpu_free_gb(preflight_payload)
+
+
+def derive_gpu_memory_fraction(preflight_payload: dict[str, Any], gpu_budget_gb: float) -> float:
+    total = _gpu_total_bytes(preflight_payload)
+    if not total:
+        raise LaunchError(
+            "preflight did not report GPU total VRAM; "
+            "cannot derive FAAR_MAX_GPU_MEMORY_FRACTION."
+        )
+    fraction = gpu_budget_gb * GIB / total
+    if not math.isfinite(fraction) or fraction <= 0:
+        raise LaunchError(f"invalid GPU budget for fraction derivation: {gpu_budget_gb!r}.")
+    if fraction > 1.0:
+        raise LaunchError(
+            f"FAAR_GPU_BUDGET_GB={gpu_budget_gb:.2f} GiB exceeds the visible GPU's total VRAM "
+            f"({total / GIB:.2f} GiB). Refusing to silently clamp an oversized budget."
+        )
+    return fraction
 
 
 def derive_threads(preflight_payload: dict[str, Any]) -> int:
@@ -133,7 +238,12 @@ def derive_threads(preflight_payload: dict[str, Any]) -> int:
     return max(1, alloc // 2)
 
 
-def set_derived_env(preflight_payload: dict[str, Any], *, cpu_only: bool = False) -> dict[str, str]:
+def set_derived_env(
+    preflight_payload: dict[str, Any],
+    *,
+    cpu_only: bool = False,
+    gpu_budget_gb: float | None = None,
+) -> dict[str, str]:
     derived: dict[str, str] = {}
     if os.getenv("FAAR_MAX_RSS_GB") is None:
         derived["FAAR_MAX_RSS_GB"] = str(derive_max_rss_gb(preflight_payload))
@@ -141,7 +251,14 @@ def set_derived_env(preflight_payload: dict[str, Any], *, cpu_only: bool = False
         if os.getenv("FAAR_MIN_GPU_FREE_GB") is None:
             derived["FAAR_MIN_GPU_FREE_GB"] = str(derive_min_gpu_free_gb(preflight_payload))
         if os.getenv("FAAR_MAX_GPU_MEMORY_FRACTION") is None:
-            derived["FAAR_MAX_GPU_MEMORY_FRACTION"] = str(derive_gpu_memory_fraction(preflight_payload))
+            if gpu_budget_gb is None:
+                raise LaunchError(
+                    "Cannot derive FAAR_MAX_GPU_MEMORY_FRACTION: no FAAR_GPU_BUDGET_GB was supplied. "
+                    "GPU runs require an explicit budget chosen after hardware preflight."
+                )
+            derived["FAAR_MAX_GPU_MEMORY_FRACTION"] = str(
+                derive_gpu_memory_fraction(preflight_payload, gpu_budget_gb)
+            )
     threads = derive_threads(preflight_payload)
     for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS"):
         if os.getenv(name) is None:
@@ -288,6 +405,7 @@ def print_summary(root: Path, cpu_only: bool, run_args: list[str]) -> None:
     mode = "cpu-only" if cpu_only else "single-gpu"
     print(f"[faar-launcher] mode={mode} project_root={root}", flush=True)
     for name in (
+        "FAAR_GPU_BUDGET_GB",
         "FAAR_MAX_RSS_GB",
         "FAAR_MIN_GPU_FREE_GB",
         "FAAR_MAX_GPU_MEMORY_FRACTION",
@@ -326,7 +444,11 @@ def main(argv: list[str] | None = None) -> int:
             report_path = root / report_path
         write_preflight_report(payload, report_path)
         check_one_gpu(payload, cpu_only=args.cpu_only)
-        set_derived_env(payload, cpu_only=args.cpu_only)
+        budget_gb = resolve_gpu_budget(payload, cpu_only=args.cpu_only)
+        if not args.cpu_only:
+            reserve_gb = resolve_min_gpu_free_gb(payload)
+            check_gpu_free_vram(payload, budget_gb or 0.0, reserve_gb)
+        set_derived_env(payload, cpu_only=args.cpu_only, gpu_budget_gb=budget_gb)
         validate_hf_cache()
         validate_required_keys(root, run_args)
         print_summary(root, args.cpu_only, run_args)

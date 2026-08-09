@@ -39,6 +39,7 @@ def isolate_model_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
         "FAAR_EMBED_BATCH_SIZE",
         "FAAR_VISUAL_SCORE_BATCH_SIZE",
         "FAAR_MAX_RSS_GB",
+        "FAAR_GPU_BUDGET_GB",
         "FAAR_MIN_GPU_FREE_GB",
         "FAAR_MAX_GPU_MEMORY_FRACTION",
         "OMP_NUM_THREADS",

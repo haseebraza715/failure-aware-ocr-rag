@@ -374,6 +374,7 @@ def collect(path: Path) -> dict[str, Any]:
                 "FAAR_VISUAL_BATCH_SIZE",
                 "OMP_NUM_THREADS",
                 "MKL_NUM_THREADS",
+                "FAAR_GPU_BUDGET_GB",
                 "FAAR_MAX_RSS_GB",
                 "FAAR_MIN_GPU_FREE_GB",
                 "FAAR_MAX_GPU_MEMORY_FRACTION",

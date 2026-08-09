@@ -87,13 +87,13 @@ commands without running them.
 Resume behavior: without `--resume` the runner refuses to start if any
 `results/baselines/<dataset>/<split>/{b0,b1,b2,b3,b4}.json` exists. With
 `--resume`, completed stages are re-validated and skipped, and each missing
-stage runs. `--resume` is forwarded to `run.py` for B0..B2 only, which reuse
-completed per-example checkpoints; B3 and B4 have no per-example checkpoint
-resume yet, so scheduler walltime must cover each visual stage in full.
+stage runs. `--resume` is forwarded to `run.py` for B0..B4, so all stages
+reuse completed per-example checkpoints.
 
 Output validation: each stage result must carry that stage's profile and
-label, a summary with `EM`, `F1`, `vlm_rate`, `harm_rate`, `cost_usd`, and
-`runtime_sec`, full `run_spec` provenance (dataset, split, seed,
+label, a summary with `EM`, `F1`, `vlm_rate`, `harm_rate`, API requests,
+tokens, `cost_usd`, and `runtime_sec`, full `run_spec` provenance (dataset,
+split, seed,
 `max_examples`, embedding, reranker, OCR, model revisions, unsharded), rows
 that exactly match B0's example ids, and summary values recomputed from the
 rows. Any mismatch stops the run. Because each stage runs in a fresh
@@ -116,18 +116,27 @@ It runs preflight, then:
 
 1. Requires exactly one logical GPU unless `--cpu-only` is passed; a
    multi-GPU or GPU-less allocation is rejected with exit code 2.
-2. Derives conservative guards only when absent:
+2. Requires an explicit positive `FAAR_GPU_BUDGET_GB` chosen after the
+   preflight shows the GPU model and free VRAM. The budget is never inferred
+   from VRAM headroom or model size. For backward compatibility an explicitly
+   supplied `FAAR_MAX_GPU_MEMORY_FRACTION` in `(0, 1]` is accepted instead and
+   translated to an equivalent budget; with neither variable set the launch
+   fails closed. Setting both variables is rejected as ambiguous.
+3. Rejects a budget above the GPU's total VRAM and any non-finite or
+   non-positive value; the requested budget is never silently clamped.
+4. Requires the initial free VRAM to cover the process budget plus the
+   co-tenant reserve (`FAAR_MIN_GPU_FREE_GB`, a 20% reserve by default).
+5. Derives guards only when absent:
    - `FAAR_MAX_RSS_GB` (90% of the scheduler/cgroup CPU-RAM budget, else 50%
      of physical memory),
    - `FAAR_MIN_GPU_FREE_GB` (a 20% co-tenant reserve),
-   - `FAAR_MAX_GPU_MEMORY_FRACTION` (at most 50%, reduced by the reserve when
-     the GPU is partly occupied),
+   - `FAAR_MAX_GPU_MEMORY_FRACTION` (`FAAR_GPU_BUDGET_GB` / total VRAM),
    - `OMP_NUM_THREADS` / `MKL_NUM_THREADS` (half the allocated CPUs).
-3. Refuses a GPU with less than 30% free VRAM. It validates the Hugging Face
-   cache and, only for a run that can invoke a VLM, a non-empty key required by
-   `VLM_BACKEND` (`OPENAI_API_KEY` for OpenAI or `ANTHROPIC_API_KEY` for
-   Claude). B0 does not require either key. Key values are never printed.
-4. Spawns `run.py` with a plain argv list (no shell interpolation) and
+6. Validates the Hugging Face cache and, only for a run that can invoke a VLM,
+   a non-empty key required by `VLM_BACKEND` (`OPENAI_API_KEY` for OpenAI or
+   `ANTHROPIC_API_KEY` for Claude). B0 does not require either key. Key values
+   are never printed.
+7. Spawns `run.py` with a plain argv list (no shell interpolation) and
    forwards `SIGTERM`/`SIGINT` to the child, propagating its exit code.
 
 Every launch writes a redacted, job-namespaced report under
@@ -152,9 +161,9 @@ with `--resume` and `--project-root` set to the submission directory. They use
 the configured `FAAR_PYTHON`; `FAAR_DATASET` and `FAAR_SPLIT` default to
 `ohrbench` and `test`. They never set `CUDA_VISIBLE_DEVICES` because Slurm and
 PBS manage the allocation. Keep the resource boundaries and change scheduler
-directives only after the lab allocation is known. B3 and B4 have no
-per-example checkpoint resume yet, so walltime must cover each visual stage in
-full.
+directives only after the lab allocation is known. Set `FAAR_GPU_BUDGET_GB` to
+a positive budget chosen from the preflight report; the launcher fails closed
+without it.
 
 Credentials are read from the submit environment or a `.env` at the repository
 root. Never write keys into a template file.
