@@ -11,6 +11,7 @@ from .data import Phase0Repository
 from .experiment_profiles import apply_profile
 from .graph import build_graph, random_recovery_type
 from .metrics import exact_match, ndcg_at_k, recall_at_k, token_f1
+from .operations import ProgressReporter, check_termination
 from .run_io import atomic_write_json, run_fingerprint, safe_checkpoint_stem, select_shard
 from .settings import AppSettings
 
@@ -67,75 +68,118 @@ def run_profile(
         pending = list(selected_ids)
         if pending or (example_ids is not None and num_shards is None):
             graph = build_graph(settings, repo=repo) if use_repo_kwarg else build_graph(settings)
+    if resume and rows_by_id:
+        print(
+            f"[faar] resume: reused {len(rows_by_id)}/{len(selected_ids)} examples from checkpoints",
+            flush=True,
+        )
+    reporter = ProgressReporter(f"profile:{profile_name}", len(pending))
+    failures: list[tuple[str, str]] = []
+    processed = 0
     for example_id in pending:
-        assert graph is not None
-        result = graph.invoke({"example_id": example_id})
-        result_hits = result.get("corrected_hits") or result.get("retrieved_hits", [])
-        hit_texts = [hit.chunk.text for hit in result_hits]
-        hit_image_paths = list(dict.fromkeys(hit.chunk.image_path for hit in result_hits if hit.chunk.image_path))
-        gold = result["example"].correct_answer
-        prediction = result.get("answer", "")
-        visual_result = result.get("visual_result") or {}
-        if visual_result.get("status") == "failed":
-            raise RuntimeError(
-                f"example {example_id!r}: paid VLM call failed with reason "
-                f"{visual_result.get('reason', 'vlm_call_failed')!r}; "
-                "refusing to score or checkpoint a failed row"
-            )
-        api_usage = visual_result.get("api_usage")
-        if api_usage is None:
-            if visual_result:
-                raise ValueError(f"example {example_id!r} returned no API usage")
-            api_usage = zero_api_usage()
-        elif not is_valid_api_usage(api_usage):
-            raise ValueError(f"example {example_id!r} returned invalid API usage")
-        row = {
-            "profile": profile_name,
-            "example_id": example_id,
-            "question": result.get("question", ""),
-            "gold_answer": gold,
-            "predicted_answer": prediction,
-            "failure_type": result.get("failure_type", "pass"),
-            "gate": result.get("gate", {}),
-            "policy_action": result.get("policy_action", "answer_direct"),
-            "action_outcome": result.get("action_outcome", {}),
-            "request_model": visual_result.get("request_model"),
-            "response_model": visual_result.get("response_model"),
-            "completed_at_utc": visual_result.get("completed_at_utc"),
-            "cost_rates": visual_result.get("cost_rates") or vlm_cost_rates(settings.recovery.vlm_backend),
-            "api_usage": api_usage,
-            "metrics": {
-                "ndcg@5": ndcg_at_k(hit_texts, gold, k=5),
-                "recall@5": recall_at_k(hit_texts, gold, k=5),
-                "em": exact_match(prediction, gold),
-                "f1": token_f1(prediction, gold),
-            },
-            "top_hit_texts": hit_texts[:5],
-            "top_reranker_score": (result.get("gate") or {}).get("top_reranker_score", 0.0),
-            "source_assets": {
-                "ocr_text_path": str(getattr(result["example"], "ocr_text_path", "")),
-                "image_paths": hit_image_paths,
-            },
-            "run_metadata": {
+        check_termination()
+        try:
+            result = graph.invoke({"example_id": example_id})
+            result_hits = result.get("corrected_hits") or result.get("retrieved_hits", [])
+            hit_texts = [hit.chunk.text for hit in result_hits]
+            hit_image_paths = list(dict.fromkeys(hit.chunk.image_path for hit in result_hits if hit.chunk.image_path))
+            gold = result["example"].correct_answer
+            prediction = result.get("answer", "")
+            visual_result = result.get("visual_result") or {}
+            if visual_result.get("status") == "failed":
+                raise RuntimeError(
+                    f"example {example_id!r}: paid VLM call failed with reason "
+                    f"{visual_result.get('reason', 'vlm_call_failed')!r}; "
+                    "refusing to score or checkpoint a failed row"
+                )
+            api_usage = visual_result.get("api_usage")
+            if api_usage is None:
+                if visual_result:
+                    raise ValueError(f"example {example_id!r} returned no API usage")
+                api_usage = zero_api_usage()
+            elif not is_valid_api_usage(api_usage):
+                raise ValueError(f"example {example_id!r} returned invalid API usage")
+            row = {
                 "profile": profile_name,
-                "run_id": datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ"),
-                "run_fingerprint": fingerprint,
-                "manifest_sha256": getattr(repo, "manifest_sha256", None),
-                "api_enabled": settings.recovery.api_enabled,
-                "vlm_backend": settings.recovery.vlm_backend,
-                "openai_model": settings.recovery.openai_model,
-                "vlm_model": settings.vlm_request_model(),
-                "cost_rates": vlm_cost_rates(settings.recovery.vlm_backend),
-                "evaluation_size": len(selected_ids),
-                "selection": selection or {"max_examples": max_examples},
-                "dataset": dataset or "phase0",
-                "split": split or "development",
-            },
-        }
-        if result.get("recovery_type") is not None:
-            row["recovery_type"] = result["recovery_type"]
+                "example_id": example_id,
+                "question": result.get("question", ""),
+                "gold_answer": gold,
+                "predicted_answer": prediction,
+                "failure_type": result.get("failure_type", "pass"),
+                "gate": result.get("gate", {}),
+                "policy_action": result.get("policy_action", "answer_direct"),
+                "action_outcome": result.get("action_outcome", {}),
+                "request_model": visual_result.get("request_model"),
+                "response_model": visual_result.get("response_model"),
+                "completed_at_utc": visual_result.get("completed_at_utc"),
+                "cost_rates": visual_result.get("cost_rates") or vlm_cost_rates(settings.recovery.vlm_backend),
+                "api_usage": api_usage,
+                "metrics": {
+                    "ndcg@5": ndcg_at_k(hit_texts, gold, k=5),
+                    "recall@5": recall_at_k(hit_texts, gold, k=5),
+                    "em": exact_match(prediction, gold),
+                    "f1": token_f1(prediction, gold),
+                },
+                "top_hit_texts": hit_texts[:5],
+                "top_reranker_score": (result.get("gate") or {}).get("top_reranker_score", 0.0),
+                "source_assets": {
+                    "ocr_text_path": str(getattr(result["example"], "ocr_text_path", "")),
+                    "image_paths": hit_image_paths,
+                },
+                "run_metadata": {
+                    "profile": profile_name,
+                    "run_id": datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ"),
+                    "run_fingerprint": fingerprint,
+                    "manifest_sha256": getattr(repo, "manifest_sha256", None),
+                    "api_enabled": settings.recovery.api_enabled,
+                    "vlm_backend": settings.recovery.vlm_backend,
+                    "openai_model": settings.recovery.openai_model,
+                    "vlm_model": settings.vlm_request_model(),
+                    "cost_rates": vlm_cost_rates(settings.recovery.vlm_backend),
+                    "evaluation_size": len(selected_ids),
+                    "selection": selection or {"max_examples": max_examples},
+                    "dataset": dataset or "phase0",
+                    "split": split or "development",
+                },
+            }
+            if result.get("recovery_type") is not None:
+                row["recovery_type"] = result["recovery_type"]
+        except Exception as exc:
+            reason = f"{type(exc).__name__}: {exc}"
+            failed_row = {
+                "profile": profile_name,
+                "example_id": example_id,
+                "action_outcome": {"action": "failed", "status": "failed", "reason": reason},
+                "api_usage": zero_api_usage(),
+                "error": reason,
+                "run_metadata": {
+                    "profile": profile_name,
+                    "run_id": datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ"),
+                    "run_fingerprint": fingerprint,
+                    "manifest_sha256": getattr(repo, "manifest_sha256", None),
+                    "evaluation_size": len(selected_ids),
+                    "selection": selection or {"max_examples": max_examples},
+                    "dataset": dataset or "phase0",
+                    "split": split or "development",
+                },
+            }
+            atomic_write_json(_checkpoint_path(base_output, example_id), failed_row)
+            failures.append((example_id, reason))
+            print(f"[faar] example {example_id!r} FAILED and was not scored: {reason}", flush=True)
+            processed += 1
+            reporter.update(processed)
+            continue
         rows_by_id[example_id] = row
         atomic_write_json(_checkpoint_path(base_output, example_id), row)
+        processed += 1
+        reporter.update(processed)
+    if failures:
+        ids = ", ".join(example_id for example_id, _ in failures)
+        raise RuntimeError(
+            f"{len(failures)} example(s) failed and were not scored: {ids}. "
+            "Completed examples remain checkpointed; fix the cause and resume."
+        )
+    reporter.finish()
     return [rows_by_id[example_id] for example_id in selected_ids if example_id in rows_by_id]
 
 

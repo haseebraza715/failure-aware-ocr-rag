@@ -185,3 +185,93 @@ root. Never write keys into a template file.
 The dataset is staged once and reused. Do not make a separate copy of the
 page images for each baseline. The repository's locked split and model
 revisions remain the source of truth.
+
+## Multi-GPU sharding (text baselines B0-B2)
+
+The recommended scaling strategy is one process per GPU with deterministic
+shards; DDP/DataParallel add no value for this embarrassingly parallel
+retrieval workload. Each shard writes per-example checkpoints and its own
+shard result file, so shards can be resumed independently and merged later.
+
+```bash
+# one job per GPU, e.g. 8 GPUs:
+for i in $(seq 0 7); do
+  CUDA_VISIBLE_DEVICES=$i .venv-aaai/bin/python run.py \
+    --gate off --recovery off --dataset ohrbench --split test \
+    --shard-index $i --num-shards 8 \
+    --out results/b0.json > results/b0_shard$i.log 2>&1 &
+done
+wait
+
+# merge the shards into the single result the analysis pipeline expects:
+.venv-aaai/bin/python cluster/merge_shards.py \
+  --out results/b0.json \
+  --baseline results/b0.json \
+  results/b0_shard*of8.json
+```
+
+Rules:
+
+- Every shard must be launched with the same `--seed`, `--num-shards`,
+  dataset, split, and model flags; `merge_shards.py` rejects shards whose
+  run_specs differ or whose example ids overlap.
+- The merged file resets `shard_index`/`num_shards` to null and recomputes the
+  summary (EM, F1, vlm_rate, API totals) and `harm_rate` from the merged rows,
+  so it passes the normal stage validation on later `--resume` runs.
+- B2 shards need the matching B0 shard as `--baseline` (run_spec comparison
+  includes the shard index); merge the B0 shards first, then pass the merged
+  B0 to the B2 merge.
+- B3/B4 (ColPali/VisRAG) are single-GPU per job: `run.py` rejects shard flags
+  for visual modes because corpus embeddings are built once per process. The
+  corpus-embedding cache (below) keeps a resumed visual run from re-encoding
+  the corpus.
+
+## Persistent corpus-embedding cache
+
+Both the text retriever and the visual retrievers persist corpus embeddings
+under `<cache_dir>/` so that resumes and shards skip the encode step:
+
+- text: `<cache_dir>/text_embeddings/<key>.npz` + `<key>.meta.json`
+- visual: `<cache_dir>/visual_embeddings/<key>.npz` + `<key>.meta.json`
+
+The key covers the model, revision, dtype, and the exact corpus identity
+(chunk ids + texts, or the image path list). Any mismatch recomputes; a hit
+reuses bitwise-identical embeddings. `cache_dir` defaults to
+`<project_root>/cache` and can be moved with `FAAR_CACHE_DIR`. Concurrent
+writers produce identical content, so atomic last-writer-wins is safe.
+
+## Runtime configuration
+
+All of the following are environment variables with validated values; the
+launcher derives the memory/GPU ones when unset:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `FAAR_GPU_BUDGET_GB` | required for GPU runs | explicit per-process VRAM budget in GiB |
+| `FAAR_MAX_GPU_MEMORY_FRACTION` | derived from budget | per-process CUDA memory fraction in `(0,1]` |
+| `FAAR_MIN_GPU_FREE_GB` | 20% of GPU VRAM | co-tenant free-VRAM reserve |
+| `FAAR_MAX_RSS_GB` | 90% of scheduler/cgroup RAM | in-process RSS fail-fast guard |
+| `FAAR_EMBED_BATCH_SIZE` | 2 | corpus/query embedding batch size |
+| `FAAR_VISUAL_BATCH_SIZE` | 1 | ColPali/VisRAG corpus-encode batch size |
+| `FAAR_VISUAL_SCORE_BATCH_SIZE` | 8 | ColPali score batch size |
+| `FAAR_VLM_MAX_RETRIES` | 3 | total attempts per VLM call; retries only on 429/5xx/timeouts |
+| `FAAR_VLM_RETRY_BACKOFF_SECONDS` | 2.0 | exponential backoff base with jitter |
+| `FAAR_VLM_TIMEOUT_SECONDS` | 60 | per-request VLM timeout |
+| `FAAR_CACHE_DIR` | `<project_root>/cache` | corpus-embedding cache root |
+| `FAAR_LOG_INTERVAL_SECONDS` | 60 | progress-line interval |
+| `FAAR_LOG_INTERVAL_ITEMS` | 25 | progress-line item interval |
+| `OMP_NUM_THREADS` / `MKL_NUM_THREADS` | half the allocated CPUs | thread caps |
+
+CUDA out-of-memory during corpus encoding or scoring halves the batch size
+automatically (floor of 1) and retries the same slice after releasing the
+CUDA cache; the event is printed and the reduced size is kept for the rest of
+the process. A batch of 1 that still OOMs fails the job rather than hiding the
+error.
+
+A job interrupted by SIGTERM/SIGINT stops at the next example boundary,
+leaves all completed per-example checkpoints intact, and exits 130/143 without
+publishing a partial result file. Per-example failures (bad data, exhausted
+VLM retries) are recorded in a failed checkpoint with the error message and
+the run continues; the run then fails at the end with the exact list of failed
+example ids, so nothing is silently skipped and a single bad example cannot
+waste a multi-hour job.
