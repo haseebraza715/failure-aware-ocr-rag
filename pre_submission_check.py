@@ -2,17 +2,53 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
 
 
-def grep_matches(root: Path, term: str) -> list[str]:
-    command = ["grep", "-r", "-l", term, "."]
-    completed = subprocess.run(command, cwd=root, text=True, capture_output=True, check=False)
-    # The plan calls grep over the full checkout, but Git remote metadata is not
-    # a paper source artifact and is never included in an anonymized submission.
-    return [line for line in completed.stdout.splitlines() if line and not line.startswith("./.git/")]
+class GitScanError(RuntimeError):
+    pass
+
+
+def _git_list_files(root: Path, *flags: str) -> list[str]:
+    completed = subprocess.run(
+        ["git", "ls-files", "-z", *flags],
+        cwd=root,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise GitScanError(
+            f"'git ls-files' exited {completed.returncode}: {stderr or 'unknown error'}"
+        )
+    return [
+        entry.decode("utf-8", errors="surrogateescape")
+        for entry in completed.stdout.split(b"\x00")
+        if entry
+    ]
+
+
+def scan_git_matches(root: Path, term: str) -> list[str]:
+    tracked = _git_list_files(root)
+    untracked = _git_list_files(root, "--others", "--exclude-standard")
+    needle = term.encode("utf-8")
+    matches: list[str] = []
+    for relative in tracked + untracked:
+        path = root / relative
+        try:
+            content = (
+                os.readlink(path).encode("utf-8", errors="surrogateescape")
+                if path.is_symlink()
+                else path.read_bytes()
+            )
+        except OSError as exc:
+            raise GitScanError(f"could not scan {relative!r}: {exc}") from exc
+        if needle in content:
+            matches.append("./" + relative)
+    return matches
 
 
 def pdf_author(pdf_path: Path) -> str | None:
@@ -41,8 +77,13 @@ def main() -> None:
         "./PLAN.md",
         "./pre_submission_check.py",
     }
-    raw_handle_matches = grep_matches(root, "haseebraza")
-    raw_name_matches = grep_matches(root, "your-real-name")
+    try:
+        raw_handle_matches = scan_git_matches(root, "haseebraza")
+        raw_name_matches = scan_git_matches(root, "your-real-name")
+    except GitScanError as exc:
+        raise SystemExit(
+            f"Pre-submission check could not enumerate repository files: {exc}"
+        ) from exc
     report = {
         "haseebraza_matches": raw_handle_matches,
         "your_real_name_matches": raw_name_matches,
