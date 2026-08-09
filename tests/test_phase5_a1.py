@@ -58,6 +58,7 @@ def test_a1_cli_uses_the_no_gate_profile(monkeypatch, tmp_path: Path) -> None:
 
     monkeypatch.setattr(runner, "_settings_from_args", lambda args: settings)
     monkeypatch.setattr(AppSettings, "validate_runtime_paths", lambda self: None)
+    monkeypatch.setattr(runner, "load_benchmark_repository", lambda *args, **kwargs: object())
     monkeypatch.setattr(runner, "_require_key_for_paid_vlm", lambda backend: None)
     monkeypatch.setattr(runner, "_validate_baseline", lambda *args, **kwargs: None)
     monkeypatch.setattr(runner, "_apply_baseline_harm", lambda payload, *args, **kwargs: payload)

@@ -147,6 +147,7 @@ def test_run_spec_persists_anthropic_cost_rates(monkeypatch, tmp_path: Path) -> 
     settings.recovery.anthropic_model = "claude-sonnet-4-5"
     monkeypatch.setattr(run_module, "_settings_from_args", lambda args: settings)
     monkeypatch.setattr(AppSettings, "validate_runtime_paths", lambda self: None)
+    monkeypatch.setattr(run_module, "load_benchmark_repository", lambda *args, **kwargs: object())
     output_path = tmp_path / "b0.json"
 
     def fake_profile_run(

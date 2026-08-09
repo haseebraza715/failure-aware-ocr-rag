@@ -47,6 +47,7 @@ RUN_SPEC_MATCH_KEYS = (
     "reranker",
     "ocr_engine",
     "model_provenance",
+    "manifest_sha256",
 )
 
 SUMMARY_KEYS = (
@@ -340,6 +341,8 @@ def validate_output(
             )
     for key in RUN_SPEC_MATCH_KEYS:
         if key not in run_spec:
+            if key == "manifest_sha256":
+                continue
             raise SystemExit(f"{path} is missing run_spec.{key} provenance.")
     for key in ("embedding_model", "reranker", "ocr_engine"):
         if not isinstance(run_spec[key], str) or not run_spec[key].strip():
@@ -364,6 +367,8 @@ def validate_output(
             raise SystemExit(f"{path} cannot be validated without the B0 result.")
         baseline_spec = baseline_payload["run_spec"]
         for key in RUN_SPEC_MATCH_KEYS:
+            if key == "manifest_sha256" and (key not in run_spec or key not in baseline_spec):
+                continue
             if run_spec[key] != baseline_spec[key]:
                 raise SystemExit(f"{path} run_spec.{key} does not match B0.")
         baseline_ids = _example_ids(baseline_payload, path.with_name("b0.json"))

@@ -7,6 +7,8 @@ from pathlib import Path
 from statistics import mean
 from typing import Any, Iterable
 
+from .results_aggregator import summarize_api_usage
+
 
 def load_result(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text())
@@ -30,6 +32,7 @@ _RUN_SPEC_MATCH_KEYS = (
     "reranker",
     "ocr_engine",
     "model_provenance",
+    "manifest_sha256",
 )
 
 _VLM_MATCH_KEYS = ("vlm_backend", "vlm_model", "vlm_cost_rates")
@@ -74,8 +77,12 @@ def _validate_analysis_inputs(baseline_path: Path, result_paths: list[Path]) -> 
         vlm_signatures.append(tuple(run_spec[key] for key in _VLM_MATCH_KEYS))
         for key in _RUN_SPEC_MATCH_KEYS:
             if key not in baseline_spec:
+                if key == "manifest_sha256":
+                    continue
                 raise ValueError(f"{baseline_path} run_spec is missing {key}.")
             if key not in run_spec:
+                if key == "manifest_sha256":
+                    continue
                 raise ValueError(f"{result_path} run_spec is missing {key}.")
             if run_spec[key] != baseline_spec[key]:
                 raise ValueError(f"{result_path} run_spec.{key} does not match baseline run_spec.")
@@ -127,6 +134,46 @@ def _harm_rate(rows: list[dict[str, Any]], baseline_rows: list[dict[str, Any]]) 
     return round(harmed / len(rows), 4)
 
 
+def _recompute_summary(
+    rows: list[dict[str, Any]],
+    baseline_rows: list[dict[str, Any]],
+    path: Path,
+) -> dict[str, Any]:
+    em = mean(float((row.get("metrics") or {}).get("em", 0.0)) for row in rows)
+    f1 = mean(float((row.get("metrics") or {}).get("f1", 0.0)) for row in rows)
+    vlm_rate = mean(
+        1.0 if (row.get("action_outcome") or {}).get("action") == "invoke_vlm" else 0.0
+        for row in rows
+    )
+    try:
+        api = summarize_api_usage(rows)
+    except ValueError as exc:
+        raise ValueError(f"{path} contains invalid API accounting: {exc}.") from exc
+    return {
+        "EM": round(em, 4),
+        "F1": round(f1, 4),
+        "vlm_rate": round(vlm_rate, 4),
+        "harm_rate": _harm_rate(rows, baseline_rows),
+        "api_requests": int(api["api_requests"]),
+        "prompt_tokens": int(api["prompt_tokens"]),
+        "completion_tokens": int(api["completion_tokens"]),
+        "cost_usd": round(float(api["cost_usd"]), 6),
+    }
+
+
+def _validate_recomputed_summary(
+    stored: dict[str, Any],
+    recomputed: dict[str, Any],
+    path: Path,
+) -> None:
+    for key, expected in recomputed.items():
+        if key not in stored or stored.get(key) is None:
+            continue
+        observed = float(stored[key])
+        if abs(observed - float(expected)) > 1e-6:
+            raise ValueError(f"{path} summary.{key} is {observed}; rows recompute to {expected}.")
+
+
 def failure_type_breakdown(rows: list[dict[str, Any]], baseline_rows: list[dict[str, Any]]) -> dict[str, dict[str, float | int]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
@@ -147,6 +194,7 @@ def failure_type_breakdown(rows: list[dict[str, Any]], baseline_rows: list[dict[
 
 def summarize_analysis(result_paths: list[Path], baseline_path: Path) -> dict[str, Any]:
     baseline = _validate_analysis_inputs(baseline_path, result_paths)
+    baseline_rows = list(baseline["rows"])
     analyses: dict[str, Any] = {}
     for result_path in result_paths:
         result = load_result(result_path)
@@ -154,15 +202,20 @@ def summarize_analysis(result_paths: list[Path], baseline_path: Path) -> dict[st
         if label in analyses:
             raise ValueError(f"Final analysis contains duplicate result label {label!r}.")
         rows = list(result["rows"])
+        stored_summary = dict(result["summary"])
+        recomputed = _recompute_summary(rows, baseline_rows, result_path)
+        _validate_recomputed_summary(stored_summary, recomputed, result_path)
+        if "runtime_sec" in stored_summary:
+            recomputed["runtime_sec"] = stored_summary["runtime_sec"]
         analyses[label] = {
             "source": str(result_path),
-            "summary": result["summary"],
+            "summary": recomputed,
             "bootstrap_95_ci": {
                 "EM": bootstrap_ci((row.get("metrics") or {}).get("em", 0.0) for row in rows),
                 "F1": bootstrap_ci((row.get("metrics") or {}).get("f1", 0.0) for row in rows),
             },
-            "failure_type_breakdown": failure_type_breakdown(rows, list(baseline["rows"])),
-            "harm_rate": _harm_rate(rows, list(baseline["rows"])),
+            "failure_type_breakdown": failure_type_breakdown(rows, baseline_rows),
+            "harm_rate": _harm_rate(rows, baseline_rows),
         }
     return {
         "baseline": str(baseline_path),

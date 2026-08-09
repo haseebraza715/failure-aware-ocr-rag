@@ -46,6 +46,7 @@ BASELINE_MATCH_KEYS = (
     "reranker",
     "ocr_engine",
     "model_provenance",
+    "manifest_sha256",
 )
 
 ABLATION_PROFILE_MAP = {
@@ -106,6 +107,8 @@ def _validate_baseline(
         raise SystemExit(f"Matching B0 result has no run_spec provenance: {baseline_path}")
     for key in BASELINE_MATCH_KEYS:
         if key not in baseline_spec:
+            if key == "manifest_sha256":
+                continue
             raise SystemExit(f"Matching B0 result is missing run_spec.{key}: {baseline_path}")
         expected = run_spec.get(key)
         observed = baseline_spec[key]
@@ -386,6 +389,8 @@ def main() -> None:
         "vlm_cost_rates": vlm_cost_rates(settings.recovery.vlm_backend),
         "model_provenance": settings.model_provenance(),
     }
+    repo = load_benchmark_repository(settings.project_root, args.dataset, args.split)
+    run_spec["manifest_sha256"] = getattr(repo, "manifest_sha256", None)
 
     if args.mode in {"colpali", "visrag"}:
         if args.shard_index is not None or args.num_shards is not None:

@@ -58,6 +58,7 @@ def test_a4_cli_selects_no_backtrack_profile(monkeypatch, tmp_path: Path) -> Non
         return payload
 
     monkeypatch.setattr(run, "_run_profile_to_result", fake_run_profile)
+    monkeypatch.setattr(run, "load_benchmark_repository", lambda *args, **kwargs: object())
     monkeypatch.setattr(run, "_require_key_for_paid_vlm", lambda backend: None)
     monkeypatch.setattr(run, "_validate_baseline", lambda *args, **kwargs: None)
     monkeypatch.setattr(run, "_apply_baseline_harm", lambda payload, *args, **kwargs: payload)

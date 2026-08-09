@@ -120,6 +120,7 @@ def run_profile(
                 "profile": profile_name,
                 "run_id": datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ"),
                 "run_fingerprint": fingerprint,
+                "manifest_sha256": getattr(repo, "manifest_sha256", None),
                 "api_enabled": settings.recovery.api_enabled,
                 "vlm_backend": settings.recovery.vlm_backend,
                 "openai_model": settings.recovery.openai_model,

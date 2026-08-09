@@ -118,6 +118,7 @@ def _payload(stage: str, args, ids: list[str]) -> dict:
             "ocr_engine": ocr,
             "vlm_backend": args.vlm or "openai",
             "gate_threshold": 0.5 if stage == "b2" else None,
+            "manifest_sha256": "a" * 64,
             "model_provenance": {
                 "embedding": {"repository": embedding, "revision": "locked"},
                 "reranker": {"repository": reranker, "revision": "locked"},

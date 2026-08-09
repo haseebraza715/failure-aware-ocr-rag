@@ -5,6 +5,13 @@ import pytest
 
 from faar.final_analysis import _harm_rate, bootstrap_ci, pareto_frontier, summarize_analysis
 
+DEFAULT_API_USAGE = {
+    "api_requests": 1,
+    "prompt_tokens": 10,
+    "completion_tokens": 5,
+    "cost_usd": 0.0001,
+}
+
 
 def _run_spec(**overrides) -> dict:
     spec = {
@@ -21,6 +28,7 @@ def _run_spec(**overrides) -> dict:
             "embedding": {"repository": "nvidia/NV-Embed-v2", "revision": None},
             "reranker": {"repository": "BAAI/bge-reranker-v2-m3", "revision": None},
         },
+        "manifest_sha256": "a" * 64,
         "vlm_backend": "openai",
         "vlm_model": "gpt-4o-2024-11-20",
         "vlm_cost_rates": {
@@ -34,19 +42,60 @@ def _run_spec(**overrides) -> dict:
     return spec
 
 
+def _row(example_id: str, f1: float, failure_type: str = "semantic") -> dict:
+    return {
+        "example_id": example_id,
+        "failure_type": failure_type,
+        "action_outcome": {"action": "invoke_vlm"},
+        "metrics": {"em": f1, "f1": f1},
+        "api_usage": dict(DEFAULT_API_USAGE),
+    }
+
+
+def _consistent_summary(rows: list[dict], baseline_rows: list[dict] | None = None) -> dict:
+    count = len(rows)
+    em = round(sum(float((row.get("metrics") or {}).get("em", 0.0)) for row in rows) / count, 4)
+    f1 = round(sum(float((row.get("metrics") or {}).get("f1", 0.0)) for row in rows) / count, 4)
+    vlm_rate = round(
+        sum(
+            1.0 if (row.get("action_outcome") or {}).get("action") == "invoke_vlm" else 0.0
+            for row in rows
+        )
+        / count,
+        4,
+    )
+    return {
+        "EM": em,
+        "F1": f1,
+        "vlm_rate": vlm_rate,
+        "harm_rate": round(_harm_rate(rows, baseline_rows), 4) if baseline_rows else 0.0,
+        "api_requests": sum(int((row.get("api_usage") or {}).get("api_requests", 0)) for row in rows),
+        "prompt_tokens": sum(int((row.get("api_usage") or {}).get("prompt_tokens", 0)) for row in rows),
+        "completion_tokens": sum(
+            int((row.get("api_usage") or {}).get("completion_tokens", 0)) for row in rows
+        ),
+        "cost_usd": round(
+            sum(float((row.get("api_usage") or {}).get("cost_usd", 0.0)) for row in rows), 6
+        ),
+        "runtime_sec": 1.0,
+    }
+
+
 def _result(
     path: Path,
     label: str,
-    f1: float,
-    cost: float,
     rows: list[dict],
     *,
     profile: str = "faar_full",
     run_spec: dict | None = None,
+    summary: dict | None = None,
+    baseline_rows: list[dict] | None = None,
 ) -> None:
+    if summary is None:
+        summary = _consistent_summary(rows, baseline_rows)
     payload = {
         "label": label,
-        "summary": {"EM": f1, "F1": f1, "vlm_rate": 0.2, "harm_rate": 0.0, "cost_usd": cost},
+        "summary": summary,
         "rows": rows,
     }
     if profile is not None:
@@ -56,25 +105,61 @@ def _result(
     path.write_text(json.dumps(payload))
 
 
-def _row(example_id: str, f1: float, failure_type: str = "semantic") -> dict:
-    return {
-        "example_id": example_id,
-        "failure_type": failure_type,
-        "action_outcome": {"action": "invoke_vlm"},
-        "metrics": {"em": f1, "f1": f1},
-    }
-
-
 def test_analysis_uses_rows_for_bootstrap_harm_and_breakdown(tmp_path: Path) -> None:
     baseline, faar = tmp_path / "b0.json", tmp_path / "faar.json"
     spec = _run_spec()
-    _result(baseline, "B0", 0.5, 0.0, [_row("e1", 1.0), _row("e2", 0.5)], profile="naive_rag", run_spec=spec)
-    _result(faar, "FAAR", 0.5, 0.2, [_row("e1", 0.0), _row("e2", 1.0, "structural")], run_spec=spec)
+    baseline_rows = [_row("e1", 1.0), _row("e2", 0.5)]
+    _result(baseline, "B0", baseline_rows, profile="naive_rag", run_spec=spec)
+    _result(
+        faar,
+        "FAAR",
+        [_row("e1", 0.0), _row("e2", 1.0, "structural")],
+        run_spec=spec,
+        baseline_rows=baseline_rows,
+    )
     analysis = summarize_analysis([faar], baseline)
     result = analysis["results"]["FAAR"]
     assert result["harm_rate"] == 0.5
     assert result["failure_type_breakdown"]["semantic"]["count"] == 1
     assert result["bootstrap_95_ci"]["F1"]["mean"] == 0.5
+    assert result["summary"]["F1"] == 0.5
+
+
+def test_analysis_passes_when_summary_matches_rows(tmp_path: Path) -> None:
+    baseline, faar = tmp_path / "b0.json", tmp_path / "faar.json"
+    spec = _run_spec()
+    baseline_rows = [_row("e1", 1.0), _row("e2", 0.5)]
+    _result(baseline, "B0", baseline_rows, profile="naive_rag", run_spec=spec)
+    _result(
+        faar,
+        "FAAR",
+        [_row("e1", 0.0), _row("e2", 0.75)],
+        run_spec=spec,
+        baseline_rows=baseline_rows,
+    )
+    analysis = summarize_analysis([faar], baseline)
+    summary = analysis["results"]["FAAR"]["summary"]
+    assert summary["EM"] == 0.375
+    assert summary["F1"] == 0.375
+    assert summary["vlm_rate"] == 1.0
+    assert summary["harm_rate"] == 0.5
+    assert summary["api_requests"] == 2
+    assert summary["prompt_tokens"] == 20
+    assert summary["completion_tokens"] == 10
+    assert summary["cost_usd"] == 0.0002
+    assert summary["runtime_sec"] == 1.0
+
+
+def test_analysis_rejects_fabricated_summary_f1(tmp_path: Path) -> None:
+    baseline, faar = tmp_path / "b0.json", tmp_path / "faar.json"
+    spec = _run_spec()
+    baseline_rows = [_row("e1", 1.0)]
+    _result(baseline, "B0", baseline_rows, profile="naive_rag", run_spec=spec)
+    fabricated = _consistent_summary([_row("e1", 0.0)], baseline_rows)
+    fabricated["F1"] = 1.0
+    _result(faar, "FAAR", [_row("e1", 0.0)], run_spec=spec, summary=fabricated)
+    with pytest.raises(ValueError, match="summary.F1"):
+        summarize_analysis([faar], baseline)
 
 
 def test_bootstrap_ci_is_seeded_and_pareto_discards_dominated_points() -> None:
@@ -92,24 +177,27 @@ def test_bootstrap_ci_is_seeded_and_pareto_discards_dominated_points() -> None:
 def test_analysis_rejects_baseline_that_is_not_naive_rag(tmp_path: Path) -> None:
     baseline, faar = tmp_path / "b0.json", tmp_path / "faar.json"
     spec = _run_spec()
-    _result(baseline, "B0", 0.5, 0.0, [_row("e1", 1.0)], profile="faar_full", run_spec=spec)
-    _result(faar, "FAAR", 0.5, 0.2, [_row("e1", 0.0)], run_spec=spec)
+    baseline_rows = [_row("e1", 1.0)]
+    _result(baseline, "B0", baseline_rows, profile="faar_full", run_spec=spec)
+    _result(faar, "FAAR", [_row("e1", 0.0)], run_spec=spec, baseline_rows=baseline_rows)
     with pytest.raises(ValueError, match="naive_rag"):
         summarize_analysis([faar], baseline)
 
 
 def test_analysis_rejects_missing_baseline_run_spec(tmp_path: Path) -> None:
     baseline, faar = tmp_path / "b0.json", tmp_path / "faar.json"
-    _result(baseline, "B0", 0.5, 0.0, [_row("e1", 1.0)], profile="naive_rag", run_spec=None)
-    _result(faar, "FAAR", 0.5, 0.2, [_row("e1", 0.0)], run_spec=_run_spec())
+    baseline_rows = [_row("e1", 1.0)]
+    _result(baseline, "B0", baseline_rows, profile="naive_rag", run_spec=None)
+    _result(faar, "FAAR", [_row("e1", 0.0)], run_spec=_run_spec(), baseline_rows=baseline_rows)
     with pytest.raises(ValueError, match="run_spec"):
         summarize_analysis([faar], baseline)
 
 
 def test_analysis_rejects_missing_result_run_spec(tmp_path: Path) -> None:
     baseline, faar = tmp_path / "b0.json", tmp_path / "faar.json"
-    _result(baseline, "B0", 0.5, 0.0, [_row("e1", 1.0)], profile="naive_rag", run_spec=_run_spec())
-    _result(faar, "FAAR", 0.5, 0.2, [_row("e1", 0.0)], run_spec=None)
+    baseline_rows = [_row("e1", 1.0)]
+    _result(baseline, "B0", baseline_rows, profile="naive_rag", run_spec=_run_spec())
+    _result(faar, "FAAR", [_row("e1", 0.0)], run_spec=None, baseline_rows=baseline_rows)
     with pytest.raises(ValueError, match="run_spec"):
         summarize_analysis([faar], baseline)
 
@@ -127,13 +215,21 @@ def test_analysis_rejects_missing_result_run_spec(tmp_path: Path) -> None:
         ("reranker", "BAAI/bge-reranker-base"),
         ("ocr_engine", "tesseract"),
         ("model_provenance", {"embedding": {"repository": "other", "revision": None}}),
+        ("manifest_sha256", "0" * 64),
     ],
 )
 def test_analysis_rejects_run_spec_key_mismatch(tmp_path: Path, key: str, value: object) -> None:
     baseline, faar = tmp_path / "b0.json", tmp_path / "faar.json"
     spec = _run_spec()
-    _result(baseline, "B0", 0.5, 0.0, [_row("e1", 1.0)], profile="naive_rag", run_spec=spec)
-    _result(faar, "FAAR", 0.5, 0.2, [_row("e1", 0.0)], run_spec=_run_spec(**{key: value}))
+    baseline_rows = [_row("e1", 1.0)]
+    _result(baseline, "B0", baseline_rows, profile="naive_rag", run_spec=spec)
+    _result(
+        faar,
+        "FAAR",
+        [_row("e1", 0.0)],
+        run_spec=_run_spec(**{key: value}),
+        baseline_rows=baseline_rows,
+    )
     with pytest.raises(ValueError, match=f"run_spec.{key}"):
         summarize_analysis([faar], baseline)
 
@@ -141,10 +237,11 @@ def test_analysis_rejects_run_spec_key_mismatch(tmp_path: Path, key: str, value:
 def test_analysis_rejects_run_spec_missing_match_key(tmp_path: Path) -> None:
     baseline, faar = tmp_path / "b0.json", tmp_path / "faar.json"
     spec = _run_spec()
+    baseline_rows = [_row("e1", 1.0)]
     partial = dict(spec)
     del partial["shard_index"]
-    _result(baseline, "B0", 0.5, 0.0, [_row("e1", 1.0)], profile="naive_rag", run_spec=spec)
-    _result(faar, "FAAR", 0.5, 0.2, [_row("e1", 0.0)], run_spec=partial)
+    _result(baseline, "B0", baseline_rows, profile="naive_rag", run_spec=spec)
+    _result(faar, "FAAR", [_row("e1", 0.0)], run_spec=partial, baseline_rows=baseline_rows)
     with pytest.raises(ValueError, match="shard_index"):
         summarize_analysis([faar], baseline)
 
@@ -152,8 +249,15 @@ def test_analysis_rejects_run_spec_missing_match_key(tmp_path: Path) -> None:
 def test_analysis_rejects_duplicate_result_example_ids(tmp_path: Path) -> None:
     baseline, faar = tmp_path / "b0.json", tmp_path / "faar.json"
     spec = _run_spec()
-    _result(baseline, "B0", 0.5, 0.0, [_row("e1", 1.0)], profile="naive_rag", run_spec=spec)
-    _result(faar, "FAAR", 0.5, 0.2, [_row("e1", 0.0), _row("e1", 0.3)], run_spec=spec)
+    baseline_rows = [_row("e1", 1.0)]
+    _result(baseline, "B0", baseline_rows, profile="naive_rag", run_spec=spec)
+    _result(
+        faar,
+        "FAAR",
+        [_row("e1", 0.0), _row("e1", 0.3)],
+        run_spec=spec,
+        baseline_rows=baseline_rows,
+    )
     with pytest.raises(ValueError, match="duplicate"):
         summarize_analysis([faar], baseline)
 
@@ -161,8 +265,14 @@ def test_analysis_rejects_duplicate_result_example_ids(tmp_path: Path) -> None:
 def test_analysis_rejects_duplicate_baseline_example_ids(tmp_path: Path) -> None:
     baseline, faar = tmp_path / "b0.json", tmp_path / "faar.json"
     spec = _run_spec()
-    _result(baseline, "B0", 0.5, 0.0, [_row("e1", 1.0), _row("e1", 0.8)], profile="naive_rag", run_spec=spec)
-    _result(faar, "FAAR", 0.5, 0.2, [_row("e1", 0.0)], run_spec=spec)
+    _result(
+        baseline,
+        "B0",
+        [_row("e1", 1.0), _row("e1", 0.8)],
+        profile="naive_rag",
+        run_spec=spec,
+    )
+    _result(faar, "FAAR", [_row("e1", 0.0)], run_spec=spec, baseline_rows=[_row("e1", 1.0)])
     with pytest.raises(ValueError, match="duplicate"):
         summarize_analysis([faar], baseline)
 
@@ -170,8 +280,15 @@ def test_analysis_rejects_duplicate_baseline_example_ids(tmp_path: Path) -> None
 def test_analysis_rejects_missing_example_id(tmp_path: Path) -> None:
     baseline, faar = tmp_path / "b0.json", tmp_path / "faar.json"
     spec = _run_spec()
-    _result(baseline, "B0", 0.5, 0.0, [_row("e1", 1.0)], profile="naive_rag", run_spec=spec)
-    _result(faar, "FAAR", 0.5, 0.2, [_row("e1", 0.0), _row("", 0.3)], run_spec=spec)
+    baseline_rows = [_row("e1", 1.0)]
+    _result(baseline, "B0", baseline_rows, profile="naive_rag", run_spec=spec)
+    _result(
+        faar,
+        "FAAR",
+        [_row("e1", 0.0), _row("", 0.3)],
+        run_spec=spec,
+        summary=_consistent_summary([_row("e1", 0.0)], baseline_rows),
+    )
     with pytest.raises(ValueError, match="missing example_id"):
         summarize_analysis([faar], baseline)
 
@@ -179,8 +296,15 @@ def test_analysis_rejects_missing_example_id(tmp_path: Path) -> None:
 def test_analysis_rejects_row_not_covered_by_baseline(tmp_path: Path) -> None:
     baseline, faar = tmp_path / "b0.json", tmp_path / "faar.json"
     spec = _run_spec()
-    _result(baseline, "B0", 0.5, 0.0, [_row("e1", 1.0)], profile="naive_rag", run_spec=spec)
-    _result(faar, "FAAR", 0.5, 0.2, [_row("e1", 0.0), _row("e9", 0.5)], run_spec=spec)
+    baseline_rows = [_row("e1", 1.0)]
+    _result(baseline, "B0", baseline_rows, profile="naive_rag", run_spec=spec)
+    _result(
+        faar,
+        "FAAR",
+        [_row("e1", 0.0), _row("e9", 0.5)],
+        run_spec=spec,
+        summary=_consistent_summary([_row("e1", 0.0)], baseline_rows),
+    )
     with pytest.raises(ValueError, match="not covered"):
         summarize_analysis([faar], baseline)
 
@@ -188,16 +312,9 @@ def test_analysis_rejects_row_not_covered_by_baseline(tmp_path: Path) -> None:
 def test_analysis_rejects_result_that_omits_baseline_row(tmp_path: Path) -> None:
     baseline, faar = tmp_path / "b0.json", tmp_path / "faar.json"
     spec = _run_spec()
-    _result(
-        baseline,
-        "B0",
-        0.5,
-        0.0,
-        [_row("e1", 1.0), _row("e2", 0.5)],
-        profile="naive_rag",
-        run_spec=spec,
-    )
-    _result(faar, "FAAR", 0.5, 0.2, [_row("e1", 0.0)], run_spec=spec)
+    baseline_rows = [_row("e1", 1.0), _row("e2", 0.5)]
+    _result(baseline, "B0", baseline_rows, profile="naive_rag", run_spec=spec)
+    _result(faar, "FAAR", [_row("e1", 0.0)], run_spec=spec, baseline_rows=baseline_rows)
     with pytest.raises(ValueError, match="omits baseline B0 rows"):
         summarize_analysis([faar], baseline)
 
@@ -205,8 +322,15 @@ def test_analysis_rejects_result_that_omits_baseline_row(tmp_path: Path) -> None
 def test_analysis_rejects_empty_result_rows(tmp_path: Path) -> None:
     baseline, faar = tmp_path / "b0.json", tmp_path / "faar.json"
     spec = _run_spec()
-    _result(baseline, "B0", 0.5, 0.0, [_row("e1", 1.0)], profile="naive_rag", run_spec=spec)
-    _result(faar, "FAAR", 0.0, 0.0, [], run_spec=spec)
+    baseline_rows = [_row("e1", 1.0)]
+    _result(baseline, "B0", baseline_rows, profile="naive_rag", run_spec=spec)
+    _result(
+        faar,
+        "FAAR",
+        [],
+        run_spec=spec,
+        summary={"EM": 0.0, "F1": 0.0, "vlm_rate": 0.0, "harm_rate": 0.0, "cost_usd": 0.0},
+    )
     with pytest.raises(ValueError, match="no result rows"):
         summarize_analysis([faar], baseline)
 
@@ -215,9 +339,10 @@ def test_analysis_rejects_duplicate_result_labels(tmp_path: Path) -> None:
     baseline = tmp_path / "b0.json"
     first, second = tmp_path / "first.json", tmp_path / "second.json"
     spec = _run_spec()
-    _result(baseline, "B0", 0.5, 0.0, [_row("e1", 1.0)], profile="naive_rag", run_spec=spec)
-    _result(first, "FAAR", 0.5, 0.2, [_row("e1", 0.0)], run_spec=spec)
-    _result(second, "FAAR", 0.6, 0.3, [_row("e1", 1.0)], run_spec=spec)
+    baseline_rows = [_row("e1", 1.0)]
+    _result(baseline, "B0", baseline_rows, profile="naive_rag", run_spec=spec)
+    _result(first, "FAAR", [_row("e1", 0.0)], run_spec=spec, baseline_rows=baseline_rows)
+    _result(second, "FAAR", [_row("e1", 1.0)], run_spec=spec, baseline_rows=baseline_rows)
     with pytest.raises(ValueError, match="duplicate result label"):
         summarize_analysis([first, second], baseline)
 
@@ -258,9 +383,16 @@ def test_analysis_rejects_mixed_vlm_provenance_across_results(
 ) -> None:
     baseline, first, second = tmp_path / "b0.json", tmp_path / "first.json", tmp_path / "second.json"
     spec = _run_spec()
-    _result(baseline, "B0", 0.5, 0.0, [_row("e1", 1.0)], profile="naive_rag", run_spec=spec)
-    _result(first, "FAAR", 0.5, 0.2, [_row("e1", 0.0)], run_spec=spec)
-    _result(second, "FAAR-2", 0.6, 0.3, [_row("e1", 1.0)], run_spec=_run_spec(**{key: value}))
+    baseline_rows = [_row("e1", 1.0)]
+    _result(baseline, "B0", baseline_rows, profile="naive_rag", run_spec=spec)
+    _result(first, "FAAR", [_row("e1", 0.0)], run_spec=spec, baseline_rows=baseline_rows)
+    _result(
+        second,
+        "FAAR-2",
+        [_row("e1", 1.0)],
+        run_spec=_run_spec(**{key: value}),
+        baseline_rows=baseline_rows,
+    )
     with pytest.raises(ValueError, match="vlm_backend, vlm_model, and vlm_cost_rates"):
         summarize_analysis([first, second], baseline)
 
@@ -269,9 +401,10 @@ def test_analysis_rejects_mixed_vlm_provenance_across_results(
 def test_analysis_rejects_missing_vlm_provenance_key(tmp_path: Path, key: str) -> None:
     baseline, faar = tmp_path / "b0.json", tmp_path / "faar.json"
     spec = _run_spec()
+    baseline_rows = [_row("e1", 1.0)]
     partial = dict(spec)
     del partial[key]
-    _result(baseline, "B0", 0.5, 0.0, [_row("e1", 1.0)], profile="naive_rag", run_spec=spec)
-    _result(faar, "FAAR", 0.5, 0.2, [_row("e1", 0.0)], run_spec=partial)
+    _result(baseline, "B0", baseline_rows, profile="naive_rag", run_spec=spec)
+    _result(faar, "FAAR", [_row("e1", 0.0)], run_spec=partial, baseline_rows=baseline_rows)
     with pytest.raises(ValueError, match=key):
         summarize_analysis([faar], baseline)

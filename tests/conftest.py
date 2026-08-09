@@ -46,3 +46,10 @@ def isolate_model_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
         "MKL_NUM_THREADS",
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def isolate_run_benchmark_repository(monkeypatch: pytest.MonkeyPatch) -> None:
+    import run
+
+    monkeypatch.setattr(run, "load_benchmark_repository", lambda *args, **kwargs: object())

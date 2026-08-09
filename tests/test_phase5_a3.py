@@ -68,6 +68,7 @@ def test_a3_cli_configures_symspell_wordlevel_fallback(monkeypatch, tmp_path: Pa
         return payload
 
     monkeypatch.setattr(run.AppSettings, "validate_runtime_paths", lambda self: None)
+    monkeypatch.setattr(run, "load_benchmark_repository", lambda *args, **kwargs: object())
     monkeypatch.setattr(run, "_require_key_for_paid_vlm", lambda backend: None)
     monkeypatch.setattr(run, "_validate_baseline", lambda *args, **kwargs: None)
     monkeypatch.setattr(run, "_apply_baseline_harm", lambda payload, *args, **kwargs: payload)

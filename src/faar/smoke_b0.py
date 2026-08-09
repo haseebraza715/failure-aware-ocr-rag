@@ -466,6 +466,7 @@ def run_one_document_b0_smoke(
             "vlm_model": settings.vlm_request_model(),
             "vlm_cost_rates": vlm_cost_rates(settings.recovery.vlm_backend),
             "model_provenance": settings.model_provenance(),
+            "manifest_sha256": getattr(repo, "manifest_sha256", None),
             "note": (
                 "One-document Phase 0 smoke after OHR asset preparation. "
                 "Not a paper-run result. Do not aggregate into Phase 1–7 tables."
