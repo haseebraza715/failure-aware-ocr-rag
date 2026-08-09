@@ -49,6 +49,8 @@ class ByT5Corrector:
             return {"text": text, "candidate": text, "applied": False, "reason": "byt5_ml_extra_missing"}
         except OSError:
             return {"text": text, "candidate": text, "applied": False, "reason": "byt5_model_unavailable"}
+        except RuntimeError:
+            return {"text": text, "candidate": text, "applied": False, "reason": "byt5_inference_failed"}
         accepted, reason = _should_accept_correction(text, corrected, self.correction_settings)
         return {
             "text": corrected if accepted else text,
@@ -100,16 +102,25 @@ class VisualFallback:
                 "answer": "",
                 "used_images": [],
             }
-        client = OpenAI()
         content: list[dict] = [{"type": "text", "text": f"Answer the question using only the page image.\n\nQuestion: {question}"}]
-        for path in image_paths:
-            encoded = base64.b64encode(path.read_bytes()).decode("utf-8")
-            content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{encoded}"},
-                }
-            )
+        try:
+            for path in image_paths:
+                encoded = base64.b64encode(path.read_bytes()).decode("utf-8")
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{encoded}"},
+                    }
+                )
+        except OSError as exc:
+            return {
+                "backend": "openai",
+                "status": "failed",
+                "reason": f"image_read_error:{type(exc).__name__}",
+                "answer": "",
+                "used_images": [str(path) for path in image_paths],
+            }
+        client = OpenAI()
         try:
             response = client.chat.completions.create(
                 model=self.settings.recovery.openai_model,
@@ -177,7 +188,9 @@ def _should_accept_correction(
 
 
 def _contains_cjk(text: str) -> bool:
-    return bool(re.search(r"[\u3400-\u9fff]", text))
+    # Covers kana (3040-30ff), CJK unified ideographs (3400-9fff) and hangul
+    # (ac00-d7af) so non-Latin scripts never reach the Latin-tuned corrector.
+    return bool(re.search(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]", text))
 
 
 def _looks_formula_like(text: str) -> bool:
@@ -199,8 +212,14 @@ def _normalize_whitespace(text: str) -> str:
     return " ".join(text.split())
 
 
+_NUMERIC_SIGNATURE_RE = re.compile(r"(?<![A-Za-z])(?:US\s*)?\$?\d[\d,]*(?:\.\d+)?%?(?![A-Za-z])")
+
+
 def _numeric_signature(text: str) -> list[str]:
-    return re.findall(r"(?:US\s*)?\$?\d[\d,]*(?:\.\d+)?%?", text)
+    # Digits embedded inside words (e.g. "t0tal") are OCR noise, not numeric
+    # facts: guard with letter boundaries so correcting them is not treated as
+    # numeric drift.
+    return _NUMERIC_SIGNATURE_RE.findall(text)
 
 
 def _informative_token_overlap(source: str, candidate: str) -> float:

@@ -13,9 +13,20 @@ from .types import Phase0Example
 
 def _parse_pages(raw: str) -> list[int]:
     raw = raw.strip()
+    if not raw:
+        raise ValueError("page_no is empty in the phase 0 manifest row")
     if raw.startswith("["):
-        return [int(v) for v in ast.literal_eval(raw)]
-    return [int(raw)]
+        try:
+            values = ast.literal_eval(raw)
+        except (ValueError, SyntaxError) as exc:
+            raise ValueError(f"Malformed page_no {raw!r}: expected a list of integers") from exc
+        if not isinstance(values, list) or not all(isinstance(value, int) for value in values):
+            raise ValueError(f"Malformed page_no {raw!r}: expected a list of integers")
+        return values
+    try:
+        return [int(raw)]
+    except ValueError as exc:
+        raise ValueError(f"Malformed page_no {raw!r}: expected an integer") from exc
 
 
 def _parse_ocr_pages(text: str) -> dict[int, str]:
@@ -43,8 +54,17 @@ class Phase0Repository:
     def _load_summary(path: Path | None) -> dict[str, dict]:
         if path is None or not path.exists():
             return {}
-        payload = json.loads(path.read_text())
-        return {item["example_id"]: item for item in payload.get("results", [])}
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError(f"Phase 0 summary {path} must contain a JSON object")
+        results = payload.get("results", [])
+        if not isinstance(results, list):
+            raise ValueError(f"Phase 0 summary {path} must contain a 'results' list")
+        return {
+            item["example_id"]: item
+            for item in results
+            if isinstance(item, dict) and "example_id" in item
+        }
 
     @staticmethod
     def _load_manifest(path: Path | None) -> dict[str, dict]:
@@ -52,6 +72,8 @@ class Phase0Repository:
             raise FileNotFoundError(f"Phase 0 manifest not found: {path}")
         with path.open(newline="", encoding="utf-8", errors="ignore") as handle:
             rows = list(csv.DictReader(handle))
+        if not rows or "example_id" not in (rows[0] or {}):
+            raise ValueError(f"Phase 0 manifest {path} must be a CSV with an 'example_id' column")
         return {row["example_id"]: row for row in rows}
 
     @staticmethod
@@ -60,7 +82,17 @@ class Phase0Repository:
             return {}
         with path.open(newline="", encoding="utf-8", errors="ignore") as handle:
             rows = list(csv.DictReader(handle))
+        if rows and "example_id" not in (rows[0] or {}):
+            raise ValueError(f"Phase 0 manual labels {path} must be a CSV with an 'example_id' column")
         return {row["example_id"]: row for row in rows}
+
+    def _resolve_summary_path(self, raw: str | None) -> Path | None:
+        if not raw:
+            return None
+        path = Path(raw)
+        if path.is_absolute():
+            return path
+        return self.settings.project_root / path
 
     def list_example_ids(self) -> list[str]:
         return sorted(self._manifest)
@@ -127,7 +159,9 @@ class Phase0Repository:
     def get_example(self, example_id: str) -> Phase0Example:
         row = self.get_example_record(example_id)
         summary = self._summary.get(example_id, {})
-        ocr_text_path = Path(summary.get("ocr_text_path", self.settings.phase0_ocr_dir / f"{example_id}.txt"))
+        ocr_text_path = self._resolve_summary_path(summary.get("ocr_text_path")) or (
+            self.settings.phase0_ocr_dir / f"{example_id}.txt"
+        )
         if not ocr_text_path.exists():
             ocr_text_path = self.settings.phase0_ocr_dir / f"{example_id}.txt"
         if not ocr_text_path.exists():
@@ -135,9 +169,16 @@ class Phase0Repository:
                 f"OCR text artifact missing for example {example_id}: {ocr_text_path}. "
                 "Restore artifacts/phase0/ocr_text from the repository before running."
             )
-        gt_text_path = Path(summary["gt_text_path"]) if summary.get("gt_text_path") else None
-        image_paths = [Path(p) for p in summary.get("image_paths", []) if Path(p).exists()]
-        ocr_text = ocr_text_path.read_text(errors="ignore")
+        gt_text_path = self._resolve_summary_path(summary.get("gt_text_path"))
+        raw_image_paths = summary.get("image_paths", [])
+        if not isinstance(raw_image_paths, list):
+            raw_image_paths = []
+        image_paths = [
+            resolved
+            for raw in raw_image_paths
+            if (resolved := self._resolve_summary_path(raw)) is not None and resolved.exists()
+        ]
+        ocr_text = ocr_text_path.read_text(encoding="utf-8", errors="ignore")
         if not ocr_text.strip():
             raise ValueError(
                 f"OCR text artifact is empty for example {example_id}: {ocr_text_path}"

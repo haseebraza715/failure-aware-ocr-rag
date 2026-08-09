@@ -45,6 +45,11 @@ def build_graph(settings: AppSettings):
     def prepare_retrieval(state: GraphState) -> GraphState:
         example = state["example"]
         chunks = build_chunks(example, settings.retrieval)
+        if not chunks:
+            raise ValueError(
+                f"No retrieval chunks could be built for example {example.example_id!r}: "
+                "the OCR text contains no words"
+            )
         retriever = HybridRetriever(chunks, settings.retrieval)
         return {"chunks": chunks, "retriever": retriever}
 

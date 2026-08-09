@@ -38,9 +38,28 @@ def run_profile(
         selected_ids = selected_ids[: max(0, max_examples)]
     base_output = output_dir or (settings.project_root / "logs/phase3" / profile_name)
     base_output.mkdir(parents=True, exist_ok=True)
+    run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     rows: list[dict[str, Any]] = []
     for example_id in selected_ids:
-        result = graph.invoke({"example_id": example_id})
+        try:
+            result = graph.invoke({"example_id": example_id})
+        except Exception as exc:
+            row = _error_row(
+                profile_name,
+                example_id,
+                exc,
+                run_id,
+                seed,
+                settings,
+                selection,
+                max_examples,
+                len(selected_ids),
+            )
+            rows.append(row)
+            (base_output / f"{example_id}.json").write_text(
+                json.dumps(row, indent=2), encoding="utf-8"
+            )
+            continue
         question = result.get("question", "")
         hit_texts = [hit.chunk.text for hit in result.get("corrected_hits") or result.get("retrieved_hits", [])]
         gold = result["example"].correct_answer
@@ -88,7 +107,7 @@ def run_profile(
             "top_hit_texts": hit_texts[:5],
             "run_metadata": {
                 "profile": profile_name,
-                "run_id": datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ"),
+                "run_id": run_id,
                 "api_enabled": settings.recovery.api_enabled,
                 "vlm_backend": settings.recovery.vlm_backend,
                 "openai_model": settings.recovery.openai_model,
@@ -101,5 +120,52 @@ def run_profile(
         }
         rows.append(row)
         destination = base_output / f"{example_id}.json"
-        destination.write_text(json.dumps(row, indent=2))
+        destination.write_text(json.dumps(row, indent=2), encoding="utf-8")
     return rows
+
+
+def _error_row(
+    profile_name: str,
+    example_id: str,
+    exc: Exception,
+    run_id: str,
+    seed: int,
+    settings: AppSettings,
+    selection: dict[str, Any] | None,
+    max_examples: int | None,
+    evaluation_size: int,
+) -> dict[str, Any]:
+    return {
+        "profile": profile_name,
+        "example_id": example_id,
+        "question": "",
+        "gold_answer": "",
+        "predicted_answer": "",
+        "failure_type": "error",
+        "policy_action": "error",
+        "action_outcome": {
+            "action": "failed",
+            "status": "failed",
+            "reason": f"{type(exc).__name__}: {exc}",
+        },
+        "metrics": {"ndcg@5": 0.0, "recall@5": 0.0, "em": 0.0, "f1": 0.0},
+        "recovery_metrics": {
+            "counterfactual_answer": "",
+            "recovery_changed_answer": False,
+            "em": {"actual": 0.0, "counterfactual": 0.0, "delta": 0.0, "effect": "equal"},
+            "f1": {"actual": 0.0, "counterfactual": 0.0, "delta": 0.0, "effect": "equal"},
+        },
+        "top_hit_texts": [],
+        "run_metadata": {
+            "profile": profile_name,
+            "run_id": run_id,
+            "api_enabled": settings.recovery.api_enabled,
+            "vlm_backend": settings.recovery.vlm_backend,
+            "openai_model": settings.recovery.openai_model,
+            "enable_byt5": settings.recovery.enable_byt5,
+            "byt5_model": settings.recovery.byt5_model,
+            "seed": seed,
+            "evaluation_size": evaluation_size,
+            "selection": selection or {"max_examples": max_examples},
+        },
+    }
