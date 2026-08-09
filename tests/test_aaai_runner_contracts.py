@@ -6,7 +6,6 @@ models or calling external services.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import sys
 from pathlib import Path
@@ -15,6 +14,7 @@ from typing import Any
 import pytest
 
 import run
+from faar.gate_tuning import _gate_relevant_source_digest
 from faar.settings import AppSettings
 
 
@@ -72,27 +72,30 @@ def _locked_gate_threshold(tmp_path: Path, **overrides: Any) -> None:
     threshold_path.parent.mkdir(parents=True)
     source = tmp_path / "results/baselines/ohrbench/val/b0.json"
     source.parent.mkdir(parents=True)
-    source.write_text(
-        json.dumps(
-            {
-                "profile": "naive_rag",
-                "run_spec": {
-                    "profile": "naive_rag",
-                    "dataset": "ohrbench",
-                    "split": "val",
-                    "model_provenance": {"vlm": {"model": "gpt-4o-2024-11-20"}},
-                },
-                "rows": [],
-            }
-        )
-    )
+    source_payload = {
+        "profile": "naive_rag",
+        "run_spec": {
+            "profile": "naive_rag",
+            "dataset": "ohrbench",
+            "split": "val",
+            "model_provenance": {
+                "embedding": {"repository": "nvidia/NV-Embed-v2", "revision": "e" * 40},
+                "reranker": {"repository": "BAAI/bge-reranker-v2-m3", "revision": "r" * 40},
+            },
+        },
+        "rows": [],
+    }
+    source.write_text(json.dumps(source_payload))
     payload = {
         "source_split": "val",
         "source_path": str(source),
-        "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "source_digest": _gate_relevant_source_digest(source_payload),
         "dataset": "ohrbench",
         "split": "val",
-        "model_provenance": {"vlm": {"model": "gpt-4o-2024-11-20"}},
+        "model_provenance": {
+            "embedding": {"repository": "nvidia/NV-Embed-v2", "revision": "e" * 40},
+            "reranker": {"repository": "BAAI/bge-reranker-v2-m3", "revision": "r" * 40},
+        },
         "gate_source_metric": "em",
         "signal": "BGE-reranker-v2-m3 top-1 score",
         "threshold": 0.4,
@@ -119,6 +122,17 @@ def test_b1_maps_to_a_dedicated_always_vlm_profile() -> None:
     assert baseline_id == "B1"
     assert profile == "faar_always_vlm"
     assert label == "Always-VLM"
+
+
+def test_run_profile_for_args_rejects_unsupported_default_combination() -> None:
+    args = run.argparse.Namespace(
+        mode=None,
+        ablate=None,
+        gate=None,
+        recovery=None,
+    )
+    with pytest.raises(SystemExit, match="Unsupported baseline combination: gate=None, recovery=None"):
+        run._run_profile_for_args(args)
 
 
 @pytest.mark.parametrize("mode", ["colpali", "visrag"])

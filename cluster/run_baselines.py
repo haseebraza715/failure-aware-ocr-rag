@@ -184,7 +184,6 @@ def validate_gate_lock(
     root: Path,
     *,
     dataset: str | None = None,
-    split: str | None = None,
     model_provenance: dict | None = None,
 ) -> dict:
     path = root / "config" / "gate_threshold.json"
@@ -196,7 +195,6 @@ def validate_gate_lock(
         return require_paper_gate_threshold(
             path,
             dataset=dataset,
-            split=split,
             model_provenance=model_provenance,
         )
     except (OSError, ValueError) as exc:
@@ -452,7 +450,6 @@ def main(argv: list[str] | None = None) -> int:
                 gate_lock = validate_gate_lock(
                     root,
                     dataset=args.dataset,
-                    split=args.split,
                     model_provenance=baseline_mp,
                 )
             out = output_path(root, args.dataset, args.split, stage)

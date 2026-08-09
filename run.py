@@ -22,6 +22,7 @@ from faar.benchmarks import load_benchmark_repository
 from faar.experiment_runner import run_profile
 from faar.gate_tuning import require_paper_gate_threshold
 from faar.metrics import token_f1
+from faar.operations import install_graceful_termination_handler, startup_report
 from faar.results_aggregator import summarize_api_usage, summarize_examples
 from faar.run_io import atomic_write_text, select_shard, shard_label
 from faar.settings import AppSettings
@@ -64,7 +65,10 @@ def _run_profile_for_args(args: argparse.Namespace) -> str:
         return "faar_full"
     if args.ablate:
         return ABLATION_PROFILE_MAP[args.ablate]
-    return BASELINE_MAP[(args.gate or "on", args.recovery or "off")][1]
+    key = (args.gate or "on", args.recovery or "off")
+    if key not in BASELINE_MAP:
+        raise SystemExit(f"Unsupported baseline combination: gate={args.gate}, recovery={args.recovery}")
+    return BASELINE_MAP[key][1]
 
 
 def _require_gate_threshold(settings: AppSettings, profile: str, run_spec: dict[str, Any]) -> float | None:
@@ -74,7 +78,6 @@ def _require_gate_threshold(settings: AppSettings, profile: str, run_spec: dict[
         payload = require_paper_gate_threshold(
             settings.gate_threshold_path,
             dataset=str(run_spec.get("dataset") or "") or None,
-            split=str(run_spec.get("split") or "") or None,
             model_provenance=run_spec.get("model_provenance") or None,
         )
     except ValueError as exc:
@@ -368,10 +371,12 @@ def main() -> None:
     parser.add_argument("--num-shards", type=int, default=None, help="Total shards; requires --shard-index.")
     args = parser.parse_args()
 
+    install_graceful_termination_handler()
     random.seed(args.seed)
     np.random.seed(args.seed)
     settings = _settings_from_args(args)
     settings.validate_runtime_paths()
+    startup_report(settings=settings)
     run_spec = {
         "profile": _run_profile_for_args(args),
         "dataset": args.dataset,

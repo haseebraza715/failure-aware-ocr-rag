@@ -1,4 +1,3 @@
-import hashlib
 import json
 from pathlib import Path
 
@@ -7,6 +6,7 @@ import pytest
 from faar.gate_tuning import (
     GateExample,
     GATE_SOURCE_METRIC,
+    _gate_relevant_source_digest,
     load_gate_examples,
     require_paper_gate_threshold,
     require_validation_payload,
@@ -32,6 +32,27 @@ def test_requires_validation_provenance(tmp_path: Path) -> None:
     result = tmp_path / "b0.json"
     result.write_text(json.dumps({"run_spec": {"split": "test"}, "rows": []}))
     with pytest.raises(ValueError, match="test results are forbidden"):
+        require_validation_payload(result)
+
+
+def test_requires_validation_payload_rejects_smoke_result(tmp_path: Path) -> None:
+    result = tmp_path / "b0.json"
+    result.write_text(
+        json.dumps(
+            {
+                "smoke": True,
+                "paper_result": False,
+                "run_spec": {
+                    "split": "val",
+                    "profile": "naive_rag",
+                    "dataset": "ohrbench",
+                    "model_provenance": {"embedding": {"repository": "nvidia/NV-Embed-v2"}},
+                },
+                "rows": [],
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="smoke/development results are forbidden"):
         require_validation_payload(result)
 
 
@@ -105,27 +126,33 @@ def test_loads_gate_score_and_exact_match_target(tmp_path: Path) -> None:
     assert load_gate_examples(result) == [GateExample("e1", 0.4, True)]
 
 
-def _source_result(tmp_path: Path) -> Path:
+def _model_provenance() -> dict:
+    return {
+        "embedding": {"repository": "nvidia/NV-Embed-v2", "revision": "e" * 40},
+        "reranker": {"repository": "BAAI/bge-reranker-v2-m3", "revision": "r" * 40},
+        "vlm": {"backend": "openai", "provider": "openai", "model": "gpt-4o-2024-11-20"},
+    }
+
+
+def _source_result(tmp_path: Path, **overrides) -> Path:
     path = tmp_path / "results/baselines/ohrbench/val/b0.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(
-            {
-                "profile": "naive_rag",
-                "run_spec": {
-                    "profile": "naive_rag",
-                    "dataset": "ohrbench",
-                    "split": "val",
-                    "model_provenance": {"vlm": {"model": "gpt-4o-2024-11-20"}},
-                    "manifest_sha256": "a" * 64,
-                },
-                "rows": [
-                    {"example_id": "bad", "top_reranker_score": 0.35, "metrics": {"em": 0.0}},
-                    {"example_id": "good", "top_reranker_score": 0.9, "metrics": {"em": 1.0}},
-                ],
-            }
-        )
-    )
+    payload = {
+        "profile": "naive_rag",
+        "run_spec": {
+            "profile": "naive_rag",
+            "dataset": "ohrbench",
+            "split": "val",
+            "model_provenance": _model_provenance(),
+            "manifest_sha256": "a" * 64,
+        },
+        "rows": [
+            {"example_id": "bad", "top_reranker_score": 0.35, "metrics": {"em": 0.0}},
+            {"example_id": "good", "top_reranker_score": 0.9, "metrics": {"em": 1.0}},
+        ],
+    }
+    payload.update(overrides)
+    path.write_text(json.dumps(payload))
     return path
 
 
@@ -134,10 +161,10 @@ def _locked(payload: dict, tmp_path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     source = _source_result(tmp_path)
     payload.setdefault("source_path", str(source))
-    payload.setdefault("source_sha256", hashlib.sha256(source.read_bytes()).hexdigest())
+    payload.setdefault("source_digest", _gate_relevant_source_digest(json.loads(source.read_text())))
     payload.setdefault("dataset", "ohrbench")
     payload.setdefault("split", "val")
-    payload.setdefault("model_provenance", {"vlm": {"model": "gpt-4o-2024-11-20"}})
+    payload.setdefault("model_provenance", _model_provenance())
     payload.setdefault("gate_source_metric", GATE_SOURCE_METRIC)
     path.write_text(json.dumps(payload))
     return path
@@ -211,16 +238,15 @@ def test_write_locked_threshold_records_provable_provenance(tmp_path: Path) -> N
     payload = json.loads(path.read_text())
     assert payload["source_split"] == "val"
     assert payload["source_path"] == str(source)
-    assert payload["source_sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert payload["source_digest"] == _gate_relevant_source_digest(json.loads(source.read_text()))
     assert payload["dataset"] == "ohrbench"
     assert payload["split"] == "val"
-    assert payload["model_provenance"] == {"vlm": {"model": "gpt-4o-2024-11-20"}}
+    assert payload["model_provenance"] == _model_provenance()
     assert payload["gate_source_metric"] == "em"
     assert require_paper_gate_threshold(
         path,
         dataset="ohrbench",
-        split="val",
-        model_provenance={"vlm": {"model": "gpt-4o-2024-11-20"}},
+        model_provenance=_model_provenance(),
     )["threshold"] == 0.4
 
 
@@ -233,8 +259,7 @@ def test_require_paper_gate_threshold_accepts_matching_provenance(tmp_path: Path
         require_paper_gate_threshold(
             path,
             dataset="ohrbench",
-            split="val",
-            model_provenance={"vlm": {"model": "gpt-4o-2024-11-20"}},
+            model_provenance=_model_provenance(),
         )["threshold"]
         == 0.4
     )
@@ -250,16 +275,45 @@ def test_require_paper_gate_threshold_rejects_lock_missing_provenance(tmp_path: 
         require_paper_gate_threshold(path)
 
 
-def test_require_paper_gate_threshold_rejects_tampered_source_sha256(tmp_path: Path) -> None:
+def test_require_paper_gate_threshold_rejects_tampered_source_digest(tmp_path: Path) -> None:
     path = _locked(
         {"source_split": "val", "threshold": 0.4, "precision": 0.8, "recall": 0.75},
         tmp_path,
     )
     payload = json.loads(path.read_text())
-    payload["source_sha256"] = "0" * 64
+    payload["source_digest"] = "0" * 64
     path.write_text(json.dumps(payload))
-    with pytest.raises(ValueError, match="source_sha256"):
+    with pytest.raises(ValueError, match="source_digest"):
         require_paper_gate_threshold(path)
+
+
+def test_require_paper_gate_threshold_rejects_tampered_source_metrics(tmp_path: Path) -> None:
+    path = _locked(
+        {"source_split": "val", "threshold": 0.4, "precision": 0.8, "recall": 0.75},
+        tmp_path,
+    )
+    payload = json.loads(path.read_text())
+    source = json.loads(Path(payload["source_path"]).read_text())
+    source["rows"][0]["metrics"]["em"] = 1.0
+    Path(payload["source_path"]).write_text(json.dumps(source))
+    with pytest.raises(ValueError, match="source_digest no longer matches"):
+        require_paper_gate_threshold(path)
+
+
+def test_require_paper_gate_threshold_accepts_reregistered_source_with_new_timestamps(
+    tmp_path: Path,
+) -> None:
+    path = _locked(
+        {"source_split": "val", "threshold": 0.4, "precision": 0.8, "recall": 0.75},
+        tmp_path,
+    )
+    payload = json.loads(path.read_text())
+    source = json.loads(Path(payload["source_path"]).read_text())
+    source["created_at_utc"] = "2026-08-10T00:00:00+00:00"
+    for row in source["rows"]:
+        row["run_metadata"] = {"run_id": "regenerated"}
+    Path(payload["source_path"]).write_text(json.dumps(source))
+    assert require_paper_gate_threshold(path, dataset="ohrbench")["threshold"] == 0.4
 
 
 def test_require_paper_gate_threshold_rejects_deleted_source_file(tmp_path: Path) -> None:
@@ -296,10 +350,25 @@ def test_require_paper_gate_threshold_rejects_model_provenance_mismatch(tmp_path
         {"source_split": "val", "threshold": 0.4, "precision": 0.8, "recall": 0.75},
         tmp_path,
     )
-    with pytest.raises(ValueError, match="model_provenance"):
+    mismatched = dict(_model_provenance())
+    mismatched["embedding"] = {"repository": "other/embedder", "revision": "x" * 40}
+    with pytest.raises(ValueError, match="retrieval model provenance"):
         require_paper_gate_threshold(
             path,
             dataset="ohrbench",
-            split="val",
-            model_provenance={"vlm": {"model": "other-model"}},
+            model_provenance=mismatched,
         )
+
+
+def test_require_paper_gate_threshold_ignores_vlm_provenance_differences(tmp_path: Path) -> None:
+    path = _locked(
+        {"source_split": "val", "threshold": 0.4, "precision": 0.8, "recall": 0.75},
+        tmp_path,
+    )
+    vlm_only = dict(_model_provenance())
+    vlm_only["vlm"] = {"backend": "claude-sonnet-4-5", "provider": "anthropic", "model": "claude-sonnet-4-5"}
+    assert require_paper_gate_threshold(
+        path,
+        dataset="ohrbench",
+        model_provenance=vlm_only,
+    )["threshold"] == 0.4

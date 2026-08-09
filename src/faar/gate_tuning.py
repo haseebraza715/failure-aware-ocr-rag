@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 from dataclasses import dataclass
@@ -8,6 +7,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .metrics import exact_match
+from .run_io import canonical_digest
 
 
 THETA_GRID = (0.3, 0.4, 0.5, 0.6, 0.7)
@@ -16,10 +16,6 @@ GATE_PRECISION_MIN = 0.75
 GATE_RECALL_MIN = 0.70
 
 GATE_SOURCE_METRIC = "em"
-
-
-def _sha256_of(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -102,6 +98,11 @@ def require_validation_payload(path: Path) -> dict[str, Any]:
     run_spec = payload.get("run_spec") if isinstance(payload, dict) else None
     if not isinstance(run_spec, dict):
         raise ValueError("Gate threshold tuning accepts only a result JSON with a run_spec object.")
+    if payload.get("smoke") is True or payload.get("paper_result") is False:
+        raise ValueError(
+            "Gate threshold tuning accepts only a real paper B0 result; "
+            "smoke/development results are forbidden."
+        )
     if run_spec.get("split") != "val":
         raise ValueError(
             "Gate threshold tuning accepts only a result JSON produced with run_spec.split='val'; test results are forbidden."
@@ -123,6 +124,33 @@ def require_validation_payload(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _gate_relevant_source_digest(payload: dict[str, Any]) -> str:
+    """Digest of the exact content the gate threshold is derived from.
+
+    Covers run_spec plus the per-row gate signal (top reranker score) and the
+    scored metrics. Volatile fields (timestamps, run ids, API usage, VLM
+    provenance) are excluded so a semantically identical re-run of the
+    validation B0 does not invalidate the lock, while any change to the
+    threshold inputs still does.
+    """
+    run_spec = payload.get("run_spec")
+    rows = payload.get("rows")
+    if not isinstance(run_spec, dict) or not isinstance(rows, list):
+        raise ValueError("Gate source must be a result payload with run_spec and rows.")
+    gate_rows = [
+        {
+            "example_id": str(row.get("example_id", "")),
+            "top_reranker_score": row.get(
+                "top_reranker_score", (row.get("gate") or {}).get("top_reranker_score")
+            ),
+            "gate": row.get("gate"),
+            "metrics": row.get("metrics"),
+        }
+        for row in rows
+    ]
+    return canonical_digest({"run_spec": run_spec, "rows": gate_rows})
+
+
 def write_locked_threshold(path: Path, search: dict[str, Any], *, source: Path | None = None) -> None:
     if not bool((search.get("pass_criteria") or {}).get("passed")):
         raise ValueError("Gate threshold cannot be locked because validation precision/recall did not pass.")
@@ -139,7 +167,7 @@ def write_locked_threshold(path: Path, search: dict[str, Any], *, source: Path |
     payload = {
         "source_split": "val",
         "source_path": str(source),
-        "source_sha256": _sha256_of(source),
+        "source_digest": _gate_relevant_source_digest(source_payload),
         "dataset": source_spec["dataset"],
         "split": source_spec["split"],
         "model_provenance": dict(source_spec["model_provenance"]),
@@ -154,12 +182,15 @@ def write_locked_threshold(path: Path, search: dict[str, Any], *, source: Path |
     path.write_text(json.dumps(payload, indent=2) + "\n")
 
 
+def _text_relevant_provenance(model_provenance: dict[str, Any]) -> dict[str, Any]:
+    return {key: model_provenance[key] for key in ("embedding", "reranker") if key in model_provenance}
+
+
 def _verify_locked_provenance(
     payload: dict[str, Any],
     path: Path,
     *,
     dataset: str | None = None,
-    split: str | None = None,
     model_provenance: dict[str, Any] | None = None,
 ) -> None:
     if payload.get("source_split") != "val":
@@ -176,13 +207,20 @@ def _verify_locked_provenance(
         raise ValueError(
             f"Locked gate threshold at {path} references missing source result file: {source_path}"
         )
-    recorded_sha = payload.get("source_sha256")
-    if not isinstance(recorded_sha, str) or len(recorded_sha) != 64:
-        raise ValueError(f"Locked gate threshold at {path} records no source_sha256 provenance.")
-    if _sha256_of(source) != recorded_sha:
+    recorded_digest = payload.get("source_digest")
+    if not isinstance(recorded_digest, str) or len(recorded_digest) != 64:
+        raise ValueError(f"Locked gate threshold at {path} records no source_digest provenance.")
+    try:
+        source_payload = json.loads(source.read_text(encoding="utf-8"))
+        actual_digest = _gate_relevant_source_digest(source_payload)
+    except (OSError, ValueError) as exc:
         raise ValueError(
-            f"Locked gate threshold at {path} source_sha256 no longer matches {source_path}; "
-            "the source B0 result was modified or the lock was tampered with."
+            f"Locked gate threshold at {path} cannot re-read its source result {source_path}: {exc}"
+        ) from exc
+    if actual_digest != recorded_digest:
+        raise ValueError(
+            f"Locked gate threshold at {path} source_digest no longer matches {source_path}; "
+            "the source B0 scores/metrics were modified or the lock was tampered with."
         )
     recorded_split = payload.get("split")
     if recorded_split != "val":
@@ -199,28 +237,26 @@ def _verify_locked_provenance(
         raise ValueError(
             f"Locked gate threshold at {path} was tuned on dataset {recorded_dataset!r}; the current run uses dataset {dataset!r}."
         )
-    if split is not None and recorded_split != split and split == "val":
-        raise ValueError(
-            f"Locked gate threshold at {path} was tuned on split {recorded_split!r}; the current run uses split {split!r}."
-        )
-    if model_provenance is not None and recorded_mp != model_provenance:
-        raise ValueError(
-            f"Locked gate threshold at {path} model_provenance does not match the current run; "
-            "re-tune the gate with the same model configuration."
-        )
+    if model_provenance is not None:
+        recorded_text = _text_relevant_provenance(recorded_mp)
+        current_text = _text_relevant_provenance(model_provenance)
+        if recorded_text != current_text:
+            raise ValueError(
+                f"Locked gate threshold at {path} retrieval model provenance does not match the current run; "
+                "re-tune the gate with the same embedding and reranker configuration."
+            )
 
 
 def load_locked_threshold(
     path: Path,
     *,
     dataset: str | None = None,
-    split: str | None = None,
     model_provenance: dict[str, Any] | None = None,
 ) -> float | None:
     if not path.exists():
         return None
     payload = json.loads(path.read_text())
-    _verify_locked_provenance(payload, path, dataset=dataset, split=split, model_provenance=model_provenance)
+    _verify_locked_provenance(payload, path, dataset=dataset, model_provenance=model_provenance)
     return float(payload["threshold"])
 
 
@@ -228,7 +264,6 @@ def require_paper_gate_threshold(
     path: Path,
     *,
     dataset: str | None = None,
-    split: str | None = None,
     model_provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not path.is_file():
@@ -238,7 +273,7 @@ def require_paper_gate_threshold(
     payload = json.loads(path.read_text())
     if not isinstance(payload, dict):
         raise ValueError(f"Locked gate threshold at {path} must be a JSON object.")
-    _verify_locked_provenance(payload, path, dataset=dataset, split=split, model_provenance=model_provenance)
+    _verify_locked_provenance(payload, path, dataset=dataset, model_provenance=model_provenance)
     try:
         threshold = float(payload["threshold"])
         precision = float(payload["precision"])

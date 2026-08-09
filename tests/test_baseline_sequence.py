@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import signal
 import sys
@@ -9,6 +8,8 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
 import pytest
+
+from faar.gate_tuning import _gate_relevant_source_digest
 
 CLUSTER = Path(__file__).resolve().parents[1] / "cluster"
 RUN_SPEC = spec_from_file_location("cluster_run_baselines", CLUSTER / "run_baselines.py")
@@ -33,28 +34,23 @@ def _gate_lock(root: Path) -> None:
     config.mkdir(parents=True, exist_ok=True)
     source = root / "results/baselines/ohrbench/val/b0.json"
     source.parent.mkdir(parents=True, exist_ok=True)
-    source.write_text(
-        json.dumps(
-            {
-                "profile": "naive_rag",
-                "run_spec": {
-                    "profile": "naive_rag",
-                    "dataset": DATASET,
-                    "split": "val",
-                    "model_provenance": _BASE_MODEL_PROVENANCE,
-                },
-                "rows": [],
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    source_payload = {
+        "profile": "naive_rag",
+        "run_spec": {
+            "profile": "naive_rag",
+            "dataset": DATASET,
+            "split": "val",
+            "model_provenance": _BASE_MODEL_PROVENANCE,
+        },
+        "rows": [],
+    }
+    source.write_text(json.dumps(source_payload) + "\n", encoding="utf-8")
     (config / "gate_threshold.json").write_text(
         json.dumps(
             {
                 "source_split": "val",
                 "source_path": str(source),
-                "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                "source_digest": _gate_relevant_source_digest(source_payload),
                 "dataset": DATASET,
                 "split": "val",
                 "model_provenance": _BASE_MODEL_PROVENANCE,
