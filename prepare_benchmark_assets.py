@@ -38,6 +38,8 @@ from faar.ohr_inventory import (
     load_resolved_ohr_document_inventory,
     resolve_ohr_inventory_path,
 )
+from faar.operations import install_graceful_termination_handler
+from faar.run_io import atomic_write_text
 
 
 def _rel(path: Path, project_root: Path) -> str:
@@ -50,13 +52,18 @@ def _rel(path: Path, project_root: Path) -> str:
 def load_checkpoint(path: Path) -> dict:
     if not path.is_file():
         return {"completed": {}, "updated_at_utc": None}
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Preparation checkpoint is unreadable JSON: {path}: {exc}") from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("completed"), dict):
+        raise SystemExit(f"Preparation checkpoint has an invalid structure: {path}")
+    return payload
 
 
 def save_checkpoint(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload["updated_at_utc"] = datetime.now(UTC).isoformat()
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(path, json.dumps(payload, indent=2) + "\n")
 
 
 def _inventory_page_ids(project_root: Path, doc_rel: str, inventory_dir: Path, page_ids_arg: str | None) -> list[int]:
@@ -113,6 +120,7 @@ def main() -> None:
         help="Print OHR inventory gap diagnosis for qas_v2 and exit.",
     )
     args = parser.parse_args()
+    install_graceful_termination_handler()
 
     project_root = Path.cwd().resolve()
     inventory_dir = (
@@ -185,7 +193,7 @@ def main() -> None:
     checkpoint["plan"] = work
 
     plan_path = out_root / f"prepare_plan_{doc_rel.replace('/', '__')}.json"
-    plan_path.write_text(json.dumps(work, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(plan_path, json.dumps(work, indent=2) + "\n")
 
     if not args.execute:
         save_checkpoint(checkpoint_path, checkpoint)
@@ -239,7 +247,8 @@ def main() -> None:
     )
     save_checkpoint(checkpoint_path, checkpoint)
     result_path = out_root / f"prepare_result_{doc_rel.replace('/', '__')}.json"
-    result_path.write_text(
+    atomic_write_text(
+        result_path,
         json.dumps(
             {
                 "doc_name": result.doc_name,
@@ -254,7 +263,6 @@ def main() -> None:
             indent=2,
         )
         + "\n",
-        encoding="utf-8",
     )
     print(
         json.dumps(

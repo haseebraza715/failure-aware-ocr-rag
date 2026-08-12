@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 from .asset_paths import to_relative_project_path
 from .ohr_inventory import resolve_ohr_inventory_path
+from .operations import check_termination
 from .pdf_preprocessing import export_docling_markdown
 from .resource_limits import enforce_memory_budget
 
@@ -200,6 +201,8 @@ def render_pdf_pages(pdf_path: Path, page_ids: list[int], image_paths: dict[int,
     try:
         pdf_page_count = len(document)
         for page_id in page_ids:
+            check_termination()
+            enforce_memory_budget(f"asset preparation before rendering page {page_id}")
             if page_id < 0 or page_id >= pdf_page_count:
                 raise ValueError(
                     f"Inventory page_id {page_id} is outside PDF page range 0..{pdf_page_count - 1} for {pdf_path}"
@@ -209,13 +212,24 @@ def render_pdf_pages(pdf_path: Path, page_ids: list[int], image_paths: dict[int,
             partial = output.with_suffix(output.suffix + ".partial")
             _remove_quietly(partial)
             page = document[page_id]
-            bitmap = page.render(scale=scale)
-            image = bitmap.to_pil()
-            image.save(partial, format="PNG")
+            try:
+                bitmap = page.render(scale=scale)
+                try:
+                    image = bitmap.to_pil()
+                    try:
+                        image.save(partial, format="PNG")
+                    finally:
+                        image.close()
+                finally:
+                    bitmap.close()
+            finally:
+                page.close()
             if partial.stat().st_size <= 0:
                 _remove_quietly(partial)
                 raise RuntimeError(f"Rendered empty PNG for page {page_id}")
             partial.replace(output)
+            enforce_memory_budget(f"asset preparation after rendering page {page_id}")
+            check_termination()
     finally:
         document.close()
     return {
@@ -288,6 +302,7 @@ def execute_document_preparation(
 
     try:
         # Stage: extract PDF
+        check_termination()
         enforce_memory_budget("asset preparation before PDF extraction")
         if kind == "filesystem":
             assert isinstance(source, Path)
@@ -302,10 +317,12 @@ def execute_document_preparation(
         metrics["pdf_sha256"] = pdf_sha256
         metrics["pdf_bytes"] = pdf_path.stat().st_size
         enforce_memory_budget("asset preparation after PDF extraction")
+        check_termination()
 
         existing = _read_json(provenance_path) or {}
         # Stage: Docling audit
         enforce_memory_budget("asset preparation before Docling audit")
+        check_termination()
         docling_started = time.perf_counter()
         expected_audit = {
             "pdf_sha256": pdf_sha256,
@@ -331,9 +348,11 @@ def execute_document_preparation(
             metrics["docling_skipped"] = False
             existing["docling_audit"] = expected_audit
         enforce_memory_budget("asset preparation after Docling audit")
+        check_termination()
 
         # Stage: render pages
         enforce_memory_budget("asset preparation before page rendering")
+        check_termination()
         pages_to_render: list[int] = []
         for page_id in page_ids:
             image_path = image_paths[page_id]
@@ -378,6 +397,7 @@ def execute_document_preparation(
         metrics["render_runtime_sec"] = float(render_meta.get("render_runtime_sec") or 0.0)
         metrics["render_scale"] = render_meta.get("render_scale", 2.0)
         enforce_memory_budget("asset preparation after page rendering")
+        check_termination()
 
         # Stage: GOT-OCR — repository/revision come only from committed lock file.
         model_name = locked["repository"]
@@ -386,6 +406,7 @@ def execute_document_preparation(
         pages_state = dict(existing.get("pages") or {})
         ocr_fn = extract_got_ocr_fn
         for page_id in page_ids:
+            check_termination()
             enforce_memory_budget(f"asset preparation before GOT-OCR page {page_id}")
             image_path = image_paths[page_id]
             ocr_path = ocr_paths[page_id]
@@ -401,6 +422,7 @@ def execute_document_preparation(
             ):
                 metrics["skipped_pages"]["ocr"].append(page_id)
                 enforce_memory_budget(f"asset preparation after GOT-OCR page {page_id}")
+                check_termination()
                 continue
             # Lazy-import Torch/Transformers OCR only when a page actually needs OCR.
             if ocr_fn is None:
@@ -438,6 +460,7 @@ def execute_document_preparation(
             if current_rss is not None:
                 peak_rss = max(peak_rss or 0, current_rss)
             enforce_memory_budget(f"asset preparation after GOT-OCR page {page_id}")
+            check_termination()
 
         metrics["got_ocr_runtime_sec_total"] = ocr_total
         metrics["peak_rss_bytes"] = peak_rss

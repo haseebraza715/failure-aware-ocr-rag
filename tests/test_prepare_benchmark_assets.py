@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,6 +15,7 @@ from faar.asset_preparation import (
     plan_document_work,
 )
 from prepare_benchmark_assets import page_image_name as cli_page_image_name
+from prepare_benchmark_assets import load_checkpoint, save_checkpoint
 
 
 def test_deterministic_output_naming() -> None:
@@ -48,7 +50,9 @@ def test_smoke_plan_is_resumable_and_portable(tmp_path: Path) -> None:
     assert work["checkpoint"]["render_pages"] is False
 
 
-def test_execute_one_document_with_injected_backends(tmp_path: Path) -> None:
+def test_execute_one_document_with_injected_backends(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     project = tmp_path
     (project / "config").mkdir()
     (project / "config/model_revisions.json").write_text(
@@ -90,7 +94,7 @@ def test_execute_one_document_with_injected_backends(tmp_path: Path) -> None:
             path.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes([page_id]))
         return {"pdf_page_count": len(page_ids), "render_runtime_sec": 0.01, "render_scale": scale}
 
-    prep.render_pdf_pages = fake_render  # type: ignore[assignment]
+    monkeypatch.setattr(prep, "render_pdf_pages", fake_render)
 
     result = execute_document_preparation(
         project_root=project,
@@ -170,6 +174,81 @@ def test_execute_document_checks_memory_at_every_expensive_boundary(
         "asset preparation before GOT-OCR page 0",
         "asset preparation after GOT-OCR page 0",
     ]
+
+
+def test_render_checks_memory_and_termination_per_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import faar.asset_preparation as prep
+
+    events: list[str] = []
+
+    class FakeImage:
+        def save(self, path: Path, format: str) -> None:
+            path.write_bytes(b"png")
+
+        def close(self) -> None:
+            events.append("image.close")
+
+    class FakeBitmap:
+        def to_pil(self) -> FakeImage:
+            return FakeImage()
+
+        def close(self) -> None:
+            events.append("bitmap.close")
+
+    class FakePage:
+        def render(self, scale: float) -> FakeBitmap:
+            return FakeBitmap()
+
+        def close(self) -> None:
+            events.append("page.close")
+
+    class FakeDocument:
+        def __init__(self, _path: str) -> None:
+            pass
+
+        def __len__(self) -> int:
+            return 2
+
+        def __getitem__(self, _page_id: int) -> FakePage:
+            return FakePage()
+
+        def close(self) -> None:
+            events.append("document.close")
+
+    monkeypatch.setitem(sys.modules, "pypdfium2", SimpleNamespace(PdfDocument=FakeDocument))
+    monkeypatch.setattr(prep, "check_termination", lambda: events.append("termination"))
+    monkeypatch.setattr(prep, "enforce_memory_budget", events.append)
+    outputs = {page_id: tmp_path / f"page-{page_id}.png" for page_id in (0, 1)}
+
+    prep.render_pdf_pages(tmp_path / "input.pdf", [0, 1], outputs)
+
+    assert events.count("termination") == 4
+    assert events.count("image.close") == 2
+    assert events.count("bitmap.close") == 2
+    assert events.count("page.close") == 2
+    assert events[-1] == "document.close"
+    for page_id in (0, 1):
+        assert f"asset preparation before rendering page {page_id}" in events
+        assert f"asset preparation after rendering page {page_id}" in events
+
+
+def test_checkpoint_writes_atomically_and_corruption_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import prepare_benchmark_assets as cli
+
+    checkpoint = tmp_path / "checkpoint.json"
+    writes: list[tuple[Path, str]] = []
+    monkeypatch.setattr(cli, "atomic_write_text", lambda path, text: writes.append((path, text)))
+    save_checkpoint(checkpoint, {"completed": {}})
+    assert writes[0][0] == checkpoint
+    assert json.loads(writes[0][1])["updated_at_utc"]
+
+    checkpoint.write_text("{broken", encoding="utf-8")
+    with pytest.raises(SystemExit, match="unreadable JSON"):
+        load_checkpoint(checkpoint)
 
 
 def test_cli_smoke_writes_plan_without_execution(tmp_path: Path) -> None:
