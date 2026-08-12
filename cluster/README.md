@@ -254,27 +254,39 @@ headroom.
 
 ## Scheduler templates
 
-Editable one-GPU templates run the full ordered baseline runner:
+Editable one-GPU Slurm templates under `cluster/templates/`:
 
-- `cluster/templates/slurm_one_gpu.sbatch`: `--gpus=1`, bounded `--mem` and
+- `slurm_preflight.sbatch`: allocated-GPU preflight (`preflight.py --check`)
+  with the job exit code mirroring the preflight exit code (0 ready, 1
+  blocking failure, 2 warnings). The login-node-safe variant runs directly:
+  `cluster/preflight.py --check --no-cuda --project-root "$PWD"`.
+- `slurm_calibration_108.sbatch`: the bounded 108-page calibration through the
+  launcher with `--signal=TERM@120`, scratch-scoped `HF_HOME`, and an explicit
+  `FAAR_GPU_BUDGET_GB` placeholder. Resubmission resumes completed stages.
+- `slurm_prepare_val_shard.sbatch`: Slurm array job for the sharded validation
+  asset preparation (`cluster/prepare_assets.py --split val --resume`), one
+  shard per array task. Shards resume independently; merge/register follows
+  after all shards complete.
+- `slurm_pilot_baseline.sbatch`: 50-100 example baseline pilot
+  (`run_baselines.py --max-examples 100 --resume`); engineering check only,
+  never to be launched before the calibration report is approved.
+
+`slurm_one_gpu.sbatch` runs the full ordered baseline runner and
+`pbs_one_gpu.pbs` is its PBS equivalent:
+
+- `slurm_one_gpu.sbatch`: `--gpus=1`, bounded `--mem` and
   `--time`, and `--signal=TERM@120` so Slurm delivers SIGTERM 120 s before
   walltime.
-- `cluster/templates/pbs_one_gpu.pbs`: `ngpus=1` and bounded `ncpus`/`mem`/
+- `pbs_one_gpu.pbs`: `ngpus=1` and bounded `ncpus`/`mem`/
   `walltime`; its optional TORQUE `softwalltime` directive is disabled until
   the target cluster confirms support.
 
-Both templates allocate exactly one GPU and invoke `cluster/run_baselines.py`
-with `--resume` and `--project-root` set to the submission directory. They use
-the configured `FAAR_PYTHON`; `FAAR_DATASET` and `FAAR_SPLIT` default to
-`ohrbench` and `val`. They never set `CUDA_VISIBLE_DEVICES` because Slurm and
-PBS manage the allocation. Keep the resource boundaries and change scheduler
-directives only after the lab allocation is known. The templates are for the
-post-calibration, post-gate-lock validation run; set `FAAR_SPLIT=test` only
-after validation artifacts are frozen. Set `FAAR_GPU_BUDGET_GB` to a positive
-budget chosen from the preflight report; the launcher fails closed without it.
-
-Credentials are read from the submit environment or a `.env` at the repository
-root. Never write keys into a template file.
+All templates allocate exactly one GPU, never set `CUDA_VISIBLE_DEVICES`
+(Slurm and PBS manage the allocation), keep resource boundaries and scheduler
+directives as placeholders to edit once the lab allocation is known, and
+require `FAAR_GPU_BUDGET_GB` set from the preflight report (the launcher fails
+closed without it). Credentials are read from the submit environment or a
+`.env` at the repository root; never write keys into a template file.
 
 ## Staged execution
 
