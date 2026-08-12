@@ -1,0 +1,265 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import subprocess
+import sys
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+
+import pytest
+
+PREFLIGHT_PATH = Path(__file__).resolve().parents[1] / "cluster/preflight.py"
+PREFLIGHT_SPEC = spec_from_file_location("preflight", PREFLIGHT_PATH)
+assert PREFLIGHT_SPEC and PREFLIGHT_SPEC.loader
+preflight = module_from_spec(PREFLIGHT_SPEC)
+sys.modules["preflight"] = preflight
+PREFLIGHT_SPEC.loader.exec_module(preflight)
+
+GIB = 1024**3
+
+
+def build_project(tmp_path: Path) -> Path:
+    project = tmp_path
+    (project / "OHR-Bench/data/retrieval_base/gt").mkdir(parents=True)
+    (project / "OHR-Bench/data/qas_v2.json").write_text(json.dumps([{"ID": "e1", "doc_name": "a"}]))
+    (project / "split.json").write_text(json.dumps({"splits": {"val": ["e1"]}}))
+    (project / "data/ohr_bench_raw").mkdir(parents=True)
+    (project / "data/ohr_bench_raw/pdfs.zip").write_bytes(b"PK")
+    (project / "config").mkdir()
+    (project / "config/split_checksums.json").write_text(
+        json.dumps(
+            {
+                "split_sha256": hashlib.sha256((project / "split.json").read_bytes()).hexdigest(),
+                "qas_v2_sha256": hashlib.sha256((project / "OHR-Bench/data/qas_v2.json").read_bytes()).hexdigest(),
+            }
+        )
+    )
+    (project / "config/model_revisions.json").write_text(
+        json.dumps({"models": {"got_ocr": {"repository": "stepfun-ai/GOT-OCR-2.0-hf", "revision": "d" * 40}}})
+    )
+    return project
+
+
+def gpu_payload(devices: list[dict] | None = None, scheduler: dict | None = None) -> dict:
+    return {
+        "torch": {
+            "available": True,
+            "cuda_available": True,
+            "devices": (
+                devices
+                if devices is not None
+                else [
+                    {
+                        "index": 0,
+                        "name": "TestGPU",
+                        "total_memory_bytes": 16 * GIB,
+                        "free_memory_bytes": 16 * GIB,
+                    }
+                ]
+            ),
+        },
+        "scheduler": scheduler or {"slurm_gpus_requested": 1},
+        "memory": {"cgroup_limit_bytes": 32 * GIB},
+    }
+
+
+@pytest.fixture
+def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "FAAR_GPU_BUDGET_GB",
+        "FAAR_MAX_GPU_MEMORY_FRACTION",
+        "FAAR_MIN_GPU_FREE_GB",
+        "FAAR_MAX_RSS_GB",
+        "FAAR_OUT_ROOT",
+        "FAAR_SCRATCH",
+        "HF_HOME",
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENAI_API_KEY",
+        "VLM_BACKEND",
+        "FAAR_DOCUMENT_INVENTORY",
+        "FAAR_PDF_ROOT",
+        "FAAR_PDF_ZIP",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(preflight, "_hf_repo_reachable", lambda repo, rev: (True, "HTTP 200"))
+
+
+def test_run_checks_passes_with_no_warnings(
+    tmp_path: Path, clean_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = build_project(tmp_path)
+    monkeypatch.setattr(preflight.shutil, "which", lambda name: f"/usr/bin/{name}")
+    out_root = tmp_path / "out"
+    out_root.mkdir()
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    monkeypatch.setenv("FAAR_OUT_ROOT", str(out_root))
+    monkeypatch.setenv("HF_HOME", str(cache))
+    monkeypatch.setenv("FAAR_GPU_BUDGET_GB", "8")
+    monkeypatch.setenv("FAAR_MIN_GPU_FREE_GB", "3")
+    monkeypatch.setenv("OMP_NUM_THREADS", "4")
+    monkeypatch.setenv("MKL_NUM_THREADS", "4")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-1234567890abcdef")
+    report = preflight.run_checks(gpu_payload(), project_root=project, path=project, cuda=True)
+    assert report["exit_code"] == 0, report
+    assert report["summary"]["failed"] == 0
+    assert report["summary"]["warnings"] == 0
+
+
+def test_run_checks_missing_cuda_is_blocking(tmp_path: Path, clean_env) -> None:
+    project = build_project(tmp_path)
+    report = preflight.run_checks(gpu_payload(devices=[]), project_root=project, path=project, cuda=True)
+    assert report["exit_code"] == 1
+    names = {check["name"] for check in report["checks"] if check["status"] == "fail"}
+    assert "cuda_visibility" in names
+
+
+def test_run_checks_no_cuda_skips_gpu_checks(tmp_path: Path, clean_env) -> None:
+    project = build_project(tmp_path)
+    report = preflight.run_checks(gpu_payload(devices=[]), project_root=project, path=project, cuda=False)
+    assert report["exit_code"] < 2 or report["exit_code"] == 2  # warnings allowed, never blocking
+    cuda_checks = [check for check in report["checks"] if check["name"] in {"cuda_visibility", "gpu_allocation_match"}]
+    assert all(check["status"] == "skip" for check in cuda_checks)
+    assert report["summary"]["failed"] == 0
+
+
+def test_run_checks_allocation_mismatch_is_blocking(tmp_path: Path, clean_env) -> None:
+    project = build_project(tmp_path)
+    payload = gpu_payload(scheduler={"slurm_gpus_requested": 2})
+    report = preflight.run_checks(payload, project_root=project, path=project, cuda=True)
+    assert report["exit_code"] == 1
+    matching = [check for check in report["checks"] if check["name"] == "gpu_allocation_match"]
+    assert matching[0]["status"] == "fail"
+
+
+def test_run_checks_dual_gpu_limits_are_blocking(tmp_path: Path, clean_env, monkeypatch) -> None:
+    project = build_project(tmp_path)
+    monkeypatch.setenv("FAAR_GPU_BUDGET_GB", "8")
+    monkeypatch.setenv("FAAR_MAX_GPU_MEMORY_FRACTION", "0.5")
+    report = preflight.run_checks(gpu_payload(), project_root=project, path=project, cuda=True)
+    assert report["exit_code"] == 1
+    matching = [check for check in report["checks"] if check["name"] == "gpu_budget_consistency"]
+    assert matching[0]["status"] == "fail"
+
+
+def test_run_checks_tampered_split_is_blocking(tmp_path: Path, clean_env) -> None:
+    project = build_project(tmp_path)
+    with (project / "split.json").open("a") as handle:
+        handle.write(" ")
+    report = preflight.run_checks(gpu_payload(), project_root=project, path=project, cuda=False)
+    assert report["exit_code"] == 1
+    matching = [check for check in report["checks"] if check["name"] == "locked_split_checksums"]
+    assert matching[0]["status"] == "fail"
+
+
+def test_run_checks_missing_dataset_is_blocking(tmp_path: Path, clean_env) -> None:
+    project = build_project(tmp_path)
+    (project / "split.json").unlink()
+    report = preflight.run_checks(gpu_payload(), project_root=project, path=project, cuda=False)
+    assert report["exit_code"] == 1
+    matching = [check for check in report["checks"] if check["name"] == "dataset_paths"]
+    assert matching[0]["status"] == "fail"
+
+
+def test_run_checks_unwritable_cache_is_blocking(tmp_path: Path, clean_env, monkeypatch) -> None:
+    project = build_project(tmp_path)
+    cache = tmp_path / "readonly-cache"
+    cache.mkdir()
+    cache.chmod(0o555)
+    monkeypatch.setenv("HF_HOME", str(cache))
+    report = preflight.run_checks(gpu_payload(), project_root=project, path=project, cuda=False)
+    assert report["exit_code"] == 1
+    matching = [check for check in report["checks"] if check["name"] == "model_cache_paths"]
+    assert matching[0]["status"] == "fail"
+
+
+def test_run_checks_missing_ram_limit_warns(tmp_path: Path, clean_env) -> None:
+    project = build_project(tmp_path)
+    payload = gpu_payload()
+    payload["memory"] = {"cgroup_limit_bytes": None}
+    payload["scheduler"] = {}
+    report = preflight.run_checks(payload, project_root=project, path=project, cuda=False)
+    assert report["exit_code"] == 2
+    matching = [check for check in report["checks"] if check["name"] == "ram_limit"]
+    assert matching[0]["status"] == "warn"
+
+
+def test_report_never_contains_secret_values(tmp_path: Path, clean_env, monkeypatch) -> None:
+    project = build_project(tmp_path)
+    secret = "sk-very-secret-value-abcdef0123456789"
+    monkeypatch.setenv("OPENAI_API_KEY", secret)
+    report = preflight.run_checks(gpu_payload(), project_root=project, path=project, cuda=False)
+    rendered = preflight.render(report)
+    assert secret not in rendered
+    for check in report["checks"]:
+        assert "api_keys_by_stage" not in json.dumps(check.get("measurement") or {})
+
+
+def test_hf_access_uses_cdn_head_without_download(tmp_path: Path, clean_env, monkeypatch) -> None:
+    project = build_project(tmp_path)
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        preflight,
+        "_hf_repo_reachable",
+        lambda repo, rev: calls.append((repo, rev)) or (True, "HTTP 200"),
+    )
+    preflight.run_checks(gpu_payload(), project_root=project, path=project, cuda=False)
+    assert calls == [("stepfun-ai/GOT-OCR-2.0-hf", "d" * 40)]
+
+
+def test_cli_check_dry_run_writes_nothing(tmp_path: Path, capsys) -> None:
+    project = build_project(tmp_path)
+    report_path = tmp_path / "preflight_check.json"
+    code = preflight.main(
+        [
+            "--check",
+            "--no-cuda",
+            "--dry-run",
+            "--project-root",
+            str(project),
+            "--path",
+            str(project),
+            "--out",
+            str(report_path),
+        ]
+    )
+    assert code in (0, 2)
+    assert not report_path.exists()
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["mode"] == "check"
+
+
+def test_cli_check_writes_report_atomically(tmp_path: Path) -> None:
+    project = build_project(tmp_path)
+    report_path = tmp_path / "preflight_check.json"
+    code = preflight.main(
+        ["--check", "--no-cuda", "--project-root", str(project), "--path", str(project), "--out", str(report_path)]
+    )
+    assert code in (0, 2)
+    payload = json.loads(report_path.read_text())
+    assert payload["exit_code"] == code
+    assert not list(tmp_path.glob(".preflight_check.json.*.tmp"))
+
+
+def test_cli_check_exit_code_matches_blocking_failure(tmp_path: Path) -> None:
+    project = build_project(tmp_path)
+    (project / "split.json").unlink()
+    code = preflight.main(
+        ["--check", "--no-cuda", "--dry-run", "--project-root", str(project), "--path", str(project)]
+    )
+    assert code == 1
+
+
+def test_cli_check_login_node_safe_without_cuda() -> None:
+    completed = subprocess.run(
+        [sys.executable, str(PREFLIGHT_PATH), "--check", "--no-cuda", "--dry-run"],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=Path(__file__).resolve().parents[1],
+    )
+    assert completed.returncode in (0, 2)
+    assert "cuda_visibility" in completed.stdout

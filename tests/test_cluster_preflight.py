@@ -226,7 +226,7 @@ def test_atomic_write_unique_and_durable(tmp_path: Path) -> None:
 
 def test_main_writes_out_and_prints_payload(monkeypatch, tmp_path: Path) -> None:
     payload = {"schema_version": 2, "host": "fake", "ok": True}
-    monkeypatch.setattr(preflight, "collect", lambda path: payload)
+    monkeypatch.setattr(preflight, "collect", lambda path, **kwargs: payload)
     out = tmp_path / "preflight.json"
     monkeypatch.setattr(sys, "argv", ["preflight.py", "--path", str(tmp_path), "--out", str(out)])
     assert preflight.main() == 0

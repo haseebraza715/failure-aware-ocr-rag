@@ -4,7 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib
+import importlib.util
 import json
+import math
 import os
 import platform
 import re
@@ -12,6 +16,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -245,7 +251,14 @@ def _locations_from_env(names: tuple[str, ...]) -> list[dict[str, Any]]:
     return results
 
 
-def _torch_info() -> dict[str, Any]:
+def _torch_info(cuda: bool = True) -> dict[str, Any]:
+    if not cuda:
+        return {
+            "available": False,
+            "cuda_available": False,
+            "devices": [],
+            "skipped": "CUDA checks disabled by --no-cuda",
+        }
     try:
         import torch
     except (ImportError, OSError) as exc:
@@ -349,7 +362,7 @@ def render(payload: dict[str, Any]) -> str:
     return json.dumps(redact(payload), indent=2, sort_keys=True)
 
 
-def collect(path: Path) -> dict[str, Any]:
+def collect(path: Path, *, cuda: bool = True) -> dict[str, Any]:
     return {
         "schema_version": 2,
         "collected_at_utc": datetime.now(UTC).isoformat(),
@@ -361,8 +374,12 @@ def collect(path: Path) -> dict[str, Any]:
         "disk": {"path": str(path), **_disk(path)},
         "scheduler": _scheduler(),
         "cuda_visible_devices": os.getenv("CUDA_VISIBLE_DEVICES"),
-        "torch": _torch_info(),
-        "nvidia_smi": _run(["nvidia-smi", "-L"]) if shutil.which("nvidia-smi") else {"available": False},
+        "torch": _torch_info(cuda=cuda),
+        "nvidia_smi": (
+            _run(["nvidia-smi", "-L"])
+            if cuda and shutil.which("nvidia-smi")
+            else {"available": False}
+        ),
         "ulimit": _ulimit(),
         "scratch": _locations_from_env(("TMPDIR", "TMP", "TEMP", "SCRATCH", "SCRATCH_DIR", "LOCAL_SCRATCH", "TMPFS")),
         "cache": _locations_from_env(("HF_HOME", "TRANSFORMERS_CACHE", "TORCH_HOME", "XDG_CACHE_HOME")),
@@ -410,17 +427,489 @@ def _atomic_write_text(path: Path, text: str) -> None:
         pass
 
 
-def main() -> int:
+GIB = 1024**3
+REQUIRED_DEPENDENCIES = ("docling", "transformers", "pypdfium2", "PIL", "huggingface_hub")
+DISK_WARNING_GIB = 20.0
+RELEVANT_ENV_KEYS = (
+    "FAAR_GPU_BUDGET_GB",
+    "FAAR_MIN_GPU_FREE_GB",
+    "FAAR_MAX_RSS_GB",
+    "FAAR_MAX_GPU_MEMORY_FRACTION",
+    "FAAR_OUT_ROOT",
+    "FAAR_SCRATCH",
+    "FAAR_PDF_ROOT",
+    "FAAR_PDF_ZIP",
+    "FAAR_DOCUMENT_INVENTORY",
+    "FAAR_CACHE_ROOT",
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "VLM_BACKEND",
+    "CUDA_VISIBLE_DEVICES",
+)
+RELEVANT_ENV_KEYS_PRESENCE_ONLY = ("HF_TOKEN",)
+
+
+def _find_spec(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _positive_gb_env(name: str) -> float | None:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    if not math.isfinite(value) or value <= 0:
+        return None
+    return value
+
+
+def _hf_repo_reachable(repo: str, revision: str) -> tuple[bool, str]:
+    """HEAD the model file on the HF CDN; never downloads weights and never
+    incurs model-generation charges."""
+    url = f"https://huggingface.co/{repo}/resolve/{revision}/config.json"
+    request = urllib.request.Request(url, method="HEAD")
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return response.status < 400, f"HTTP {response.status}"
+    except urllib.error.HTTPError as exc:
+        return exc.code < 400, f"HTTP {exc.code}"
+    except OSError as exc:
+        return False, "network error"
+
+
+def _model_lock(project_root: Path) -> list[dict[str, str]]:
+    lock_path = project_root / "config/model_revisions.json"
+    try:
+        payload = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    models = payload.get("models") if isinstance(payload, dict) else None
+    if not isinstance(models, dict):
+        return []
+    return [
+        {"role": str(role), "repository": str(entry.get("repository", "")), "revision": str(entry.get("revision", ""))}
+        for role, entry in models.items()
+        if isinstance(entry, dict) and entry.get("repository")
+    ]
+
+
+def _writable_check(path: Path) -> tuple[bool, str | None]:
+    try:
+        if path.is_dir():
+            writable = os.access(path, os.W_OK)
+        else:
+            writable = os.access(path.parent, os.W_OK)
+    except OSError as exc:
+        return False, str(exc)
+    return writable, None
+
+
+def run_checks(
+    payload: dict[str, Any],
+    *,
+    project_root: Path,
+    path: Path | None = None,
+    cuda: bool = True,
+) -> dict[str, Any]:
+    """Evaluate the collected payload against handoff requirements.
+
+    Returns a checks report with per-check status. Exit code rules:
+    required checks that fail are blocking (exit 1); warning-severity
+    failures and warnings exit 2; a fully passing report exits 0.
+    """
+    checks: list[dict[str, Any]] = []
+
+    def record(name: str, severity: str, status: str, detail: Any = None, **extra: Any) -> None:
+        entry: dict[str, Any] = {"name": name, "severity": severity, "status": status}
+        if detail is not None:
+            entry["detail"] = detail
+        entry.update(extra)
+        checks.append(entry)
+
+    major, minor = sys.version_info[:2]
+    record(
+        "python_version",
+        "required",
+        "pass" if (major, minor) >= (3, 12) else "fail",
+        detail=sys.version.split()[0],
+        measurement=f"{major}.{minor}",
+    )
+
+    missing_deps = [name for name in REQUIRED_DEPENDENCIES if not _find_spec(name)]
+    if cuda and not _find_spec("torch"):
+        missing_deps.append("torch")
+    record(
+        "dependencies",
+        "required",
+        "pass" if not missing_deps else "fail",
+        detail="missing: " + ", ".join(missing_deps) if missing_deps else "all present",
+        measurement={"missing": missing_deps},
+    )
+
+    torch_info = payload.get("torch") or {}
+    devices = torch_info.get("devices") or []
+    if not cuda:
+        record("cuda_visibility", "required", "skip", detail="CUDA checks disabled by --no-cuda")
+    elif torch_info.get("available") is False or not torch_info.get("cuda_available") or not devices:
+        record(
+            "cuda_visibility",
+            "required",
+            "fail",
+            detail=torch_info.get("error") or "torch reports no usable CUDA devices",
+        )
+    else:
+        record(
+            "cuda_visibility",
+            "required",
+            "pass",
+            detail=f"{len(devices)} device(s) visible",
+            measurement=[
+                {"index": d.get("index"), "name": d.get("name"), "total_memory_gib": round((d.get("total_memory_bytes") or 0) / GIB, 2)}
+                for d in devices
+            ],
+        )
+        scheduler = payload.get("scheduler") or {}
+        requested = scheduler.get("slurm_gpus_requested") or scheduler.get("pbs_gpus_requested")
+        if requested is not None and requested != len(devices):
+            record(
+                "gpu_allocation_match",
+                "required",
+                "fail",
+                detail=f"scheduler requested {requested} GPU(s); {len(devices)} are visible",
+                measurement={"requested": requested, "visible": len(devices)},
+            )
+        else:
+            record(
+                "gpu_allocation_match",
+                "required",
+                "pass",
+                detail=f"visible={len(devices)} requested={requested}",
+                measurement={"requested": requested, "visible": len(devices)},
+            )
+        total_gib = (devices[0].get("total_memory_bytes") or 0) / GIB
+        budget_raw = os.getenv("FAAR_GPU_BUDGET_GB")
+        fraction_raw = os.getenv("FAAR_MAX_GPU_MEMORY_FRACTION")
+        budget = _positive_gb_env("FAAR_GPU_BUDGET_GB")
+        fraction = _positive_gb_env("FAAR_MAX_GPU_MEMORY_FRACTION")
+        if budget_raw and budget_raw.strip() and fraction_raw and fraction_raw.strip():
+            record(
+                "gpu_budget_consistency",
+                "required",
+                "fail",
+                detail="FAAR_GPU_BUDGET_GB and FAAR_MAX_GPU_MEMORY_FRACTION are both set",
+            )
+        else:
+            if fraction is not None and fraction > 1.0:
+                record(
+                    "gpu_budget_consistency",
+                    "required",
+                    "fail",
+                    detail="FAAR_MAX_GPU_MEMORY_FRACTION must be in (0, 1]",
+                )
+            elif budget is not None and budget > total_gib:
+                record(
+                    "gpu_budget_consistency",
+                    "required",
+                    "fail",
+                    detail=f"FAAR_GPU_BUDGET_GB={budget:.2f} exceeds visible VRAM {total_gib:.2f} GiB",
+                )
+            elif budget is None and fraction is None:
+                record(
+                    "gpu_budget_consistency",
+                    "required",
+                    "warn",
+                    detail="no GPU process budget set; GPU launches fail closed until FAAR_GPU_BUDGET_GB is chosen",
+                )
+            else:
+                record(
+                    "gpu_budget_consistency",
+                    "required",
+                    "pass",
+                    detail=f"budget={budget or fraction:.2f} GiB within {total_gib:.2f} GiB",
+                    measurement={"budget_gib": budget if budget is not None else (fraction or 0.0) * total_gib},
+                )
+        reserve_raw = _positive_gb_env("FAAR_MIN_GPU_FREE_GB")
+        reserve = reserve_raw if reserve_raw is not None else round(total_gib * 0.2, 2)
+        free_gib = (devices[0].get("free_memory_bytes") or 0) / GIB
+        budget_gib = budget if budget is not None else ((fraction or 0.0) * total_gib if fraction is not None else 0.0)
+        required_gib = budget_gib + reserve
+        if free_gib >= required_gib:
+            record(
+                "gpu_free_vram",
+                "warning",
+                "pass",
+                detail=f"free {free_gib:.2f} GiB >= budget+reserve {required_gib:.2f} GiB",
+                measurement={"free_gib": round(free_gib, 2), "reserve_gib": reserve, "required_gib": round(required_gib, 2)},
+            )
+        else:
+            record(
+                "gpu_free_vram",
+                "warning",
+                "warn",
+                detail=f"free {free_gib:.2f} GiB below budget+reserve {required_gib:.2f} GiB; co-tenant state may change",
+                measurement={"free_gib": round(free_gib, 2), "reserve_gib": reserve, "required_gib": round(required_gib, 2)},
+            )
+
+    memory = payload.get("memory") or {}
+    scheduler = payload.get("scheduler") or {}
+    ram_limit = memory.get("cgroup_limit_bytes") or scheduler.get("slurm_mem_per_node_bytes") or scheduler.get("pbs_mem_bytes")
+    per_cpu = scheduler.get("slurm_mem_per_cpu_bytes")
+    cpus = scheduler.get("slurm_cpus_per_task") or scheduler.get("slurm_cpus_on_node") or scheduler.get("pbs_ncpus")
+    if per_cpu and cpus:
+        per_cpu_total = per_cpu * int(cpus)
+        ram_limit = per_cpu_total if not ram_limit else min(ram_limit, per_cpu_total)
+    if ram_limit:
+        record(
+            "ram_limit",
+            "required",
+            "pass",
+            detail=f"{ram_limit / GIB:.1f} GiB available to the process",
+            measurement={"limit_bytes": ram_limit},
+        )
+    else:
+        record(
+            "ram_limit",
+            "required",
+            "warn",
+            detail="no scheduler/cgroup RAM limit detected; launcher will fall back to 50% of physical memory",
+        )
+
+    omp = os.getenv("OMP_NUM_THREADS")
+    mkl = os.getenv("MKL_NUM_THREADS")
+    if omp and mkl:
+        record("thread_limits", "warning", "pass", detail=f"OMP_NUM_THREADS={omp} MKL_NUM_THREADS={mkl}")
+    else:
+        record(
+            "thread_limits",
+            "warning",
+            "warn",
+            detail="OMP_NUM_THREADS/MKL_NUM_THREADS not set; launcher derives them at launch",
+        )
+
+    dataset_checks: list[tuple[str, Path]] = [
+        ("split.json", project_root / "split.json"),
+        ("qas_v2.json", project_root / "OHR-Bench/data/qas_v2.json"),
+    ]
+    inventory_raw = os.getenv("FAAR_DOCUMENT_INVENTORY")
+    inventory = Path(inventory_raw).expanduser() if inventory_raw else project_root / "OHR-Bench/data/retrieval_base/gt"
+    dataset_checks.append(("document inventory", inventory))
+    pdf_root = os.getenv("FAAR_PDF_ROOT")
+    pdf_zip_raw = os.getenv("FAAR_PDF_ZIP")
+    pdf_zip = Path(pdf_zip_raw).expanduser() if pdf_zip_raw else project_root / "data/ohr_bench_raw/pdfs.zip"
+    missing_paths = [label for label, candidate in dataset_checks if not candidate.exists()]
+    if not pdf_root and not pdf_zip.is_file():
+        missing_paths.append("pdf source (FAAR_PDF_ROOT or data/ohr_bench_raw/pdfs.zip)")
+    if missing_paths:
+        record("dataset_paths", "required", "fail", detail="missing: " + ", ".join(missing_paths))
+    else:
+        record("dataset_paths", "required", "pass", detail="all dataset paths present")
+
+    lock_path = project_root / "config/split_checksums.json"
+    if not lock_path.is_file():
+        record("locked_split_checksums", "required", "fail", detail=f"missing lock: {lock_path}")
+    else:
+        try:
+            lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            record("locked_split_checksums", "required", "fail", detail=f"unreadable lock: {lock_path}")
+        else:
+            mismatches = []
+            measurements = {}
+            for relative, key in (("split.json", "split_sha256"), ("OHR-Bench/data/qas_v2.json", "qas_v2_sha256")):
+                expected = lock.get(key) if isinstance(lock, dict) else None
+                source = project_root / relative
+                if not source.is_file() or not isinstance(expected, str):
+                    mismatches.append(relative)
+                    continue
+                actual = hashlib.sha256(source.read_bytes()).hexdigest()
+                measurements[relative] = actual
+                if actual != expected:
+                    mismatches.append(relative)
+            if mismatches:
+                record("locked_split_checksums", "required", "fail", detail="checksum mismatch: " + ", ".join(mismatches), measurement=measurements)
+            else:
+                record("locked_split_checksums", "required", "pass", detail="split and qas_v2 match the committed lock", measurement=measurements)
+
+    cache_paths: list[tuple[str, Path]] = []
+    for env_name in ("HF_HOME", "TRANSFORMERS_CACHE", "TORCH_HOME", "XDG_CACHE_HOME"):
+        raw = os.getenv(env_name)
+        if raw and raw.strip():
+            cache_paths.append((env_name, Path(raw).expanduser()))
+    if not cache_paths:
+        cache_paths.append(("default", Path.home() / ".cache/huggingface"))
+    cache_failures = []
+    cache_warnings = []
+    for label, cache_path in cache_paths:
+        writable, error = _writable_check(cache_path)
+        if cache_path.exists() and not writable:
+            cache_failures.append(f"{label}:{cache_path}")
+        elif not cache_path.exists():
+            cache_warnings.append(f"{label}:{cache_path} (created lazily)")
+    if cache_failures:
+        record("model_cache_paths", "required", "fail", detail="not writable: " + ", ".join(cache_failures))
+    elif cache_warnings:
+        record("model_cache_paths", "required", "warn", detail="; ".join(cache_warnings))
+    else:
+        record("model_cache_paths", "required", "pass", detail="cache paths writable")
+
+    output_paths: list[tuple[str, Path]] = []
+    for env_name in ("FAAR_OUT_ROOT", "FAAR_SCRATCH", "TMPDIR", "TMP", "SCRATCH", "SCRATCH_DIR", "LOCAL_SCRATCH"):
+        raw = os.getenv(env_name)
+        if raw and raw.strip():
+            output_paths.append((env_name, Path(raw).expanduser()))
+    if not output_paths:
+        output_paths.append(("default results/", project_root / "results"))
+    output_failures = []
+    output_warnings = []
+    for label, output_path in output_paths:
+        writable, error = _writable_check(output_path)
+        if output_path.exists() and not writable:
+            output_failures.append(f"{label}:{output_path}")
+        elif not output_path.exists():
+            output_warnings.append(f"{label}:{output_path} (created by jobs)")
+    if output_failures:
+        record("output_scratch_paths", "required", "fail", detail="not writable: " + ", ".join(output_failures))
+    elif output_warnings:
+        record("output_scratch_paths", "required", "warn", detail="; ".join(output_warnings))
+    else:
+        record("output_scratch_paths", "required", "pass", detail="output/scratch paths writable")
+
+    disk_target = path or project_root
+    try:
+        free_gib = shutil.disk_usage(disk_target).free / GIB
+    except OSError:
+        free_gib = None
+    if free_gib is not None and free_gib < DISK_WARNING_GIB:
+        record(
+            "disk_space",
+            "warning",
+            "warn",
+            detail=f"only {free_gib:.1f} GiB free on {disk_target}",
+            measurement={"free_gib": round(free_gib, 1)},
+        )
+    else:
+        record(
+            "disk_space",
+            "warning",
+            "pass",
+            detail=f"{free_gib:.1f} GiB free on {disk_target}" if free_gib is not None else "unmeasurable",
+        )
+
+    hf_statuses = []
+    for entry in _model_lock(project_root):
+        reachable, detail = _hf_repo_reachable(entry["repository"], entry["revision"])
+        hf_statuses.append({**entry, "reachable": reachable, "detail": detail})
+        if reachable:
+            record("hf_model_access", "warning", "pass", detail=f"{entry['repository']} reachable")
+        else:
+            record(
+                "hf_model_access",
+                "warning",
+                "warn",
+                detail=f"{entry['repository']}: {detail} (gated models need HF_TOKEN; network may be blocked)",
+            )
+    if not hf_statuses:
+        record("hf_model_access", "warning", "warn", detail="no model lock found; cannot verify HF access")
+
+    vlm_backend = os.getenv("VLM_BACKEND", "openai")
+    if vlm_backend in {"claude-sonnet-4-5", "anthropic", "claude"}:
+        required_key = "ANTHROPIC_API_KEY"
+    else:
+        required_key = "OPENAI_API_KEY"
+    key_present = bool(os.getenv(required_key, "").strip())
+    if key_present:
+        record(
+            "api_keys_by_stage",
+            "warning",
+            "pass",
+            detail="required VLM credential present (value never shown)",
+            measurement={"required_for": "B1/B2/B4 paid VLM stages", "present": True},
+        )
+    else:
+        record(
+            "api_keys_by_stage",
+            "warning",
+            "warn",
+            detail="required VLM credential absent; only needed for paid VLM stages (B1/B2/B4), never for B0 or asset preparation",
+            measurement={"required_for": "B1/B2/B4 paid VLM stages", "present": False},
+        )
+
+    executables: list[tuple[str, bool]] = [("nvidia-smi", cuda)]
+    for executable, required in executables + [("sbatch", False), ("srun", False), ("qsub", False), ("pdftotext", False)]:
+        available = shutil.which(executable) is not None
+        if required:
+            if not available:
+                record("external_executables", "required", "fail", detail=f"{executable} not found")
+            else:
+                record("external_executables", "required", "pass", detail=f"{executable} available")
+        elif not available:
+            record("external_executables", "warning", "warn", detail=f"{executable} not found (optional on this host)")
+        else:
+            record("external_executables", "warning", "pass", detail=f"{executable} available")
+
+    blocking_failed = any(
+        check["status"] == "fail" and check["severity"] == "required" for check in checks
+    )
+    if blocking_failed:
+        exit_code = 1
+    elif any(check["status"] in {"fail", "warn"} for check in checks):
+        exit_code = 2
+    else:
+        exit_code = 0
+
+    relevant = {key: os.getenv(key) for key in RELEVANT_ENV_KEYS if os.getenv(key) is not None}
+    presence = {key: os.getenv(key) is not None for key in RELEVANT_ENV_KEYS_PRESENCE_ONLY}
+    return {
+        "schema_version": 3,
+        "mode": "check",
+        "collected_at_utc": datetime.now(UTC).isoformat(),
+        "project_root": str(project_root),
+        "exit_code": exit_code,
+        "summary": {
+            "passed": sum(check["status"] == "pass" for check in checks),
+            "warnings": sum(check["status"] in {"warn", "fail"} and check["severity"] != "required" for check in checks)
+            + sum(check["status"] == "warn" and check["severity"] == "required" for check in checks),
+            "failed": sum(check["status"] == "fail" and check["severity"] == "required" for check in checks),
+            "skipped": sum(check["status"] == "skip" for check in checks),
+        },
+        "checks": checks,
+        "environment": relevant,
+        "secret_presence": presence,
+        "facts": payload,
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--path", type=Path, default=Path.cwd(), help="Filesystem path whose quota should be measured")
+    parser.add_argument("--project-root", type=Path, default=None, help="Repository root for dataset and lock checks (default: --path)")
     parser.add_argument("--out", type=Path, help="Optional JSON output path (written atomically)")
-    args = parser.parse_args()
-    payload = collect(args.path.resolve())
-    rendered = render(payload)
+    parser.add_argument("--check", action="store_true", help="Run handoff checks with exit codes and a machine-readable report")
+    parser.add_argument("--no-cuda", action="store_true", help="Skip all CUDA/GPU checks (safe on login nodes)")
+    parser.add_argument("--dry-run", action="store_true", help="Print the report without writing any file")
+    args = parser.parse_args(argv)
+    cuda = not args.no_cuda
+    measured_path = args.path.expanduser().resolve()
+    project_root = (args.project_root or args.path).expanduser().resolve()
+    payload = collect(measured_path, cuda=cuda)
+    if not args.check:
+        rendered = render(payload)
+        print(rendered)
+        if args.out and not args.dry_run:
+            _atomic_write_text(args.out, rendered + "\n")
+        return 0
+    report = run_checks(payload, project_root=project_root, path=measured_path, cuda=cuda)
+    rendered = render(report)
     print(rendered)
-    if args.out:
+    if args.out and not args.dry_run:
         _atomic_write_text(args.out, rendered + "\n")
-    return 0
+    return report["exit_code"]
 
 
 if __name__ == "__main__":
