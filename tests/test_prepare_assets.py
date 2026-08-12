@@ -526,6 +526,88 @@ def test_cli_rejects_missing_split_lock(tmp_path: Path) -> None:
     assert "split checksum lock" in completed.stderr
 
 
+def test_page_level_ocr_resume_after_mid_document_interruption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = build_project(tmp_path)
+    fake_docling = install_fakes(monkeypatch)[1]
+    ocr_calls = {"count": 0}
+
+    def interrupting_ocr(image_path: Path, model_name: str = "", revision: str | None = None) -> str:
+        ocr_calls["count"] += 1
+        if ocr_calls["count"] >= 2:
+            raise SystemExit(143)
+        return "text"
+
+    with pytest.raises(SystemExit) as excinfo:
+        prepare.run_shard(
+            project_root=project,
+            split="val",
+            doc_names=DOCS,
+            page_ids_by_doc={doc: PAGES for doc in DOCS},
+            out_root=project / "out",
+            checkpoint_path=project / "out/checkpoint.json",
+            manifest_path=project / "out/shard_manifest.json",
+            pdf_root=project / "pdfs",
+            extract_got_ocr_fn=interrupting_ocr,
+            export_docling_fn=fake_docling,
+        )
+    assert excinfo.value.code == 143
+    provenance = json.loads((project / "out/provenance/academic/doc_a.json").read_text())
+    assert "ocr_sha256" in provenance["pages"]["0"]
+    assert "ocr_sha256" not in provenance["pages"]["1"]
+    assert not (project / "out/ocr/academic/doc_a_page_1.txt").is_file()
+    calls: list[str] = []
+    summary = run_shard(project, monkeypatch=monkeypatch, ocr_calls=calls, resume=True)
+    assert summary["failed"] == []
+    assert calls.count("doc_a_page_0.png") == 0
+    assert calls.count("doc_a_page_1.png") == 1
+    assert len(calls) == 5
+    assert (project / "out/ocr/academic/doc_a_page_1.txt").read_text().startswith("OCR for")
+
+
+def test_sigterm_saves_checkpoint_and_exits_143(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project = build_project(tmp_path)
+    fake_docling = install_fakes(monkeypatch)[1]
+    import signal as signal_module
+
+    sent = {"done": False}
+
+    def sigterm_ocr(image_path: Path, model_name: str = "", revision: str | None = None) -> str:
+        if not sent["done"]:
+            sent["done"] = True
+            signal_module.raise_signal(signal_module.SIGTERM)
+        return "text"
+
+    prepare.install_graceful_termination_handler()
+    previous_term = signal_module.getsignal(signal_module.SIGTERM)
+    previous_int = signal_module.getsignal(signal_module.SIGINT)
+    try:
+        with pytest.raises(SystemExit) as excinfo:
+            prepare.run_shard(
+                project_root=project,
+                split="val",
+                doc_names=DOCS,
+                page_ids_by_doc={doc: PAGES for doc in DOCS},
+                out_root=project / "out",
+                checkpoint_path=project / "out/checkpoint.json",
+                manifest_path=project / "out/shard_manifest.json",
+                pdf_root=project / "pdfs",
+                extract_got_ocr_fn=sigterm_ocr,
+                export_docling_fn=fake_docling,
+            )
+    finally:
+        signal_module.signal(signal_module.SIGTERM, previous_term)
+        signal_module.signal(signal_module.SIGINT, previous_int)
+        import faar.operations as ops
+
+        ops._TERMINATION_SIGNAL = None
+    assert excinfo.value.code == 143
+    checkpoint = json.loads((project / "out/checkpoint.json").read_text())
+    assert "academic/doc_a" not in checkpoint["completed"]
+    assert not (project / "out/shard_manifest.json").is_file()
+
+
 def test_paths_with_spaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     project = build_project(tmp_path / "my project with spaces")
     ocr_calls: list[str] = []

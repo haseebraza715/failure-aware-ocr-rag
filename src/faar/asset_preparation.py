@@ -16,6 +16,7 @@ from .ohr_inventory import resolve_ohr_inventory_path
 from .operations import check_termination
 from .pdf_preprocessing import export_docling_markdown
 from .resource_limits import enforce_memory_budget
+from .run_io import atomic_write_text
 
 
 STAGE_ORDER = ("extract_pdf", "docling_audit", "render_pages", "got_ocr")
@@ -61,11 +62,6 @@ def _rel(path: Path, project_root: Path) -> str:
         return path.as_posix()
 
 
-def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-
-
 def _read_json(path: Path) -> dict[str, Any] | None:
     if not path.is_file():
         return None
@@ -74,6 +70,47 @@ def _read_json(path: Path) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def _publish_provenance(path: Path, payload: dict[str, Any]) -> None:
+    """Atomically publish document provenance; never expose a truncated file."""
+    atomic_write_text(path, json.dumps(payload, indent=2) + "\n")
+
+
+def build_provenance(
+    doc_rel: str,
+    pdf_path: Path,
+    pdf_sha256: str,
+    page_ids: list[int],
+    audit_path: Path,
+    model_name: str,
+    revision: str,
+    device: str,
+    metrics: dict[str, Any],
+    pages_state: dict[str, Any],
+    project_root: Path,
+) -> dict[str, Any]:
+    return {
+        "doc_name": doc_rel,
+        "pdf_sha256": pdf_sha256,
+        "pdf_path": _rel(pdf_path, project_root),
+        "page_ids": page_ids,
+        "got_ocr_repository": model_name,
+        "got_ocr_revision": revision,
+        "device": device,
+        "docling_audit": {
+            "pdf_sha256": pdf_sha256,
+            "output": _rel(audit_path, project_root),
+        },
+        "pages": dict(pages_state),
+        "metrics": {
+            "render_runtime_sec": metrics.get("render_runtime_sec"),
+            "got_ocr_runtime_sec_total": metrics.get("got_ocr_runtime_sec_total"),
+            "per_page_got_ocr_runtime_sec": metrics["per_page_got_ocr_runtime_sec"],
+            "peak_rss_bytes": metrics.get("peak_rss_bytes"),
+        },
+        "updated_at_utc": datetime.now(UTC).isoformat(),
+    }
 
 
 def _remove_quietly(path: Path) -> None:
@@ -237,6 +274,25 @@ def render_pdf_pages(pdf_path: Path, page_ids: list[int], image_paths: dict[int,
         "render_runtime_sec": time.perf_counter() - started,
         "render_scale": scale,
     }
+
+
+def _cuda_peak_bytes() -> tuple[int | None, int | None]:
+    """Report process-peak CUDA allocated/reserved bytes when measurable."""
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return None, None
+        return int(torch.cuda.max_memory_allocated()), int(torch.cuda.max_memory_reserved())
+    except Exception:
+        return None, None
+
+
+def _bytes_or_zero(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
 
 
 @dataclass
@@ -405,6 +461,37 @@ def execute_document_preparation(
         ocr_total = 0.0
         pages_state = dict(existing.get("pages") or {})
         ocr_fn = extract_got_ocr_fn
+
+        # Publish rendered-page provenance so an interruption after rendering
+        # resumes without re-rendering pages and without re-OCRing any page
+        # whose full entry is already recorded.
+        for page_id in page_ids:
+            image_path = image_paths[page_id]
+            current = pages_state.get(str(page_id)) or {}
+            pages_state[str(page_id)] = {
+                **current,
+                "pdf_sha256": pdf_sha256,
+                "png_sha256": sha256_file(image_path),
+                "image_path": _rel(image_path, project_root),
+                "bytes_png": image_path.stat().st_size,
+            }
+        _publish_provenance(
+            provenance_path,
+            build_provenance(
+                doc_rel,
+                pdf_path,
+                pdf_sha256,
+                page_ids,
+                audit_path,
+                model_name,
+                revision,
+                device,
+                metrics,
+                pages_state,
+                project_root,
+            ),
+        )
+
         for page_id in page_ids:
             check_termination()
             enforce_memory_budget(f"asset preparation before GOT-OCR page {page_id}")
@@ -459,6 +546,22 @@ def execute_document_preparation(
             current_rss = _rss_bytes()
             if current_rss is not None:
                 peak_rss = max(peak_rss or 0, current_rss)
+            _publish_provenance(
+                provenance_path,
+                build_provenance(
+                    doc_rel,
+                    pdf_path,
+                    pdf_sha256,
+                    page_ids,
+                    audit_path,
+                    model_name,
+                    revision,
+                    device,
+                    metrics,
+                    pages_state,
+                    project_root,
+                ),
+            )
             enforce_memory_budget(f"asset preparation after GOT-OCR page {page_id}")
             check_termination()
 
@@ -468,39 +571,36 @@ def execute_document_preparation(
 
         storage = {
             "png_bytes_total": sum(image_paths[page_id].stat().st_size for page_id in page_ids),
-            "ocr_bytes_total": sum(ocr_paths[page_id].stat().st_size for page_id in page_ids),
+            "ocr_bytes_total": sum(_bytes_or_zero(ocr_paths[page_id]) for page_id in page_ids),
             "per_page_bytes": {
                 str(page_id): {
                     "png": image_paths[page_id].stat().st_size,
-                    "ocr": ocr_paths[page_id].stat().st_size,
+                    "ocr": _bytes_or_zero(ocr_paths[page_id]),
                 }
                 for page_id in page_ids
             },
         }
         metrics["storage"] = storage
+        cuda_allocated, cuda_reserved = _cuda_peak_bytes()
+        metrics["cuda_peak_allocated_bytes"] = cuda_allocated
+        metrics["cuda_peak_reserved_bytes"] = cuda_reserved
 
-        provenance = {
-            "doc_name": doc_rel,
-            "pdf_sha256": pdf_sha256,
-            "pdf_path": _rel(pdf_path, project_root),
-            "page_ids": page_ids,
-            "got_ocr_repository": model_name,
-            "got_ocr_revision": revision,
-            "device": device,
-            "docling_audit": {
-                "pdf_sha256": pdf_sha256,
-                "output": _rel(audit_path, project_root),
-            },
-            "pages": pages_state,
-            "metrics": {
-                "render_runtime_sec": metrics["render_runtime_sec"],
-                "got_ocr_runtime_sec_total": metrics["got_ocr_runtime_sec_total"],
-                "per_page_got_ocr_runtime_sec": metrics["per_page_got_ocr_runtime_sec"],
-                "peak_rss_bytes": metrics["peak_rss_bytes"],
-            },
-            "updated_at_utc": datetime.now(UTC).isoformat(),
-        }
-        _write_json(provenance_path, provenance)
+        _publish_provenance(
+            provenance_path,
+            build_provenance(
+                doc_rel,
+                pdf_path,
+                pdf_sha256,
+                page_ids,
+                audit_path,
+                model_name,
+                revision,
+                device,
+                metrics,
+                pages_state,
+                project_root,
+            ),
+        )
 
         return PreparationResult(
             doc_name=doc_rel,
