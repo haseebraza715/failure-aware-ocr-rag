@@ -1,5 +1,9 @@
 # Cluster handoff
 
+The step-by-step supervisor handoff (clone, environment, preflight, bounded
+calibration, resume, sizing, sharded preparation) is in `RUNBOOK.md` at the
+repository root. This file documents the mechanics behind each command.
+
 ## Environment
 
 Create the pinned CPython 3.12 environment and verify it:
