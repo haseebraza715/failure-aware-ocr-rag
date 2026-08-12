@@ -14,7 +14,9 @@ Full-dataset execution remains disabled. Use `--smoke-doc` for one document.
 
 import argparse
 import json
+import os
 import sys
+import time
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -64,6 +66,21 @@ def load_checkpoint(path: Path) -> dict:
 def save_checkpoint(path: Path, payload: dict) -> None:
     payload["updated_at_utc"] = datetime.now(UTC).isoformat()
     atomic_write_text(path, json.dumps(payload, indent=2) + "\n")
+
+
+def _huggingface_cache_bytes() -> int | None:
+    raw = os.getenv("HF_HOME")
+    cache_root = Path(raw).expanduser() if raw and raw.strip() else Path.home() / ".cache/huggingface"
+    if not cache_root.is_dir():
+        return 0
+    total = 0
+    try:
+        for path in cache_root.rglob("*"):
+            if path.is_file():
+                total += path.stat().st_size
+    except OSError:
+        return None
+    return total
 
 
 def _inventory_page_ids(project_root: Path, doc_rel: str, inventory_dir: Path, page_ids_arg: str | None) -> list[int]:
@@ -191,6 +208,11 @@ def main() -> None:
     checkpoint["dataset"] = args.dataset
     checkpoint["smoke_doc"] = doc_rel
     checkpoint["plan"] = work
+    checkpoint["resumed"] = bool(checkpoint["completed"]) or bool(checkpoint.get("failed"))
+    checkpoint["cache_bytes_before"] = _huggingface_cache_bytes()
+    checkpoint["cache_path"] = str(
+        (Path(os.getenv("HF_HOME")) if os.getenv("HF_HOME") else Path.home() / ".cache/huggingface").expanduser()
+    )
 
     plan_path = out_root / f"prepare_plan_{doc_rel.replace('/', '__')}.json"
     atomic_write_text(plan_path, json.dumps(work, indent=2) + "\n")
@@ -222,6 +244,7 @@ def main() -> None:
         )
         return
 
+    runtime_started = time.perf_counter()
     result = execute_document_preparation(
         project_root=project_root,
         doc_rel=doc_rel,
@@ -231,6 +254,13 @@ def main() -> None:
         pdf_zip=args.pdf_zip,
         inventory_dir=inventory_dir,
     )
+    checkpoint["calibration"] = {
+        "runtime_sec_total_wall": round(time.perf_counter() - runtime_started, 3),
+        "resumed": bool(checkpoint.get("resumed")),
+        "cache_bytes_before": checkpoint.get("cache_bytes_before"),
+        "cache_bytes_after": _huggingface_cache_bytes(),
+        "cache_path": checkpoint.get("cache_path"),
+    }
     checkpoint["completed"][doc_rel] = {
         "page_ids": page_ids,
         "pdf_sha256": result.pdf_sha256,
