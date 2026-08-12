@@ -608,6 +608,167 @@ def test_sigterm_saves_checkpoint_and_exits_143(tmp_path: Path, monkeypatch: pyt
     assert not (project / "out/shard_manifest.json").is_file()
 
 
+def test_end_to_end_prepare_interrupt_resume_finish_merge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exercise prepare -> checkpoint -> interrupt -> resume -> finish shard
+    -> merge -> validate provenance for a complete two-shard split."""
+    project = build_project(tmp_path)
+    shard0_docs = prepare.select_shard(DOCS, 0, 2)
+    shard1_docs = prepare.select_shard(DOCS, 1, 2)
+    assert shard0_docs == DOCS[:2] and shard1_docs == DOCS[2:]
+    calls: list[str] = []
+    fake_ocr, fake_docling = install_fakes(monkeypatch, calls)
+    original_check = prepare.check_termination
+    interrupts = {"count": 0}
+
+    def interrupting_check() -> None:
+        interrupts["count"] += 1
+        if interrupts["count"] >= 2:
+            raise SystemExit(143)
+
+    monkeypatch.setattr(prepare, "check_termination", interrupting_check)
+    with pytest.raises(SystemExit) as excinfo:
+        prepare.run_shard(
+            project_root=project,
+            split="val",
+            doc_names=shard0_docs,
+            page_ids_by_doc={doc: PAGES for doc in shard0_docs},
+            out_root=project / "out",
+            checkpoint_path=project / "out/checkpoint_shard1of2.json",
+            manifest_path=project / "out/shard_manifest_shard1of2.json",
+            shard_index=0,
+            num_shards=2,
+            pdf_root=project / "pdfs",
+            extract_got_ocr_fn=fake_ocr,
+            export_docling_fn=fake_docling,
+        )
+    assert excinfo.value.code == 143
+    checkpoint = json.loads((project / "out/checkpoint_shard1of2.json").read_text())
+    assert set(checkpoint["completed"]) == {DOCS[0]}
+    assert not (project / "out/shard_manifest_shard1of2.json").is_file()
+
+    monkeypatch.setattr(prepare, "check_termination", original_check)
+    calls.clear()
+    summary0 = prepare.run_shard(
+        project_root=project,
+        split="val",
+        doc_names=shard0_docs,
+        page_ids_by_doc={doc: PAGES for doc in shard0_docs},
+        out_root=project / "out",
+        checkpoint_path=project / "out/checkpoint_shard1of2.json",
+        manifest_path=project / "out/shard_manifest_shard1of2.json",
+        shard_index=0,
+        num_shards=2,
+        pdf_root=project / "pdfs",
+        extract_got_ocr_fn=fake_ocr,
+        export_docling_fn=fake_docling,
+        resume=True,
+    )
+    assert summary0["failed"] == []
+    assert summary0["skipped"] == [DOCS[0]]
+
+    summary1 = prepare.run_shard(
+        project_root=project,
+        split="val",
+        doc_names=shard1_docs,
+        page_ids_by_doc={doc: PAGES for doc in shard1_docs},
+        out_root=project / "out",
+        checkpoint_path=project / "out/checkpoint_shard2of2.json",
+        manifest_path=project / "out/shard_manifest_shard2of2.json",
+        shard_index=1,
+        num_shards=2,
+        pdf_root=project / "pdfs",
+        extract_got_ocr_fn=fake_ocr,
+        export_docling_fn=fake_docling,
+    )
+    assert summary1["failed"] == []
+
+    merged = prepare.merge_shard_manifests(
+        [project / "out/shard_manifest_shard1of2.json", project / "out/shard_manifest_shard2of2.json"],
+        expected_documents=DOCS,
+    )
+    assert merged["documents"] == DOCS
+    assert merged["pages_completed"] == len(DOCS) * len(PAGES)
+
+    for doc in DOCS:
+        provenance = json.loads((project / "out/provenance" / f"{doc}.json").read_text())
+        assert provenance["doc_name"] == doc
+        assert provenance["pdf_sha256"]
+        assert provenance["got_ocr_revision"] == "d3017ef2c2c1395888c8d635c5e0508bcb0ac78d"
+        for page_id in PAGES:
+            page = provenance["pages"][str(page_id)]
+            assert page["ocr_sha256"]
+            assert page["png_sha256"]
+            assert (project / page["ocr_text_path"]).is_file()
+            assert (project / page["image_path"]).is_file()
+    assert not list((project / "out").glob("*.tmp"))
+    assert not list((project / "out").glob(".*.tmp"))
+
+
+def test_input_change_never_silently_reuses_stale_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = build_project(tmp_path)
+    run_shard(project, monkeypatch=monkeypatch)
+    before = json.loads((project / "out/provenance/academic/doc_a.json").read_text())
+    (project / "pdfs/academic/doc_a.pdf").write_bytes(b"%PDF-1.4\nCHANGED\n")
+    calls: list[str] = []
+    run_shard(project, monkeypatch=monkeypatch, ocr_calls=calls, resume=True)
+    after = json.loads((project / "out/provenance/academic/doc_a.json").read_text())
+    assert before["pdf_sha256"] != after["pdf_sha256"]
+    assert len(calls) == len(PAGES)
+    checkpoint = json.loads((project / "out/checkpoint.json").read_text())
+    assert checkpoint["completed"]["academic/doc_a"]["pdf_sha256"] == after["pdf_sha256"]
+
+
+def test_cuda_oom_is_fatal_and_saves_checkpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project = build_project(tmp_path)
+
+    def oom_ocr(image_path: Path, model_name: str = "", revision: str | None = None) -> str:
+        raise RuntimeError("CUDA out of memory. Tried to allocate 1.00 GiB")
+
+    fake_docling = install_fakes(monkeypatch)[1]
+    with pytest.raises(RuntimeError, match="CUDA out of memory"):
+        prepare.run_shard(
+            project_root=project,
+            split="val",
+            doc_names=DOCS,
+            page_ids_by_doc={doc: PAGES for doc in DOCS},
+            out_root=project / "out",
+            checkpoint_path=project / "out/checkpoint.json",
+            manifest_path=project / "out/shard_manifest.json",
+            pdf_root=project / "pdfs",
+            extract_got_ocr_fn=oom_ocr,
+            export_docling_fn=fake_docling,
+        )
+    checkpoint = json.loads((project / "out/checkpoint.json").read_text())
+    assert "academic/doc_a" not in checkpoint["completed"]
+    assert not (project / "out/shard_manifest.json").is_file()
+
+
+def test_cli_fails_closed_on_missing_inventory(tmp_path: Path) -> None:
+    project = build_project(tmp_path)
+    (project / "OHR-Bench/data/retrieval_base/gt/academic/doc_a.json").unlink()
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(PREPARE_PATH),
+            "--project-root",
+            str(project),
+            "--out-root",
+            str(project / "out"),
+            "--dry-run",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=project,
+    )
+    assert completed.returncode != 0
+    assert "No complete inventory" in completed.stderr
+
+
 def test_paths_with_spaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     project = build_project(tmp_path / "my project with spaces")
     ocr_calls: list[str] = []

@@ -44,6 +44,7 @@ import math
 import os
 import sys
 import time
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -52,7 +53,7 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from faar.asset_preparation import execute_document_preparation, load_locked_got_ocr
+from faar.asset_preparation import execute_document_preparation, load_locked_got_ocr, resolve_pdf_source
 from faar.ohr_inventory import load_resolved_ohr_document_inventory
 from faar.operations import check_termination, install_graceful_termination_handler
 from faar.resource_limits import enforce_memory_budget, is_fatal_resource_error
@@ -204,6 +205,45 @@ def _completed_doc_valid(project_root: Path, entry: Any) -> bool:
     return True
 
 
+def _source_pdf_sha256(
+    *,
+    project_root: Path,
+    doc_rel: str,
+    pdf_root: Path | None,
+    pdf_zip: Path | None,
+    inventory_dir: Path | None,
+) -> str | None:
+    """Hash the current source PDF; None when the source cannot be located."""
+    resolved_inventory = inventory_dir or (project_root / "OHR-Bench/data/retrieval_base/gt")
+    kind, source = resolve_pdf_source(
+        project_root=project_root,
+        doc_rel=doc_rel,
+        pdf_root=pdf_root,
+        pdf_zip=pdf_zip,
+        inventory_dir=resolved_inventory,
+    )
+    if kind == "filesystem" and source is not None:
+        try:
+            return sha256_file(source)
+        except OSError:
+            return None
+    if kind == "zip" and source is not None:
+        zip_path = pdf_zip or (project_root / "data/ohr_bench_raw/pdfs.zip")
+        try:
+            with zipfile.ZipFile(zip_path) as archive:
+                with archive.open(source.as_posix()) as handle:
+                    digest = hashlib.sha256()
+                    while True:
+                        chunk = handle.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        digest.update(chunk)
+                    return digest.hexdigest()
+        except OSError:
+            return None
+    return None
+
+
 def run_shard(
     *,
     project_root: Path,
@@ -268,9 +308,18 @@ def run_shard(
             enforce_memory_budget(f"asset preparation before document {doc}")
             entry = checkpoint["completed"].get(doc)
             if entry is not None and _completed_doc_valid(project_root, entry):
-                completed_pages += len(page_ids_by_doc[doc])
-                skipped_docs.append(doc)
-                continue
+                source_sha = _source_pdf_sha256(
+                    project_root=project_root,
+                    doc_rel=doc,
+                    pdf_root=pdf_root,
+                    pdf_zip=pdf_zip,
+                    inventory_dir=inventory_dir,
+                )
+                recorded_sha = entry.get("pdf_sha256") if isinstance(entry, dict) else None
+                if source_sha is None or source_sha == recorded_sha:
+                    completed_pages += len(page_ids_by_doc[doc])
+                    skipped_docs.append(doc)
+                    continue
             if entry is not None:
                 del checkpoint["completed"][doc]
             result = execute_document_preparation(
