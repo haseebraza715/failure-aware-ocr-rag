@@ -802,20 +802,23 @@ def run_checks(
         )
 
     hf_statuses = []
-    for entry in _model_lock(project_root):
-        reachable, detail = _hf_repo_reachable(entry["repository"], entry["revision"])
-        hf_statuses.append({**entry, "reachable": reachable, "detail": detail})
-        if reachable:
-            record("hf_model_access", "warning", "pass", detail=f"{entry['repository']} reachable")
-        else:
-            record(
-                "hf_model_access",
-                "warning",
-                "warn",
-                detail=f"{entry['repository']}: {detail} (gated models need HF_TOKEN; network may be blocked)",
-            )
-    if not hf_statuses:
-        record("hf_model_access", "warning", "warn", detail="no model lock found; cannot verify HF access")
+    if os.getenv("FAAR_PREFLIGHT_OFFLINE"):
+        record("hf_model_access", "warning", "skip", detail="network checks disabled by FAAR_PREFLIGHT_OFFLINE")
+    else:
+        for entry in _model_lock(project_root):
+            reachable, detail = _hf_repo_reachable(entry["repository"], entry["revision"])
+            hf_statuses.append({**entry, "reachable": reachable, "detail": detail})
+            if reachable:
+                record("hf_model_access", "warning", "pass", detail=f"{entry['repository']} reachable")
+            else:
+                record(
+                    "hf_model_access",
+                    "warning",
+                    "warn",
+                    detail=f"{entry['repository']}: {detail} (gated models need HF_TOKEN; network may be blocked)",
+                )
+        if not hf_statuses:
+            record("hf_model_access", "warning", "warn", detail="no model lock found; cannot verify HF access")
 
     vlm_backend = os.getenv("VLM_BACKEND", "openai")
     if vlm_backend in {"claude-sonnet-4-5", "anthropic", "claude"}:

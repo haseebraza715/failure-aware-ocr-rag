@@ -253,6 +253,14 @@ def test_cli_check_exit_code_matches_blocking_failure(tmp_path: Path) -> None:
     assert code == 1
 
 
+def test_hf_checks_can_be_disabled_offline(tmp_path: Path, clean_env, monkeypatch) -> None:
+    project = build_project(tmp_path)
+    monkeypatch.setenv("FAAR_PREFLIGHT_OFFLINE", "1")
+    report = preflight.run_checks(gpu_payload(), project_root=project, path=project, cuda=False)
+    hf_checks = [check for check in report["checks"] if check["name"] == "hf_model_access"]
+    assert hf_checks and all(check["status"] == "skip" for check in hf_checks)
+
+
 def test_cli_check_login_node_safe_without_cuda() -> None:
     completed = subprocess.run(
         [sys.executable, str(PREFLIGHT_PATH), "--check", "--no-cuda", "--dry-run"],
@@ -260,6 +268,7 @@ def test_cli_check_login_node_safe_without_cuda() -> None:
         capture_output=True,
         text=True,
         cwd=Path(__file__).resolve().parents[1],
+        env={**__import__("os").environ, "FAAR_PREFLIGHT_OFFLINE": "1"},
     )
     assert completed.returncode in (0, 2)
     assert "cuda_visibility" in completed.stdout
