@@ -104,6 +104,7 @@ def build_provenance(
         },
         "pages": dict(pages_state),
         "metrics": {
+            "docling_runtime_sec": metrics.get("docling_runtime_sec"),
             "render_runtime_sec": metrics.get("render_runtime_sec"),
             "got_ocr_runtime_sec_total": metrics.get("got_ocr_runtime_sec_total"),
             "per_page_got_ocr_runtime_sec": metrics["per_page_got_ocr_runtime_sec"],
@@ -355,6 +356,7 @@ def execute_document_preparation(
         "per_page_got_ocr_runtime_sec": {},
         "skipped_pages": {"render": [], "ocr": []},
     }
+    prior_metrics: dict[str, Any] = {}
 
     try:
         # Stage: extract PDF
@@ -376,6 +378,15 @@ def execute_document_preparation(
         check_termination()
 
         existing = _read_json(provenance_path) or {}
+        if isinstance(existing.get("metrics"), dict):
+            prior_metrics = existing["metrics"]
+        prior_per_page = prior_metrics.get("per_page_got_ocr_runtime_sec")
+        if isinstance(prior_per_page, dict):
+            metrics["per_page_got_ocr_runtime_sec"] = {
+                str(page_id): float(prior_per_page[str(page_id)])
+                for page_id in page_ids
+                if str(page_id) in prior_per_page
+            }
         # Stage: Docling audit
         enforce_memory_budget("asset preparation before Docling audit")
         check_termination()
@@ -390,7 +401,10 @@ def execute_document_preparation(
             and audit_path.stat().st_size > 0
             and audit_prov.get("pdf_sha256") == pdf_sha256
         ):
-            metrics["docling_runtime_sec"] = 0.0
+            # A skipped Docling stage reuses work from a previous attempt; keep
+            # that attempt's measured runtime so resumed calibration does not
+            # understate the projection.
+            metrics["docling_runtime_sec"] = float(prior_metrics.get("docling_runtime_sec") or 0.0)
             metrics["docling_skipped"] = True
         else:
             partial = audit_path.with_suffix(audit_path.suffix + ".partial")
@@ -451,6 +465,8 @@ def execute_document_preparation(
                 f"Inventory page ids {page_ids} do not match PDF pages {sorted(expected_pages)}."
             )
         metrics["render_runtime_sec"] = float(render_meta.get("render_runtime_sec") or 0.0)
+        if not pages_to_render and not metrics["render_runtime_sec"]:
+            metrics["render_runtime_sec"] = float(prior_metrics.get("render_runtime_sec") or 0.0)
         metrics["render_scale"] = render_meta.get("render_scale", 2.0)
         enforce_memory_budget("asset preparation after page rendering")
         check_termination()
@@ -458,7 +474,6 @@ def execute_document_preparation(
         # Stage: GOT-OCR — repository/revision come only from committed lock file.
         model_name = locked["repository"]
         revision = locked["revision"]
-        ocr_total = 0.0
         pages_state = dict(existing.get("pages") or {})
         ocr_fn = extract_got_ocr_fn
 
@@ -522,7 +537,6 @@ def execute_document_preparation(
             started = time.perf_counter()
             text = ocr_fn(image_path, model_name=model_name, revision=revision)
             runtime = time.perf_counter() - started
-            ocr_total += runtime
             metrics["per_page_got_ocr_runtime_sec"][str(page_id)] = runtime
             if not str(text).strip():
                 raise RuntimeError(f"GOT-OCR returned empty text for page {page_id}")
@@ -565,7 +579,8 @@ def execute_document_preparation(
             enforce_memory_budget(f"asset preparation after GOT-OCR page {page_id}")
             check_termination()
 
-        metrics["got_ocr_runtime_sec_total"] = ocr_total
+        per_page_ocr = metrics["per_page_got_ocr_runtime_sec"]
+        metrics["got_ocr_runtime_sec_total"] = sum(float(value) for value in per_page_ocr.values())
         metrics["peak_rss_bytes"] = peak_rss
         metrics["finished_at_utc"] = datetime.now(UTC).isoformat()
 

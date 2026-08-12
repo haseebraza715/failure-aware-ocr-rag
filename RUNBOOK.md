@@ -48,7 +48,11 @@ mkdir -p "$HF_HOME"
 
 Required local inputs (see section 12): `split.json`, `config/split_checksums.json`,
 `OHR-Bench/data/qas_v2.json`, `OHR-Bench/data/retrieval_base/gt/`, and the PDF
-archive at `data/ohr_bench_raw/pdfs.zip` (or `FAAR_PDF_ROOT`).
+archive at `data/ohr_bench_raw/pdfs.zip` (or `FAAR_PDF_ROOT`). The
+preparation CLIs and preflight honor `FAAR_PDF_ROOT`, `FAAR_PDF_ZIP`, and
+`FAAR_DOCUMENT_INVENTORY` from the environment, so the same `.env` values drive
+both the checks and the jobs; preflight fails if a configured path does not
+exist.
 
 ## 4. Login-node-safe preflight (no CUDA)
 
@@ -152,7 +156,19 @@ sbatch cluster/templates/slurm_prepare_val_shard.sbatch
 
 Each shard writes `checkpoint_shardNofM.json` and
 `shard_manifest_shardNofM.json` under the out root. When all shards are
-finished, build the locked benchmark manifest and validate coverage:
+finished, validate the shard set (complete, non-overlapping, every index in
+range, no uncompleted documents, exact match with the locked split) and merge
+it into one record:
+
+```bash
+.venv-aaai/bin/python cluster/merge_prep_shards.py \
+  --project-root "$PWD" \
+  --split val \
+  --out "$FAAR_SCRATCH/faar-ohr-val/merged_assets.json" \
+  "$FAAR_SCRATCH/faar-ohr-val"/shard_manifest_shard*.json
+```
+
+Then build the locked benchmark manifest and validate coverage:
 
 ```bash
 .venv-aaai/bin/python register_benchmark_assets.py \
@@ -186,8 +202,8 @@ is the recommended engineering check before full baselines.
 
 | Stage | Hugging Face | OpenAI/Anthropic key |
 | --- | --- | --- |
-| Preflight | checks model access (no downloads) | none |
-| 108-page calibration / asset preparation | GOT-OCR-2.0 (locked revision) | none |
+| Preflight | checks model access (no downloads, honors `HF_TOKEN`) | none |
+| 108-page calibration / asset preparation | GOT-OCR-2.0 (locked revision), Docling models snapshot (`ds4sd/docling-models`, locked) | none |
 | B0 baseline | NV-Embed-v2, bge-reranker-v2-m3 | none |
 | B1/B2/B4 | same + VisRAG/ColPali | `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY` if `VLM_BACKEND=claude*`) |
 | Gate tuning | none | none |

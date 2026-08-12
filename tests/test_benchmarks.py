@@ -283,3 +283,37 @@ def test_corpus_image_hashes_hashes_each_image_once(
     assert len(first_pass) == 2
     repository.corpus_image_hashes()
     assert calls == first_pass
+
+
+def test_register_cli_writes_manifest_atomically(tmp_path: Path, monkeypatch) -> None:
+    import register_benchmark_assets as register
+
+    monkeypatch.setattr(
+        register,
+        "build_ohr_asset_manifest",
+        lambda root, split, ocr_dir, image_dir, document_inventory_dir=None: {
+            "records": [],
+            "corpus_pages": [],
+            "document_inventory": {},
+        },
+    )
+    out = tmp_path / "ohrbench" / "val.json"
+    monkeypatch.chdir(tmp_path)
+    code = register.main(
+        [
+            "--dataset",
+            "ohrbench",
+            "--split",
+            "val",
+            "--ocr-dir",
+            str(tmp_path / "ocr"),
+            "--image-dir",
+            str(tmp_path / "images"),
+            "--out",
+            str(out),
+        ]
+    )
+    assert code == 0
+    payload = json.loads(out.read_text())
+    assert payload["dataset"] == "ohrbench"
+    assert not list(out.parent.glob(".val.json.*.tmp"))

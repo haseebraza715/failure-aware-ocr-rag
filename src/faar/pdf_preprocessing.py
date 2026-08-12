@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from importlib import import_module
 from pathlib import Path
 from typing import Any
@@ -10,13 +11,29 @@ class PdfPreprocessingError(RuntimeError):
     """Raised when Docling cannot produce a usable document representation."""
 
 
+@lru_cache(maxsize=1)
+def _docling_converter() -> Any:
+    """One DocumentConverter per process.
+
+    In Docling 1.20.0 constructing a converter resolves the ds4sd/docling-models
+    snapshot and initializes the model pipeline; doing that once per document
+    across 549 validation documents would be avoidable cluster waste.
+    """
+    document_converter = import_module("docling.document_converter")
+    return document_converter.DocumentConverter()
+
+
+def reset_docling_converter() -> None:
+    """Drop the cached converter (test isolation; new HF cache locations)."""
+    _docling_converter.cache_clear()
+
+
 def convert_pdf_with_docling(pdf_path: Path) -> Any:
     """Convert one PDF with the pinned Docling runtime and return the conversion result."""
     pdf_path = pdf_path.expanduser().resolve()
     if not pdf_path.is_file():
         raise FileNotFoundError(f"Docling input PDF is missing: {pdf_path}")
-    document_converter = import_module("docling.document_converter")
-    converter = document_converter.DocumentConverter()
+    converter = _docling_converter()
 
     document_model = import_module("docling.datamodel.document")
     if hasattr(document_model, "DocumentConversionInput"):

@@ -14,6 +14,10 @@
       "repository": "stepfun-ai/GOT-OCR-2.0-hf",
       "revision": "d3017ef2c2c1395888c8d635c5e0508bcb0ac78d"
     },
+    "docling": {
+      "repository": "ds4sd/docling-models",
+      "revision": "v2.0.0"
+    },
     "colpali": {
       "repository": "vidore/colpali-v1.2-hf",
       "revision": "56b5c732913abf3501ba208562df7b8f4edd5861"

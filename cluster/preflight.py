@@ -471,9 +471,15 @@ def _positive_gb_env(name: str) -> float | None:
 
 def _hf_repo_reachable(repo: str, revision: str) -> tuple[bool, str]:
     """HEAD the model file on the HF CDN; never downloads weights and never
-    incurs model-generation charges."""
+    incurs model-generation charges. Attaches HF_TOKEN as a bearer header when
+    set so gated repositories are verified with the operator's credentials;
+    the token itself is never included in the returned detail."""
     url = f"https://huggingface.co/{repo}/resolve/{revision}/config.json"
-    request = urllib.request.Request(url, method="HEAD")
+    headers: dict[str, str] = {}
+    token = os.getenv("HF_TOKEN")
+    if token and token.strip():
+        headers["Authorization"] = f"Bearer {token.strip()}"
+    request = urllib.request.Request(url, method="HEAD", headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
             return response.status < 400, f"HTTP {response.status}"
@@ -697,13 +703,24 @@ def run_checks(
         ("qas_v2.json", project_root / "OHR-Bench/data/qas_v2.json"),
     ]
     inventory_raw = os.getenv("FAAR_DOCUMENT_INVENTORY")
-    inventory = Path(inventory_raw).expanduser() if inventory_raw else project_root / "OHR-Bench/data/retrieval_base/gt"
+    inventory = (
+        Path(inventory_raw).expanduser()
+        if inventory_raw and inventory_raw.strip()
+        else project_root / "OHR-Bench/data/retrieval_base/gt"
+    )
     dataset_checks.append(("document inventory", inventory))
-    pdf_root = os.getenv("FAAR_PDF_ROOT")
+    pdf_root_raw = os.getenv("FAAR_PDF_ROOT")
     pdf_zip_raw = os.getenv("FAAR_PDF_ZIP")
-    pdf_zip = Path(pdf_zip_raw).expanduser() if pdf_zip_raw else project_root / "data/ohr_bench_raw/pdfs.zip"
+    pdf_root_path = Path(pdf_root_raw).expanduser() if pdf_root_raw and pdf_root_raw.strip() else None
+    pdf_zip = (
+        Path(pdf_zip_raw).expanduser()
+        if pdf_zip_raw and pdf_zip_raw.strip()
+        else project_root / "data/ohr_bench_raw/pdfs.zip"
+    )
     missing_paths = [label for label, candidate in dataset_checks if not candidate.exists()]
-    if not pdf_root and not pdf_zip.is_file():
+    if pdf_root_path is not None and not pdf_root_path.is_dir():
+        missing_paths.append(f"pdf root ({pdf_root_path})")
+    if pdf_root_path is None and not pdf_zip.is_file():
         missing_paths.append("pdf source (FAAR_PDF_ROOT or data/ohr_bench_raw/pdfs.zip)")
     if missing_paths:
         record("dataset_paths", "required", "fail", detail="missing: " + ", ".join(missing_paths))

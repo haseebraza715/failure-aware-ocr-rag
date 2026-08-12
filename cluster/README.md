@@ -358,6 +358,26 @@ Rules:
   corpus-embedding cache (below) keeps a resumed visual run from re-encoding
   the corpus.
 
+## Shard manifest merge
+
+After all preparation shards finish, validate the shard set and merge it into
+one operator-facing record before registering the benchmark assets:
+
+```bash
+.venv-aaai/bin/python cluster/merge_prep_shards.py \
+  --project-root "$PWD" --split val \
+  --out results/validation/merged_assets.json \
+  results/validation/faar-ohr-val/shard_manifest_shard*.json
+```
+
+The merge verifies the split checksum lock, requires every shard index in
+`[0, num_shards)` exactly once, rejects overlapping or uncompleted documents,
+and requires the combined document set to match the locked split exactly. The
+merged record is published atomically. `prepare_assets.py` and
+`prepare_benchmark_assets.py` read `FAAR_PDF_ROOT`, `FAAR_PDF_ZIP`, and
+`FAAR_DOCUMENT_INVENTORY` from the environment as defaults for their CLI
+flags, and preflight validates those configured paths before any job.
+
 ## Persistent corpus-embedding cache
 
 Both the text retriever and the visual retrievers persist corpus embeddings
@@ -390,6 +410,9 @@ launcher derives the memory/GPU ones when unset:
 | `FAAR_VLM_RETRY_BACKOFF_SECONDS` | 2.0 | exponential backoff base with jitter |
 | `FAAR_VLM_TIMEOUT_SECONDS` | 60 | per-request VLM timeout |
 | `FAAR_CACHE_DIR` | `<project_root>/cache` | corpus-embedding cache root |
+| `FAAR_PDF_ROOT` | `data/ohr_bench_raw/pdfs.zip` | filesystem PDF source root for asset preparation |
+| `FAAR_PDF_ZIP` | `data/ohr_bench_raw/pdfs.zip` | PDF archive path for asset preparation |
+| `FAAR_DOCUMENT_INVENTORY` | `OHR-Bench/data/retrieval_base/gt` | per-document page inventory directory |
 | `FAAR_LOG_INTERVAL_SECONDS` | 60 | progress-line interval |
 | `FAAR_LOG_INTERVAL_ITEMS` | 25 | progress-line item interval |
 | `OMP_NUM_THREADS` / `MKL_NUM_THREADS` | half the allocated CPUs | thread caps |

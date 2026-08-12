@@ -126,9 +126,14 @@ def build_summary(
     failed = checkpoint.get("failed")
     if not isinstance(completed, dict):
         raise SystemExit(f"checkpoint has no completed section: {checkpoint_path}")
-    docs = [entry for entry in completed.values() if isinstance(entry, dict) and isinstance(entry.get("metrics"), dict)]
-    if not docs:
+    doc_entries = [
+        (doc_rel, entry)
+        for doc_rel, entry in completed.items()
+        if isinstance(entry, dict) and isinstance(entry.get("metrics"), dict)
+    ]
+    if not doc_entries:
         raise SystemExit(f"checkpoint contains no completed document metrics: {checkpoint_path}")
+    docs = [entry for _doc_rel, entry in doc_entries]
 
     pages_attempted = sum(len(entry.get("page_ids") or []) for entry in docs)
     pages_completed = pages_attempted
@@ -151,14 +156,15 @@ def build_summary(
     png_bytes_total = 0
     ocr_bytes_total = 0
     per_page_bytes: dict[str, dict[str, int]] = {}
-    for entry in docs:
+    for doc_rel, entry in doc_entries:
         per_page = entry["metrics"].get("per_page_got_ocr_runtime_sec") or {}
         per_page_ocr.extend(float(value) for value in per_page.values() if isinstance(value, (int, float)))
         storage = entry["metrics"].get("storage") or {}
         png_bytes_total += int(storage.get("png_bytes_total") or 0)
         ocr_bytes_total += int(storage.get("ocr_bytes_total") or 0)
         for page_id, sizes in (storage.get("per_page_bytes") or {}).items():
-            per_page_bytes[str(page_id)] = sizes
+            # Key per document so page numbers never collide across documents.
+            per_page_bytes[f"{doc_rel}:p{page_id}"] = sizes
 
     calibration = checkpoint.get("calibration") if isinstance(checkpoint.get("calibration"), dict) else {}
     cache_before = calibration.get("cache_bytes_before")

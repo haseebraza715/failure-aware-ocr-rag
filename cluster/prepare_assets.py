@@ -53,7 +53,12 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from faar.asset_preparation import execute_document_preparation, load_locked_got_ocr, resolve_pdf_source
+from faar.asset_preparation import (
+    execute_document_preparation,
+    export_docling_markdown,
+    load_locked_got_ocr,
+    resolve_pdf_source,
+)
 from faar.ohr_inventory import load_resolved_ohr_document_inventory
 from faar.operations import check_termination, install_graceful_termination_handler
 from faar.resource_limits import enforce_memory_budget, is_fatal_resource_error
@@ -307,7 +312,12 @@ def run_shard(
             check_termination()
             enforce_memory_budget(f"asset preparation before document {doc}")
             entry = checkpoint["completed"].get(doc)
-            if entry is not None and _completed_doc_valid(project_root, entry):
+            if (
+                entry is not None
+                and isinstance(entry, dict)
+                and entry.get("page_ids") == page_ids_by_doc[doc]
+                and _completed_doc_valid(project_root, entry)
+            ):
                 source_sha = _source_pdf_sha256(
                     project_root=project_root,
                     doc_rel=doc,
@@ -331,7 +341,7 @@ def run_shard(
                 pdf_zip=pdf_zip,
                 inventory_dir=inventory_dir,
                 extract_got_ocr_fn=extract_got_ocr_fn,
-                export_docling_fn=export_docling_fn,
+                export_docling_fn=export_docling_fn or export_docling_markdown,
             )
         except (SystemExit, KeyboardInterrupt) as exc:
             code = exc.code if isinstance(exc, SystemExit) else 130
@@ -433,6 +443,11 @@ def merge_shard_manifests(
             raise SystemExit(f"shard manifest {path} has an invalid shard_index: {index!r}.")
         if isinstance(num_shards, bool) or not isinstance(num_shards, int) or num_shards < 1:
             raise SystemExit(f"shard manifest {path} has an invalid num_shards: {num_shards!r}.")
+        if not 0 <= index < num_shards:
+            raise SystemExit(
+                f"shard manifest {path} declares shard_index={index} for num_shards={num_shards}; "
+                "expected an index in [0, num_shards)."
+            )
         if index in declared:
             duplicates.append(f"shard index {index} declared by {declared[index]} and {path}")
         declared[index] = path
@@ -572,9 +587,23 @@ def main(argv: list[str] | None = None) -> int:
     verify_split_checksums(project_root)
     doc_names, example_count = load_split_documents(project_root, args.split)
 
-    inventory_dir = args.document_inventory or (project_root / "OHR-Bench/data/retrieval_base/gt")
+    def env_path(name: str) -> Path | None:
+        raw = os.getenv(name)
+        return Path(raw).expanduser() if raw and raw.strip() else None
+
+    pdf_root = args.pdf_root or env_path("FAAR_PDF_ROOT")
+    pdf_zip = args.pdf_zip or env_path("FAAR_PDF_ZIP")
+    inventory_dir = args.document_inventory or env_path("FAAR_DOCUMENT_INVENTORY") or (
+        project_root / "OHR-Bench/data/retrieval_base/gt"
+    )
+    if pdf_root is not None and not pdf_root.is_dir():
+        raise SystemExit(f"FAAR_PDF_ROOT / --pdf-root is not a directory: {pdf_root}")
+    if pdf_zip is not None and not pdf_zip.is_file():
+        raise SystemExit(f"FAAR_PDF_ZIP / --pdf-zip is not a file: {pdf_zip}")
     if not inventory_dir.is_absolute():
         inventory_dir = project_root / inventory_dir
+    if not inventory_dir.is_dir():
+        raise SystemExit(f"document inventory is not a directory: {inventory_dir}")
     shard_docs = select_shard(doc_names, args.shard_index, args.num_shards)
     page_ids_by_doc, _resolutions = load_resolved_ohr_document_inventory(inventory_dir, set(shard_docs))
     missing_inventory = sorted(set(shard_docs) - set(page_ids_by_doc))
@@ -636,8 +665,8 @@ def main(argv: list[str] | None = None) -> int:
         manifest_path=manifest_path,
         shard_index=args.shard_index,
         num_shards=args.num_shards,
-        pdf_root=args.pdf_root,
-        pdf_zip=args.pdf_zip,
+        pdf_root=pdf_root,
+        pdf_zip=pdf_zip,
         inventory_dir=inventory_dir,
         max_documents=args.max_documents,
         max_pages=args.max_pages,

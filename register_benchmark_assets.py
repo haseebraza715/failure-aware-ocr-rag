@@ -11,9 +11,10 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from faar.benchmarks import build_ohr_asset_manifest
+from faar.run_io import atomic_write_text
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Register complete GOT-OCR and page-image assets for a FAAR paper run.")
     parser.add_argument("--dataset", required=True, choices=["ohrbench"])
     parser.add_argument("--split", required=True, choices=["train", "val", "test"])
@@ -25,7 +26,7 @@ def main() -> None:
         help="Directory of complete per-document page inventories (default: OHR-Bench/data/retrieval_base/gt).",
     )
     parser.add_argument("--out", type=Path)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     root = Path.cwd().resolve()
     manifest = build_ohr_asset_manifest(
@@ -43,7 +44,7 @@ def main() -> None:
         "created_at_utc": datetime.now(UTC).isoformat(),
         **manifest,
     }
-    out.write_text(json.dumps(payload, indent=2) + "\n")
+    atomic_write_text(out, json.dumps(payload, indent=2) + "\n")
     print(
         json.dumps(
             {
@@ -55,7 +56,8 @@ def main() -> None:
             indent=2,
         )
     )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

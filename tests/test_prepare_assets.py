@@ -769,6 +769,169 @@ def test_cli_fails_closed_on_missing_inventory(tmp_path: Path) -> None:
     assert "No complete inventory" in completed.stderr
 
 
+def test_stale_page_inventory_is_not_silently_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = build_project(tmp_path)
+    run_shard(project, monkeypatch=monkeypatch)
+    ocr_calls: list[str] = []
+    fake_ocr, fake_docling = install_fakes(monkeypatch, ocr_calls)
+    inventory = project / "OHR-Bench/data/retrieval_base/gt/academic/doc_a.json"
+    inventory.write_text(json.dumps([{"text": "x", "page_idx": 0}]))
+    summary = prepare.run_shard(
+        project_root=project,
+        split="val",
+        doc_names=DOCS,
+        page_ids_by_doc={**{doc: PAGES for doc in DOCS}, "academic/doc_a": [0]},
+        out_root=project / "out",
+        checkpoint_path=project / "out/checkpoint.json",
+        manifest_path=project / "out/shard_manifest.json",
+        pdf_root=project / "pdfs",
+        extract_got_ocr_fn=fake_ocr,
+        export_docling_fn=fake_docling,
+        resume=True,
+    )
+    assert "academic/doc_a" not in summary["skipped"]
+    assert "academic/doc_a" in summary["failed"]
+    checkpoint = json.loads((project / "out/checkpoint.json").read_text())
+    assert "academic/doc_a" not in checkpoint["completed"]
+
+
+def test_merge_rejects_out_of_range_shard_indices(tmp_path: Path) -> None:
+    documents = [["academic/doc_a"], ["academic/doc_b"], ["manual/doc_c"]]
+    paths: list[Path] = []
+    for index, docs in enumerate(documents):
+        payload = {
+            "schema_version": 1,
+            "kind": "ohr-asset-shard-manifest",
+            "dataset": "ohrbench",
+            "split": "val",
+            "shard_index": index,
+            "num_shards": 2,
+            "created_at_utc": "t",
+            "finished_at_utc": "t",
+            "resumed": False,
+            "bounds": {"max_documents": None, "max_pages": None, "bounds_hit": False},
+            "documents_assigned": docs,
+            "documents_completed": docs,
+            "documents_failed": {},
+            "retried_documents": [],
+            "pages_assigned": 2,
+            "pages_completed": 2,
+            "runtime_sec": 1.0,
+            "checkpoint": "c",
+            "out_root": "o",
+        }
+        path = tmp_path / f"shard{index}.json"
+        path.write_text(json.dumps(payload))
+        paths.append(path)
+    with pytest.raises(SystemExit, match="expected an index in"):
+        prepare.merge_shard_manifests(paths, expected_documents=DOCS)
+
+
+def test_timing_from_earlier_attempts_is_preserved_on_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = build_project(tmp_path)
+    fake_docling = install_fakes(monkeypatch)[1]
+    ocr_calls = {"count": 0}
+
+    def interrupt_after_first_page(image_path: Path, model_name: str = "", revision: str | None = None) -> str:
+        ocr_calls["count"] += 1
+        if ocr_calls["count"] >= 2:
+            raise SystemExit(143)
+        return "text"
+
+    with pytest.raises(SystemExit) as excinfo:
+        prepare.run_shard(
+            project_root=project,
+            split="val",
+            doc_names=DOCS,
+            page_ids_by_doc={doc: PAGES for doc in DOCS},
+            out_root=project / "out",
+            checkpoint_path=project / "out/checkpoint.json",
+            manifest_path=project / "out/shard_manifest.json",
+            pdf_root=project / "pdfs",
+            extract_got_ocr_fn=interrupt_after_first_page,
+            export_docling_fn=fake_docling,
+        )
+    assert excinfo.value.code == 143
+    calls: list[str] = []
+    fake_ocr2, fake_docling2 = install_fakes(monkeypatch, calls)
+    summary = prepare.run_shard(
+        project_root=project,
+        split="val",
+        doc_names=DOCS,
+        page_ids_by_doc={doc: PAGES for doc in DOCS},
+        out_root=project / "out",
+        checkpoint_path=project / "out/checkpoint.json",
+        manifest_path=project / "out/shard_manifest.json",
+        pdf_root=project / "pdfs",
+        extract_got_ocr_fn=fake_ocr2,
+        export_docling_fn=fake_docling2,
+        resume=True,
+    )
+    assert summary["failed"] == []
+    checkpoint = json.loads((project / "out/checkpoint.json").read_text())
+    per_page = checkpoint["completed"]["academic/doc_a"]["metrics"]["per_page_got_ocr_runtime_sec"]
+    assert set(per_page) == {"0", "1"}
+    total = checkpoint["completed"]["academic/doc_a"]["metrics"]["got_ocr_runtime_sec_total"]
+    assert total == pytest.approx(sum(per_page.values()), abs=1e-6)
+
+
+def test_cli_honors_env_dataset_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project = build_project(tmp_path)
+    pdf_root = tmp_path / "alt-pdfs"
+    pdf_root.mkdir()
+    for doc in DOCS:
+        pdf_root.mkdir(parents=True, exist_ok=True)
+        source = pdf_root / f"{doc}.pdf"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes((project / "pdfs" / f"{doc}.pdf").read_bytes())
+    monkeypatch.setenv("FAAR_PDF_ROOT", str(pdf_root))
+    monkeypatch.setenv("FAAR_DOCUMENT_INVENTORY", str(project / "OHR-Bench/data/retrieval_base/gt"))
+    monkeypatch.chdir(project)
+    ocr_calls: list[str] = []
+    fake_ocr, fake_docling = install_fakes(monkeypatch, ocr_calls)
+    monkeypatch.setattr(prepare, "export_docling_markdown", fake_docling)
+    monkeypatch.setattr("faar.ocr.extract_got_ocr", fake_ocr)
+    code = prepare.main(
+        [
+            "--project-root",
+            str(project),
+            "--out-root",
+            str(project / "out"),
+        ]
+    )
+    assert code == 0
+    assert len(ocr_calls) == len(DOCS) * len(PAGES)
+    checkpoint = json.loads((project / "out/checkpoint_shard1of1.json").read_text())
+    assert set(checkpoint["completed"]) == set(DOCS)
+
+
+def test_cli_rejects_missing_env_pdf_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project = build_project(tmp_path)
+    monkeypatch.setenv("FAAR_PDF_ROOT", str(tmp_path / "does-not-exist"))
+    monkeypatch.chdir(project)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(PREPARE_PATH),
+            "--project-root",
+            str(project),
+            "--out-root",
+            str(project / "out"),
+            "--dry-run",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=project,
+    )
+    assert completed.returncode != 0
+    assert "FAAR_PDF_ROOT" in completed.stderr
+
+
 def test_paths_with_spaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     project = build_project(tmp_path / "my project with spaces")
     ocr_calls: list[str] = []

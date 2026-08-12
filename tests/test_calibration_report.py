@@ -160,6 +160,59 @@ def test_build_summary_with_preflight_gpu(tmp_path: Path) -> None:
     assert summary["gpu"]["total_memory_bytes"] == 80 * 1024**3
 
 
+def test_per_page_storage_keys_never_collide_across_documents(tmp_path: Path) -> None:
+    project = build_project(tmp_path)
+    checkpoint = json.loads(build_checkpoint(tmp_path).read_text())
+    second_doc = {
+        "page_ids": list(range(2)),
+        "pdf_sha256": "b" * 64,
+        "outputs": {},
+        "metrics": {
+            "docling_runtime_sec": 5.0,
+            "render_runtime_sec": 3.0,
+            "got_ocr_runtime_sec_total": 2.0,
+            "per_page_got_ocr_runtime_sec": {"0": 1.0, "1": 1.0},
+            "peak_rss_bytes": 2**30,
+            "storage": {
+                "png_bytes_total": 2 * 100,
+                "ocr_bytes_total": 2 * 10,
+                "per_page_bytes": {"0": {"png": 100, "ocr": 10}, "1": {"png": 100, "ocr": 10}},
+            },
+        },
+    }
+    checkpoint["completed"]["paper/second_doc"] = second_doc
+    path = tmp_path / "multi.json"
+    path.write_text(json.dumps(checkpoint))
+    summary = report.build_summary(checkpoint_path=path, project_root=project)
+    assert len(summary["storage"]["per_page_bytes"]) == PAGES + 2
+    assert "manual/User_Manual_1500S_Classic_EN:p0" in summary["storage"]["per_page_bytes"]
+    assert "paper/second_doc:p0" in summary["storage"]["per_page_bytes"]
+    assert summary["pages"]["attempted"] == PAGES + 2
+    assert summary["documents"]["completed"] == 2
+
+
+def test_build_summary_includes_carried_forward_attempt_timings(tmp_path: Path) -> None:
+    """A resumed calibration keeps prior-attempt OCR timings per page."""
+    project = build_project(tmp_path)
+    checkpoint = json.loads(build_checkpoint(tmp_path).read_text())
+    entry = checkpoint["completed"]["manual/User_Manual_1500S_Classic_EN"]
+    per_page = {str(i): OCR_PER_PAGE for i in range(PAGES)}
+    per_page["0"] = 0.4
+    per_page["1"] = 0.6
+    entry["metrics"]["per_page_got_ocr_runtime_sec"] = per_page
+    entry["metrics"]["got_ocr_runtime_sec_total"] = round(0.4 + 0.6 + (PAGES - 2) * OCR_PER_PAGE, 4)
+    entry["metrics"]["docling_runtime_sec"] = DOCLING_SEC
+    checkpoint["resumed"] = True
+    path = tmp_path / "resumed.json"
+    path.write_text(json.dumps(checkpoint))
+    summary = report.build_summary(checkpoint_path=path, project_root=project)
+    assert summary["resumed"] is True
+    distribution = summary["throughput"]["ocr_page_runtime_sec"]
+    assert distribution["n"] == PAGES
+    assert distribution["min"] == 0.4 and distribution["max"] == OCR_PER_PAGE
+    assert summary["runtime"]["ocr_sec"] == pytest.approx(0.4 + 0.6 + (PAGES - 2) * OCR_PER_PAGE, abs=1e-3)
+
+
 def test_build_rejects_empy_or_malformed_checkpoint(tmp_path: Path) -> None:
     project = build_project(tmp_path)
     with pytest.raises(SystemExit, match="unreadable JSON"):

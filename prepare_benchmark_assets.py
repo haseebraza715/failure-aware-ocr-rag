@@ -139,20 +139,32 @@ def main() -> None:
     args = parser.parse_args()
     install_graceful_termination_handler()
 
+    def _env_path(name: str) -> Path | None:
+        raw = os.getenv(name)
+        return Path(raw).expanduser() if raw and raw.strip() else None
+
     project_root = Path.cwd().resolve()
+    pdf_root = args.pdf_root or _env_path("FAAR_PDF_ROOT")
+    pdf_zip = args.pdf_zip or _env_path("FAAR_PDF_ZIP")
     inventory_dir = (
         args.document_inventory
-        if args.document_inventory is not None
-        else project_root / "OHR-Bench/data/retrieval_base/gt"
+        or _env_path("FAAR_DOCUMENT_INVENTORY")
+        or (project_root / "OHR-Bench/data/retrieval_base/gt")
     )
     if not inventory_dir.is_absolute():
         inventory_dir = project_root / inventory_dir
+    if pdf_root is not None and not pdf_root.is_dir():
+        raise SystemExit(f"FAAR_PDF_ROOT / --pdf-root is not a directory: {pdf_root}")
+    if pdf_zip is not None and not pdf_zip.is_file():
+        raise SystemExit(f"FAAR_PDF_ZIP / --pdf-zip is not a file: {pdf_zip}")
+    if not inventory_dir.is_dir():
+        raise SystemExit(f"document inventory is not a directory: {inventory_dir}")
 
     if args.diagnose_inventory:
-        pdf_zip = args.pdf_zip or (project_root / "data/ohr_bench_raw/pdfs.zip")
+        diagnose_zip = pdf_zip or (project_root / "data/ohr_bench_raw/pdfs.zip")
         pdf_names: set[str] = set()
-        if pdf_zip.is_file():
-            with zipfile.ZipFile(pdf_zip) as archive:
+        if diagnose_zip.is_file():
+            with zipfile.ZipFile(diagnose_zip) as archive:
                 pdf_names = {name for name in archive.namelist() if name.endswith(".pdf")}
         report = diagnose_ohr_inventory_gaps(
             qas_path=project_root / "OHR-Bench/data/qas_v2.json",
@@ -182,8 +194,8 @@ def main() -> None:
     kind, source = resolve_pdf_source(
         project_root=project_root,
         doc_rel=doc_rel,
-        pdf_root=args.pdf_root,
-        pdf_zip=args.pdf_zip,
+        pdf_root=pdf_root,
+        pdf_zip=pdf_zip,
         inventory_dir=inventory_dir,
     )
     if kind == "missing":
@@ -244,14 +256,15 @@ def main() -> None:
         return
 
     runtime_started = time.perf_counter()
-    checkpoint["cache_bytes_before"] = _huggingface_cache_bytes()
+    if checkpoint.get("cache_bytes_before") is None:
+        checkpoint["cache_bytes_before"] = _huggingface_cache_bytes()
     result = execute_document_preparation(
         project_root=project_root,
         doc_rel=doc_rel,
         page_ids=page_ids,
         out_root=out_root,
-        pdf_root=args.pdf_root,
-        pdf_zip=args.pdf_zip,
+        pdf_root=pdf_root,
+        pdf_zip=pdf_zip,
         inventory_dir=inventory_dir,
     )
     checkpoint["calibration"] = {

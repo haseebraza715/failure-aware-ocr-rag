@@ -83,7 +83,9 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "FAAR_PDF_ZIP",
     ):
         monkeypatch.delenv(name, raising=False)
+    original_reachable = preflight._hf_repo_reachable
     monkeypatch.setattr(preflight, "_hf_repo_reachable", lambda repo, rev: (True, "HTTP 200"))
+    monkeypatch.setattr(preflight, "_hf_repo_reachable_original", original_reachable, raising=False)
 
 
 def test_run_checks_passes_with_no_warnings(
@@ -161,6 +163,70 @@ def test_run_checks_missing_dataset_is_blocking(tmp_path: Path, clean_env) -> No
     assert report["exit_code"] == 1
     matching = [check for check in report["checks"] if check["name"] == "dataset_paths"]
     assert matching[0]["status"] == "fail"
+
+
+def test_run_checks_nonexistent_pdf_root_is_blocking(tmp_path: Path, clean_env, monkeypatch) -> None:
+    project = build_project(tmp_path)
+    monkeypatch.setenv("FAAR_PDF_ROOT", str(tmp_path / "no-such-dir"))
+    report = preflight.run_checks(gpu_payload(), project_root=project, path=project, cuda=False)
+    assert report["exit_code"] == 1
+    matching = [check for check in report["checks"] if check["name"] == "dataset_paths"]
+    assert matching[0]["status"] == "fail"
+    assert "pdf root" in matching[0]["detail"]
+
+
+def test_run_checks_missing_pdf_zip_env_is_blocking(tmp_path: Path, clean_env, monkeypatch) -> None:
+    project = build_project(tmp_path)
+    monkeypatch.setenv("FAAR_PDF_ZIP", str(tmp_path / "no-such.zip"))
+    report = preflight.run_checks(gpu_payload(), project_root=project, path=project, cuda=False)
+    assert report["exit_code"] == 1
+    matching = [check for check in report["checks"] if check["name"] == "dataset_paths"]
+    assert matching[0]["status"] == "fail"
+
+
+def test_run_checks_valid_pdf_root_and_zip_env_pass(tmp_path: Path, clean_env, monkeypatch) -> None:
+    project = build_project(tmp_path)
+    pdf_root = tmp_path / "pdfs-here"
+    pdf_root.mkdir()
+    monkeypatch.setenv("FAAR_PDF_ROOT", str(pdf_root))
+    report = preflight.run_checks(gpu_payload(), project_root=project, path=project, cuda=False)
+    matching = [check for check in report["checks"] if check["name"] == "dataset_paths"]
+    assert matching[0]["status"] == "pass"
+    monkeypatch.setenv("FAAR_PDF_ZIP", str(project / "data/ohr_bench_raw/pdfs.zip"))
+    monkeypatch.delenv("FAAR_PDF_ROOT")
+    report = preflight.run_checks(gpu_payload(), project_root=project, path=project, cuda=False)
+    matching = [check for check in report["checks"] if check["name"] == "dataset_paths"]
+    assert matching[0]["status"] == "pass"
+
+
+def test_hf_check_sends_bearer_token_without_leaking_it(
+    tmp_path: Path, clean_env, monkeypatch
+) -> None:
+    project = build_project(tmp_path)
+    secret = "hf-secret-token-value-123456789"
+    monkeypatch.setenv("HF_TOKEN", secret)
+    captured: list[dict] = []
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(request, timeout):
+        captured.append({"headers": dict(request.headers), "url": request.full_url})
+        return FakeResponse()
+
+    monkeypatch.setattr(preflight.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(preflight, "_hf_repo_reachable", preflight._hf_repo_reachable_original)
+    report = preflight.run_checks(gpu_payload(), project_root=project, path=project, cuda=False)
+    assert captured
+    assert captured[0]["headers"].get("Authorization") == f"Bearer {secret}"
+    rendered = preflight.render(report)
+    assert secret not in rendered
 
 
 def test_run_checks_unwritable_cache_is_blocking(tmp_path: Path, clean_env, monkeypatch) -> None:
