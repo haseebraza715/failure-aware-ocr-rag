@@ -33,7 +33,7 @@ def _row(example_id: str) -> dict:
 
 def _shard(path: Path, rows: list[dict], *, shard_index: int = 0, num_shards: int = 2) -> dict:
     payload = {
-        "label": "B2 ohrbench test",
+        "label": "Random recovery",
         "profile": "faar_no_diagnosis",
         "run_spec": {
             "profile": "faar_no_diagnosis",
@@ -83,6 +83,8 @@ def _set_manifest_hash(paths: list[Path], manifest_hash: str, *, profile: str = 
         payload = json.loads(path.read_text(encoding="utf-8"))
         payload["profile"] = profile
         payload["run_spec"]["profile"] = profile
+        if profile == "naive_rag":
+            payload["label"] = "Text-only RAG"
         payload["run_spec"]["manifest_sha256"] = manifest_hash
         path.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -436,7 +438,7 @@ def test_b0_cli_accepts_exact_manifest_selection(tmp_path: Path) -> None:
     ) == 0
     payload = json.loads(out.read_text(encoding="utf-8"))
     assert [row["example_id"] for row in payload["rows"]] == ["e1", "e2"]
-    assert payload["summary"]["harm_rate"] is None
+    assert payload["summary"]["harm_rate"] == 0.0
 
 
 def test_b0_cli_rejects_manifest_hash_dataset_and_split_mismatch(tmp_path: Path) -> None:
@@ -486,3 +488,20 @@ def test_b0_cli_rejects_malformed_manifest_ids(tmp_path: Path) -> None:
             ["--out", str(out), "--manifest", str(manifest), str(zero), str(one)]
         )
     assert not out.exists()
+
+
+def test_merge_rejects_top_level_profile_or_label_mismatch(tmp_path: Path) -> None:
+    zero = tmp_path / "shard0.json"
+    one = tmp_path / "shard1.json"
+    _shard(zero, [_row("e1")], shard_index=0)
+    payload = _shard(one, [_row("e2")], shard_index=1)
+    payload["profile"] = "naive_rag"
+    one.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(SystemExit, match="top-level profile"):
+        merge_shards.merge_shards([zero, one])
+
+    payload["profile"] = payload["run_spec"]["profile"]
+    payload["label"] = "wrong label"
+    one.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(SystemExit, match="does not match.*label"):
+        merge_shards.merge_shards([zero, one])

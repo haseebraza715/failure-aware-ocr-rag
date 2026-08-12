@@ -50,6 +50,12 @@ RUN_SPEC_MATCH_KEYS = (
     "manifest_sha256",
 )
 
+EXPECTED_LABELS = {
+    "naive_rag": "Text-only RAG",
+    "faar_always_vlm": "Always-VLM",
+    "faar_no_diagnosis": "Random recovery",
+}
+
 
 def _load_shard(path: Path) -> dict[str, Any]:
     try:
@@ -281,6 +287,22 @@ def merge_shards(
                     f"{shard_paths[0]} run_spec.{key}={reference_spec[key]!r}."
                 )
         _validate_shard_declaration(path, spec, reference_spec)
+        if payload.get("profile") != spec["profile"]:
+            raise SystemExit(
+                f"shard {path} top-level profile {payload.get('profile')!r} does not match "
+                f"run_spec.profile {spec['profile']!r}."
+            )
+        expected_label = EXPECTED_LABELS.get(str(spec["profile"]))
+        if expected_label is not None and payload.get("label") != expected_label:
+            raise SystemExit(
+                f"shard {path} label {payload.get('label')!r} does not match "
+                f"profile {spec['profile']!r} label {expected_label!r}."
+            )
+        if index > 0 and payload.get("label") != payloads[0].get("label"):
+            raise SystemExit(
+                f"shard {path} label {payload.get('label')!r} does not match "
+                f"{shard_paths[0]} label {payloads[0].get('label')!r}."
+            )
     # Completeness must succeed before any shard metadata is cleared or the
     # merged file is published: a partial shard set is never a valid unsharded run.
     _validate_shard_set(shard_paths, payloads, reference_spec["num_shards"])
@@ -312,7 +334,7 @@ def merge_shards(
             "EM": examples_summary["em"],
             "F1": examples_summary["f1"],
             "vlm_rate": examples_summary["vlm_rate"],
-            "harm_rate": None,
+            "harm_rate": 0.0 if reference_spec["profile"] == "naive_rag" else None,
             "api_requests": api["api_requests"],
             "prompt_tokens": api["prompt_tokens"],
             "completion_tokens": api["completion_tokens"],
