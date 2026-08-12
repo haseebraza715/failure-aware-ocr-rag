@@ -283,9 +283,9 @@ root. Never write keys into a template file.
 2. Run an end-to-end pilot on complete documents covering roughly 50--100
    questions. This is still an engineering check.
 3. Prepare the full OHR validation assets: 1,274 questions, 549 documents, and
-   7,033 pages. Use this split for real B0 and gate tuning.
+   7,037 pages. Use this split for real B0 and gate tuning.
 4. Run B0, B1, B2, B3, and B4 sequentially, saving each result before the next.
-5. Run the full OHR test split: 1,276 questions, 567 documents, and 6,842
+5. Run the full OHR test split: 1,276 questions, 567 documents, and 6,849
    pages.
 6. Run ArXivQA only after all 500 page mappings are human-confirmed. MP-DocVQA
    is a separate job after its official validation data is acquired.

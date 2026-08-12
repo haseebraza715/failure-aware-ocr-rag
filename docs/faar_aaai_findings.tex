@@ -48,7 +48,7 @@
 \title{Failure-Aware Agentic Recovery for OCR-RAG:\\
 Verified Experimental Status}
 \author{FAAR project}
-\date{8 August 2026}
+\date{12 August 2026}
 
 \begin{document}
 
@@ -72,7 +72,7 @@ Two evaluations are separated throughout the paper. First, an earlier prototype 
 
 \subsection{Datasets and preparation}
 
-The OHR-Bench split is fixed with seed 42. It contains 5,948 training questions, 1,274 validation questions, and 1,276 test questions. The validation split covers 549 documents and 7,033 complete-document pages. The test split covers 567 documents and 6,842 pages. Retrieval corpora are required to contain the complete document rather than only the gold evidence pages.
+The OHR-Bench split is fixed with seed 42. It contains 5,948 training questions, 1,274 validation questions, and 1,276 test questions. After resolving the audited dataset naming aliases, the validation split covers 549 documents and 7,037 complete-document pages, and the test split covers 567 documents and 6,849 pages. Retrieval corpora are required to contain the complete document rather than only the gold evidence pages.
 
 The supervisor-approved ArXivQA preparation uses 500 questions across 497 full papers. All 8,955 pages were downloaded, parsed, rendered, and hash-validated. The inventory remains preparation-only: all 500 page mappings are unresolved and no pinned GOT-OCR page outputs have been registered. MP-DocVQA validation is not yet local; the required download is the authenticated RRC DocVQA Task 4 source.
 
@@ -258,7 +258,7 @@ The locked model revisions are NV-Embed-v2 \hash{3fa59658547db50a1e8e3346cf057fd
 
 \section{Implementation verification}
 
-The locked environment passed 136 tests with 4 warnings, and \texttt{pip check} reported no broken requirements. Python compilation passed and a local wheel build produced \texttt{faar-0.1.0-py3-none-any.whl}. The immutable split retained SHA-256 \hash{64583a532c5db5aa31e4cbb5cd9c7d894c7a2d5e8aa49f1a7f6041f54e714f53}. No coverage report or configured dead-code report is available. These checks establish implementation health; they do not establish benchmark completion.
+The locked environment passed 569 tests with 4 warnings, and \texttt{pip check} reported no broken requirements. Python compilation passed and a local wheel build produced \texttt{faar-0.1.0-py3-none-any.whl}. The immutable split retained SHA-256 \hash{64583a532c5db5aa31e4cbb5cd9c7d894c7a2d5e8aa49f1a7f6041f54e714f53}. No coverage report or configured dead-code report is available. These checks establish implementation health; they do not establish benchmark completion.
 
 \section{Recent implementation changes}
 
