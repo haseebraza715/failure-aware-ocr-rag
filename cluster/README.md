@@ -133,7 +133,18 @@ recall >= 0.70). It refuses non-validation sources and refuses to lock a
 search that did not pass.
 
 After the lock exists, resume the complete B0-B4 sequence with the exact
-runner command from the previous section:
+runner command on validation first:
+
+```bash
+.venv-aaai/bin/python cluster/run_baselines.py \
+  --project-root "$PWD" \
+  --dataset ohrbench --split val \
+  --resume
+```
+
+This re-validates and skips the existing validation B0, then runs validation
+B1, B2, B3, and B4. Freeze the accepted gate configuration and validation
+artifacts before starting test. Only then run the test sequence:
 
 ```bash
 .venv-aaai/bin/python cluster/run_baselines.py \
@@ -150,9 +161,9 @@ prints the commands.
 
 ## Launcher
 
-`cluster/launcher.py` is the generic entry point for one bounded job, spawned
-per stage by `run_baselines.py`. It is pure-stdlib, never installs packages,
-never copies datasets, and never overrides `CUDA_VISIBLE_DEVICES`.
+`cluster/launcher.py` is the generic entry point for one bounded repository
+job, spawned per stage by `run_baselines.py`. It is pure-stdlib, never installs
+packages, never copies datasets, and never overrides `CUDA_VISIBLE_DEVICES`.
 
 ```bash
 .venv-aaai/bin/python cluster/launcher.py \
@@ -185,14 +196,61 @@ It runs preflight, then:
    a non-empty key required by `VLM_BACKEND` (`OPENAI_API_KEY` for OpenAI or
    `ANTHROPIC_API_KEY` for Claude). B0 does not require either key. Key values
    are never printed.
-7. Spawns `run.py` with a plain argv list (no shell interpolation) and
-   forwards `SIGTERM`/`SIGINT` to the child, propagating its exit code.
+7. Spawns the selected repository-local Python entry point with a plain argv
+   list (no shell interpolation), rejects entry points outside the project,
+   and forwards `SIGTERM`/`SIGINT` to the child, propagating its exit code.
 
 Every launch writes a redacted, job-namespaced report under
 `results/environment/`; override this with `--preflight-out`.
 For deliberate reuse of an already-recorded preflight, set
 `FAAR_PREFLIGHT_JSON` to the report path; the launcher will not re-probe the
-host. `FAAR_PYTHON` overrides the interpreter used for `run.py`.
+host. `FAAR_PYTHON` overrides the interpreter used for the selected entry
+point.
+
+## Shared-server calibration before data transfer
+
+Do not transfer or expand a 200 GB dataset first. Use the existing OHR archive
+to run one complete 108-page document through PDF extraction, Docling, page
+rendering, and pinned GOT-OCR. This is calibration evidence, not a paper
+result. Run the preflight in the actual scheduler allocation, choose the
+process budget from its reported GPU and free VRAM, and place outputs on the
+lab scratch filesystem:
+
+```bash
+.venv-aaai/bin/python cluster/preflight.py --out cluster/preflight.json
+
+export FAAR_GPU_BUDGET_GB=<approved-process-vram-gib>
+export HF_HOME="${SCRATCH:-$PWD/results/calibration}/huggingface"
+mkdir -p "$HF_HOME"
+
+.venv-aaai/bin/python cluster/launcher.py \
+  --project-root "$PWD" \
+  --entrypoint prepare_benchmark_assets.py \
+  --preflight-out results/environment/preflight_calibration.json \
+  --dataset ohrbench \
+  --out-root "${SCRATCH:-$PWD/results/calibration}/faar-ohr-108" \
+  --smoke-doc manual/User_Manual_1500S_Classic_EN \
+  --execute
+```
+
+The launcher requires one logical GPU, keeps the explicit per-process VRAM
+cap, reserves 20% of visible VRAM for co-tenants by default, derives an RSS
+limit from the scheduler/cgroup allocation, and caps CPU library threads.
+Asset preparation checks those limits before and after PDF extraction,
+Docling, rendering, and every GOT-OCR page. Exceeding a limit aborts the
+process instead of continuing under memory pressure. Partial files are
+removed, and outputs from an earlier completed checkpoint remain resumable.
+
+Return these two files to the project owner after the run:
+
+- `results/environment/preflight_calibration.json`
+- `${SCRATCH:-$PWD/results/calibration}/faar-ohr-108/prepare_checkpoint.json`
+
+The checkpoint records measured stage runtime, peak RSS, per-page OCR time,
+and PNG/OCR storage. Use those measurements to choose scheduler RAM,
+walltime, and scratch capacity and to extrapolate the validation footprint.
+Do not copy the full corpus until that estimate fits the lab quota with
+headroom.
 
 ## Scheduler templates
 
@@ -208,19 +266,20 @@ Editable one-GPU templates run the full ordered baseline runner:
 Both templates allocate exactly one GPU and invoke `cluster/run_baselines.py`
 with `--resume` and `--project-root` set to the submission directory. They use
 the configured `FAAR_PYTHON`; `FAAR_DATASET` and `FAAR_SPLIT` default to
-`ohrbench` and `test`. They never set `CUDA_VISIBLE_DEVICES` because Slurm and
+`ohrbench` and `val`. They never set `CUDA_VISIBLE_DEVICES` because Slurm and
 PBS manage the allocation. Keep the resource boundaries and change scheduler
-directives only after the lab allocation is known. Set `FAAR_GPU_BUDGET_GB` to
-a positive budget chosen from the preflight report; the launcher fails closed
-without it.
+directives only after the lab allocation is known. The templates are for the
+post-calibration, post-gate-lock validation run; set `FAAR_SPLIT=test` only
+after validation artifacts are frozen. Set `FAAR_GPU_BUDGET_GB` to a positive
+budget chosen from the preflight report; the launcher fails closed without it.
 
 Credentials are read from the submit environment or a `.env` at the repository
 root. Never write keys into a template file.
 
 ## Staged execution
 
-1. Run the preflight and a 100-page GPU calibration. This produces throughput
-   and memory evidence, not paper results.
+1. Run the preflight and the bounded 108-page complete-document calibration
+   above. This produces throughput and memory evidence, not paper results.
 2. Run an end-to-end pilot on complete documents covering roughly 50--100
    questions. This is still an engineering check.
 3. Prepare the full OHR validation assets: 1,274 questions, 549 documents, and
@@ -245,7 +304,9 @@ shard result file, so shards can be resumed independently and merged later.
 ```bash
 # one job per GPU, e.g. 8 GPUs:
 for i in $(seq 0 7); do
-  CUDA_VISIBLE_DEVICES=$i .venv-aaai/bin/python run.py \
+  CUDA_VISIBLE_DEVICES=$i .venv-aaai/bin/python cluster/launcher.py \
+    --project-root "$PWD" \
+    --preflight-out "results/environment/preflight_b0_shard${i}.json" \
     --gate off --recovery off --dataset ohrbench --split test \
     --shard-index $i --num-shards 8 \
     --out results/b0.json > results/b0_shard$i.log 2>&1 &
@@ -255,7 +316,7 @@ wait
 # merge the shards into the single result the analysis pipeline expects:
 .venv-aaai/bin/python cluster/merge_shards.py \
   --out results/b0.json \
-  --baseline results/b0.json \
+  --manifest data/benchmark_assets/ohrbench/test.json \
   results/b0_shard*of8.json
 ```
 
@@ -263,13 +324,19 @@ Rules:
 
 - Every shard must be launched with the same `--seed`, `--num-shards`,
   dataset, split, and model flags; `merge_shards.py` rejects shards whose
-  run_specs differ or whose example ids overlap.
+  run_specs differ or whose example ids overlap. Publication requires every
+  shard index exactly once.
+- B0 merge requires the exact locked asset manifest. Its SHA-256 must match
+  every shard's `run_spec`, and the merged example ids must equal the manifest
+  selection after `--max-examples`; a complete set of partial workers is not
+  publishable.
 - The merged file resets `shard_index`/`num_shards` to null and recomputes the
   summary (EM, F1, vlm_rate, API totals) and `harm_rate` from the merged rows,
   so it passes the normal stage validation on later `--resume` runs.
-- B2 shards need the matching B0 shard as `--baseline` (run_spec comparison
-  includes the shard index); merge the B0 shards first, then pass the merged
-  B0 to the B2 merge.
+- B1/B2 shards need the matching B0 shard as `--baseline` while running
+  (run_spec comparison includes the shard index). Merge B0 first; when merging
+  B1 or B2, pass the merged B0 as `--baseline` so the merged IDs and harm rate
+  are validated before publication.
 - B3/B4 (ColPali/VisRAG) are single-GPU per job: `run.py` rejects shard flags
   for visual modes because corpus embeddings are built once per process. The
   corpus-embedding cache (below) keeps a resumed visual run from re-encoding

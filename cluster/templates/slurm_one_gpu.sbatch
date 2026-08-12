@@ -19,7 +19,7 @@ cd "${SLURM_SUBMIT_DIR:-$PWD}"
 export VLM_BACKEND="${VLM_BACKEND:-openai}"
 export FAAR_PYTHON="${FAAR_PYTHON:-$PWD/.venv-aaai/bin/python}"
 export FAAR_DATASET="${FAAR_DATASET:-ohrbench}"
-export FAAR_SPLIT="${FAAR_SPLIT:-test}"
+export FAAR_SPLIT="${FAAR_SPLIT:-val}"
 # Required after preflight: pick a positive GPU process budget (GiB) from the
 # reported GPU model and free VRAM. The launcher fails closed without it.
 export FAAR_GPU_BUDGET_GB="${FAAR_GPU_BUDGET_GB:-}"
