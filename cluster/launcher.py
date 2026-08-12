@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch one resource-bounded FAAR process after a hardware preflight."""
+"""Launch one resource-bounded repository process after a hardware preflight."""
 
 from __future__ import annotations
 
@@ -359,12 +359,20 @@ def validate_required_keys(root: Path, run_args: list[str] | None = None) -> Non
         )
 
 
-def build_child_command(root: Path, run_args: list[str], python_executable: str | None = None) -> list[str]:
+def build_child_command(
+    root: Path,
+    run_args: list[str],
+    python_executable: str | None = None,
+    entrypoint: Path | str = "run.py",
+) -> list[str]:
     python = python_executable or os.getenv("FAAR_PYTHON") or sys.executable
-    run_py = root / "run.py"
-    if not run_py.is_file():
-        raise LaunchError(f"run.py not found under project root: {run_py}")
-    return [python, str(run_py), *run_args]
+    candidate = Path(entrypoint)
+    candidate = candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
+    if not candidate.is_relative_to(root):
+        raise LaunchError(f"entrypoint must stay inside the project root: {entrypoint}")
+    if not candidate.is_file():
+        raise LaunchError(f"entrypoint is not a file under the project root: {candidate}")
+    return [python, str(candidate), *run_args]
 
 
 _SIGNALS = (signal.SIGTERM, signal.SIGINT)
@@ -445,7 +453,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--project-root", type=Path, default=None, help="Repository root (default: parent of this file)")
     parser.add_argument("--cpu-only", action="store_true", help="Allow a CPU-only run without any CUDA GPU")
-    parser.add_argument("--faar-python", default=None, help="Python used to launch run.py (default: this interpreter)")
+    parser.add_argument(
+        "--faar-python",
+        default=None,
+        help="Python used to launch the selected entry point (default: this interpreter)",
+    )
+    parser.add_argument(
+        "--entrypoint",
+        type=Path,
+        default=Path("run.py"),
+        help="Repository-local Python entry point (default: run.py)",
+    )
     parser.add_argument("--preflight-out", type=Path, default=None, help="Saved redacted preflight JSON path")
     args, run_args = parser.parse_known_args(argv)
     try:
@@ -464,7 +482,7 @@ def main(argv: list[str] | None = None) -> int:
         validate_hf_cache()
         validate_required_keys(root, run_args)
         print_summary(root, args.cpu_only, run_args)
-        child_argv = build_child_command(root, run_args, args.faar_python)
+        child_argv = build_child_command(root, run_args, args.faar_python, args.entrypoint)
         return run_child(child_argv, cwd=root)
     except LaunchError as exc:
         print(f"launcher: {exc}", file=sys.stderr)

@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from faar.asset_preparation import (
     execute_document_preparation,
     page_image_name,
@@ -108,6 +110,66 @@ def test_execute_one_document_with_injected_backends(tmp_path: Path) -> None:
     provenance = json.loads((out_root / "provenance/academic/demo.json").read_text())
     assert provenance["got_ocr_revision"] == result.got_ocr_revision
     assert "Users" not in json.dumps(provenance)
+
+
+def test_execute_document_checks_memory_at_every_expensive_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import faar.asset_preparation as prep
+
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/model_revisions.json").write_text(
+        json.dumps(
+            {
+                "models": {
+                    "got_ocr": {
+                        "repository": "stepfun-ai/GOT-OCR-2.0-hf",
+                        "revision": "d3017ef2c2c1395888c8d635c5e0508bcb0ac78d",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    source = tmp_path / "pdfs/academic/demo.pdf"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"%PDF")
+    stages: list[str] = []
+
+    def fake_docling(_pdf: Path, output: Path) -> Path:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("audit", encoding="utf-8")
+        return output
+
+    def fake_render(_pdf: Path, page_ids: list[int], image_paths: dict[int, Path], scale: float = 2.0):
+        for page_id in page_ids:
+            image_paths[page_id].parent.mkdir(parents=True, exist_ok=True)
+            image_paths[page_id].write_bytes(b"png")
+        return {"pdf_page_count": 1, "render_runtime_sec": 0.0, "render_scale": scale}
+
+    monkeypatch.setattr(prep, "render_pdf_pages", fake_render)
+    monkeypatch.setattr(prep, "enforce_memory_budget", stages.append)
+
+    execute_document_preparation(
+        project_root=tmp_path,
+        doc_rel="academic/demo",
+        page_ids=[0],
+        out_root=tmp_path / "prepared",
+        pdf_root=tmp_path / "pdfs",
+        extract_got_ocr_fn=lambda *_args, **_kwargs: "text",
+        export_docling_fn=fake_docling,
+    )
+
+    assert stages == [
+        "asset preparation before PDF extraction",
+        "asset preparation after PDF extraction",
+        "asset preparation before Docling audit",
+        "asset preparation after Docling audit",
+        "asset preparation before page rendering",
+        "asset preparation after page rendering",
+        "asset preparation before GOT-OCR page 0",
+        "asset preparation after GOT-OCR page 0",
+    ]
 
 
 def test_cli_smoke_writes_plan_without_execution(tmp_path: Path) -> None:

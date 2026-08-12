@@ -123,8 +123,37 @@ def test_build_child_command_plain_argv_no_shell(tmp_path: Path) -> None:
 
 
 def test_build_child_command_missing_runpy_fails(tmp_path: Path) -> None:
-    with pytest.raises(launcher.LaunchError, match="run.py not found"):
+    with pytest.raises(launcher.LaunchError, match="entrypoint is not a file"):
         launcher.build_child_command(tmp_path, [], "/usr/bin/python3")
+
+
+def test_build_child_command_accepts_repository_local_entrypoint(tmp_path: Path) -> None:
+    entrypoint = tmp_path / "prepare_benchmark_assets.py"
+    entrypoint.write_text("", encoding="utf-8")
+    argv = launcher.build_child_command(
+        tmp_path,
+        ["--dataset", "ohrbench", "--execute"],
+        "/usr/bin/python3",
+        "prepare_benchmark_assets.py",
+    )
+    assert argv == [
+        "/usr/bin/python3",
+        str(entrypoint),
+        "--dataset",
+        "ohrbench",
+        "--execute",
+    ]
+
+
+def test_build_child_command_rejects_entrypoint_outside_root(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside.py"
+    outside.write_text("", encoding="utf-8")
+    with pytest.raises(launcher.LaunchError, match="must stay inside"):
+        launcher.build_child_command(root, [], "/usr/bin/python3", outside)
+    with pytest.raises(launcher.LaunchError, match="must stay inside"):
+        launcher.build_child_command(root, [], "/usr/bin/python3", "../outside.py")
 
 
 def test_default_preflight_path_is_job_namespaced(tmp_path: Path) -> None:
@@ -314,7 +343,9 @@ def test_cpu_only_ignores_invalid_gpu_only_environment(monkeypatch, tmp_path: Pa
     monkeypatch.setattr(launcher, "write_preflight_report", lambda payload, path: None)
     monkeypatch.setattr(launcher, "validate_hf_cache", lambda: None)
     monkeypatch.setattr(launcher, "validate_required_keys", lambda root, run_args: None)
-    monkeypatch.setattr(launcher, "build_child_command", lambda root, run_args, executable: ["child"])
+    monkeypatch.setattr(
+        launcher, "build_child_command", lambda root, run_args, executable, entrypoint: ["child"]
+    )
     monkeypatch.setattr(launcher, "run_child", lambda argv, cwd: 0)
 
     assert launcher.main(["--project-root", str(tmp_path), "--cpu-only"]) == 0
@@ -335,7 +366,9 @@ def test_gpu_main_enforces_budget_before_child(monkeypatch, tmp_path: Path) -> N
     monkeypatch.setattr(launcher, "write_preflight_report", lambda payload, path: None)
     monkeypatch.setattr(launcher, "validate_hf_cache", lambda: None)
     monkeypatch.setattr(launcher, "validate_required_keys", lambda root, run_args: None)
-    monkeypatch.setattr(launcher, "build_child_command", lambda root, run_args, executable: ["child"])
+    monkeypatch.setattr(
+        launcher, "build_child_command", lambda root, run_args, executable, entrypoint: ["child"]
+    )
     child_env: dict[str, str] = {}
 
     def capture_child(argv, cwd) -> int:
