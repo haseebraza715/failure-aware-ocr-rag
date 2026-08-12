@@ -12,18 +12,16 @@ unsharded run_spec (shard_index/num_shards reset to null), recomputed
 summary metrics and harm_rate, and is written atomically so it can be
 validated by cluster/run_baselines.py on later resumes.
 
-The full shard set must be supplied: every index in range(num_shards)
-must be declared exactly once, and the merged example ids must match the
-baseline when one is given. A partial set is rejected before any shard
-metadata is cleared or the merged file is published. An entirely empty
-merge is rejected unless an authoritative expected-ID source explicitly
-declares an empty selection; an empty experiment result is never published
-as an apparently complete run.
+The full shard set must be supplied: every index in range(num_shards) must be
+declared exactly once. A B0 merge must match the exact locked manifest hash
+and selected example ids; later stages must match B0. A partial set is
+rejected before shard metadata is cleared or the merged file is published.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from datetime import UTC, datetime
@@ -144,6 +142,66 @@ def _validated_baseline_ids(payload: dict, path: Path) -> list[str]:
     return ids
 
 
+def _normalise_dataset(value: str) -> str:
+    return value.lower().replace("-", "").replace("_", "")
+
+
+def _validated_manifest_ids(path: Path, reference_spec: dict[str, Any]) -> list[str]:
+    """Derive the exact run selection from the manifest named by run_spec."""
+    try:
+        raw = path.read_bytes()
+        payload = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"manifest is unreadable JSON: {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SystemExit(f"manifest must be a JSON object: {path}")
+    expected_hash = reference_spec.get("manifest_sha256")
+    actual_hash = hashlib.sha256(raw).hexdigest()
+    if not isinstance(expected_hash, str) or actual_hash != expected_hash:
+        raise SystemExit(
+            f"manifest SHA-256 does not match the shard run_spec: {path} "
+            f"(expected {expected_hash!r}, found {actual_hash})."
+        )
+    manifest_dataset = payload.get("dataset")
+    if not isinstance(manifest_dataset, str) or _normalise_dataset(manifest_dataset) != _normalise_dataset(
+        str(reference_spec.get("dataset", ""))
+    ):
+        raise SystemExit(
+            f"manifest dataset {manifest_dataset!r} does not match shard dataset "
+            f"{reference_spec.get('dataset')!r}: {path}"
+        )
+    manifest_split = payload.get("split")
+    if manifest_split != reference_spec.get("split"):
+        raise SystemExit(
+            f"manifest split {manifest_split!r} does not match shard split "
+            f"{reference_spec.get('split')!r}: {path}"
+        )
+    records = payload.get("records")
+    if not isinstance(records, list):
+        raise SystemExit(f"manifest has no records list: {path}")
+    ids: list[str] = []
+    for index, record in enumerate(records):
+        if not isinstance(record, dict):
+            raise SystemExit(f"manifest record {index} is not an object: {path}")
+        value = record.get("example_id")
+        if not isinstance(value, str) or not value.strip():
+            raise SystemExit(f"manifest record {index} has a missing or empty example_id: {path}")
+        ids.append(value.strip())
+    if len(ids) != len(set(ids)):
+        raise SystemExit(f"manifest contains duplicate example_ids: {path}")
+    max_examples = reference_spec.get("max_examples")
+    if max_examples is not None:
+        if isinstance(max_examples, bool) or not isinstance(max_examples, int):
+            raise SystemExit(
+                "shard run_spec.max_examples must be a non-boolean integer or null; "
+                f"received {max_examples!r}."
+            )
+        ids = sorted(ids)[: max(0, max_examples)]
+    else:
+        ids = sorted(ids)
+    return ids
+
+
 def _validate_expected_id_source(expected_example_ids: list[str]) -> None:
     for index, value in enumerate(expected_example_ids):
         if not isinstance(value, str) or not value.strip():
@@ -250,10 +308,31 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True, help="Merged unsharded output path")
     parser.add_argument("--baseline", type=Path, default=None, help="Matching B0 result used to compute harm_rate and validate merged example ids")
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        help="Locked benchmark manifest used to validate a B0 merge",
+    )
     parser.add_argument("shards", nargs="+", type=Path, help="Shard result JSON files")
     args = parser.parse_args(argv)
+    first_payload = _load_shard(args.shards[0])
+    is_b0 = first_payload["run_spec"].get("profile") == "naive_rag"
+    if is_b0:
+        if args.manifest is None:
+            raise SystemExit("B0 shard merge requires --manifest as its authoritative expected-ID source.")
+        if args.baseline is not None:
+            raise SystemExit("B0 shard merge does not accept --baseline; pass its locked --manifest.")
+    elif args.baseline is None:
+        raise SystemExit("Non-B0 shard merge requires --baseline to validate example ids and harm_rate.")
+    if args.manifest is not None and not is_b0:
+        raise SystemExit("--manifest is only accepted for B0 shard merges; use --baseline for later stages.")
     expected_example_ids = None
     baseline_payload = None
+    if args.manifest is not None:
+        if not args.manifest.is_file():
+            raise SystemExit(f"manifest does not exist: {args.manifest}")
+        expected_example_ids = _validated_manifest_ids(args.manifest, first_payload["run_spec"])
     if args.baseline is not None:
         if not args.baseline.is_file():
             raise SystemExit(f"baseline result does not exist: {args.baseline}")

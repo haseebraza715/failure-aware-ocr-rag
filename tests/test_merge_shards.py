@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from importlib.util import module_from_spec, spec_from_file_location
@@ -63,6 +64,27 @@ def _shard(path: Path, rows: list[dict], *, shard_index: int = 0, num_shards: in
     }
     path.write_text(json.dumps(payload))
     return payload
+
+
+def _manifest(path: Path, example_ids: list[str], *, dataset: str = "ohrbench", split: str = "test") -> str:
+    payload = {
+        "dataset": dataset,
+        "split": split,
+        "records": [{"example_id": example_id} for example_id in example_ids],
+        "corpus_pages": [],
+        "document_inventory": {},
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _set_manifest_hash(paths: list[Path], manifest_hash: str, *, profile: str = "naive_rag") -> None:
+    for path in paths:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["profile"] = profile
+        payload["run_spec"]["profile"] = profile
+        payload["run_spec"]["manifest_sha256"] = manifest_hash
+        path.write_text(json.dumps(payload), encoding="utf-8")
 
 
 def test_merge_combines_disjoint_shards_in_order(tmp_path: Path) -> None:
@@ -247,7 +269,7 @@ def test_merge_all_empty_does_not_create_output(tmp_path: Path) -> None:
     _shard(zero, [], shard_index=0, num_shards=2)
     _shard(one, [], shard_index=1, num_shards=2)
     out = tmp_path / "b2_merged.json"
-    with pytest.raises(SystemExit, match="entirely empty result"):
+    with pytest.raises(SystemExit, match="requires --baseline"):
         merge_shards.main(["--out", str(out), str(zero), str(one)])
     assert not out.exists()
 
@@ -259,7 +281,7 @@ def test_merge_all_empty_does_not_overwrite_existing_output(tmp_path: Path) -> N
     _shard(one, [], shard_index=1, num_shards=2)
     out = tmp_path / "b2_merged.json"
     out.write_text("existing", encoding="utf-8")
-    with pytest.raises(SystemExit, match="entirely empty result"):
+    with pytest.raises(SystemExit, match="requires --baseline"):
         merge_shards.main(["--out", str(out), str(zero), str(one)])
     assert out.read_text(encoding="utf-8") == "existing"
 
@@ -324,4 +346,92 @@ def test_merge_rejects_baseline_that_is_not_an_object(tmp_path: Path) -> None:
     out = tmp_path / "merged.json"
     with pytest.raises(SystemExit, match="must be a JSON object"):
         merge_shards.main(["--out", str(out), "--baseline", str(baseline), str(zero), str(one)])
+    assert not out.exists()
+
+
+def test_b0_cli_requires_manifest_and_rejects_partial_rows(tmp_path: Path) -> None:
+    zero = tmp_path / "b0_shard0.json"
+    one = tmp_path / "b0_shard1.json"
+    manifest = tmp_path / "test.json"
+    out = tmp_path / "b0.json"
+    _shard(zero, [_row("e1")], shard_index=0)
+    _shard(one, [], shard_index=1)
+    manifest_hash = _manifest(manifest, ["e1", "e2"])
+    _set_manifest_hash([zero, one], manifest_hash)
+
+    with pytest.raises(SystemExit, match="do not match the expected example ids"):
+        merge_shards.main(
+            ["--out", str(out), "--manifest", str(manifest), str(zero), str(one)]
+        )
+    assert not out.exists()
+
+
+def test_b0_cli_accepts_exact_manifest_selection(tmp_path: Path) -> None:
+    zero = tmp_path / "b0_shard0.json"
+    one = tmp_path / "b0_shard1.json"
+    manifest = tmp_path / "test.json"
+    out = tmp_path / "b0.json"
+    _shard(zero, [_row("e1")], shard_index=0)
+    _shard(one, [_row("e2")], shard_index=1)
+    manifest_hash = _manifest(manifest, ["e2", "e1", "e3"])
+    _set_manifest_hash([zero, one], manifest_hash)
+    for path in (zero, one):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["run_spec"]["max_examples"] = 2
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert merge_shards.main(
+        ["--out", str(out), "--manifest", str(manifest), str(zero), str(one)]
+    ) == 0
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert [row["example_id"] for row in payload["rows"]] == ["e1", "e2"]
+    assert payload["summary"]["harm_rate"] is None
+
+
+def test_b0_cli_rejects_manifest_hash_dataset_and_split_mismatch(tmp_path: Path) -> None:
+    zero = tmp_path / "b0_shard0.json"
+    one = tmp_path / "b0_shard1.json"
+    manifest = tmp_path / "test.json"
+    out = tmp_path / "b0.json"
+    _shard(zero, [_row("e1")], shard_index=0)
+    _shard(one, [_row("e2")], shard_index=1)
+    manifest_hash = _manifest(manifest, ["e1", "e2"])
+    _set_manifest_hash([zero, one], manifest_hash)
+
+    manifest.write_text(manifest.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="SHA-256 does not match"):
+        merge_shards.main(
+            ["--out", str(out), "--manifest", str(manifest), str(zero), str(one)]
+        )
+
+    manifest_hash = _manifest(manifest, ["e1", "e2"], dataset="arxivqa")
+    _set_manifest_hash([zero, one], manifest_hash)
+    with pytest.raises(SystemExit, match="manifest dataset"):
+        merge_shards.main(
+            ["--out", str(out), "--manifest", str(manifest), str(zero), str(one)]
+        )
+
+    manifest_hash = _manifest(manifest, ["e1", "e2"], split="val")
+    _set_manifest_hash([zero, one], manifest_hash)
+    with pytest.raises(SystemExit, match="manifest split"):
+        merge_shards.main(
+            ["--out", str(out), "--manifest", str(manifest), str(zero), str(one)]
+        )
+    assert not out.exists()
+
+
+def test_b0_cli_rejects_malformed_manifest_ids(tmp_path: Path) -> None:
+    zero = tmp_path / "b0_shard0.json"
+    one = tmp_path / "b0_shard1.json"
+    manifest = tmp_path / "test.json"
+    out = tmp_path / "b0.json"
+    _shard(zero, [_row("e1")], shard_index=0)
+    _shard(one, [_row("e2")], shard_index=1)
+    manifest_hash = _manifest(manifest, ["e1", "e1"])
+    _set_manifest_hash([zero, one], manifest_hash)
+
+    with pytest.raises(SystemExit, match="duplicate example_ids"):
+        merge_shards.main(
+            ["--out", str(out), "--manifest", str(manifest), str(zero), str(one)]
+        )
     assert not out.exists()
