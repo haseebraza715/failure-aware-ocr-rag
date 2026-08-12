@@ -87,6 +87,16 @@ def _set_manifest_hash(paths: list[Path], manifest_hash: str, *, profile: str = 
         path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def _make_unsharded_b0(path: Path, rows: list[dict]) -> dict:
+    payload = _shard(path, rows, shard_index=0)
+    payload["profile"] = "naive_rag"
+    payload["run_spec"]["profile"] = "naive_rag"
+    payload["run_spec"]["shard_index"] = None
+    payload["run_spec"]["num_shards"] = None
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return payload
+
+
 def test_merge_combines_disjoint_shards_in_order(tmp_path: Path) -> None:
     first_path = tmp_path / "b2_shard1of2.json"
     second_path = tmp_path / "b2_shard2of2.json"
@@ -135,13 +145,12 @@ def test_merge_cli_computes_harm_against_baseline(tmp_path: Path) -> None:
     baseline = tmp_path / "b0.json"
     _shard(first, [_row("e1")], shard_index=0)
     _shard(second, [_row("e2")], shard_index=1)
-    _shard(
+    _make_unsharded_b0(
         baseline,
         [
             dict(_row("e1"), metrics={"ndcg@5": 1.0, "recall@5": 1.0, "em": 1.0, "f1": 1.0}),
             dict(_row("e2"), metrics={"ndcg@5": 1.0, "recall@5": 1.0, "em": 1.0, "f1": 1.0}),
         ],
-        shard_index=0,
     )
     out = tmp_path / "b2_merged.json"
     assert merge_shards.main(["--out", str(out), "--baseline", str(baseline), str(first), str(second)]) == 0
@@ -346,6 +355,48 @@ def test_merge_rejects_baseline_that_is_not_an_object(tmp_path: Path) -> None:
     out = tmp_path / "merged.json"
     with pytest.raises(SystemExit, match="must be a JSON object"):
         merge_shards.main(["--out", str(out), "--baseline", str(baseline), str(zero), str(one)])
+    assert not out.exists()
+
+
+def test_merge_rejects_baseline_with_mismatched_provenance(tmp_path: Path) -> None:
+    zero = tmp_path / "shard0.json"
+    one = tmp_path / "shard1.json"
+    baseline = tmp_path / "b0.json"
+    out = tmp_path / "merged.json"
+    _shard(zero, [_row("e1")], shard_index=0)
+    _shard(one, [_row("e2")], shard_index=1)
+    payload = _make_unsharded_b0(baseline, [_row("e1"), _row("e2")])
+    payload["run_spec"]["manifest_sha256"] = "b" * 64
+    baseline.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="manifest_sha256.*does not match"):
+        merge_shards.main(
+            ["--out", str(out), "--baseline", str(baseline), str(zero), str(one)]
+        )
+    assert not out.exists()
+
+
+def test_merge_rejects_sharded_or_non_b0_baseline(tmp_path: Path) -> None:
+    zero = tmp_path / "shard0.json"
+    one = tmp_path / "shard1.json"
+    baseline = tmp_path / "b0.json"
+    out = tmp_path / "merged.json"
+    _shard(zero, [_row("e1")], shard_index=0)
+    _shard(one, [_row("e2")], shard_index=1)
+    _shard(baseline, [_row("e1"), _row("e2")], shard_index=0)
+
+    with pytest.raises(SystemExit, match="naive_rag B0"):
+        merge_shards.main(
+            ["--out", str(out), "--baseline", str(baseline), str(zero), str(one)]
+        )
+    payload = _make_unsharded_b0(baseline, [_row("e1"), _row("e2")])
+    payload["run_spec"]["shard_index"] = 0
+    payload["run_spec"]["num_shards"] = 2
+    baseline.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(SystemExit, match="unsharded merged B0"):
+        merge_shards.main(
+            ["--out", str(out), "--baseline", str(baseline), str(zero), str(one)]
+        )
     assert not out.exists()
 
 

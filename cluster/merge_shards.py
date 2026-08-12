@@ -142,6 +142,30 @@ def _validated_baseline_ids(payload: dict, path: Path) -> list[str]:
     return ids
 
 
+def _validate_baseline_provenance(
+    payload: dict[str, Any], path: Path, reference_spec: dict[str, Any]
+) -> None:
+    if payload.get("profile") != "naive_rag":
+        raise SystemExit(f"baseline must be a naive_rag B0 result: {path}")
+    spec = payload.get("run_spec")
+    if not isinstance(spec, dict):
+        raise SystemExit(f"baseline result has no run_spec provenance: {path}")
+    if spec.get("profile") != "naive_rag":
+        raise SystemExit(f"baseline run_spec.profile must be naive_rag: {path}")
+    if spec.get("shard_index") is not None or spec.get("num_shards") is not None:
+        raise SystemExit(f"baseline must be an unsharded merged B0 result: {path}")
+    for key in RUN_SPEC_MATCH_KEYS:
+        if key == "profile":
+            continue
+        if key not in spec:
+            raise SystemExit(f"baseline {path} run_spec is missing {key}.")
+        if spec[key] != reference_spec[key]:
+            raise SystemExit(
+                f"baseline {path} run_spec.{key}={spec[key]!r} does not match "
+                f"shard run_spec.{key}={reference_spec[key]!r}."
+            )
+
+
 def _normalise_dataset(value: str) -> str:
     return value.lower().replace("-", "").replace("_", "")
 
@@ -341,6 +365,9 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, json.JSONDecodeError) as exc:
             raise SystemExit(f"baseline result is unreadable JSON: {args.baseline}: {exc}") from exc
         expected_example_ids = _validated_baseline_ids(baseline_payload, args.baseline)
+        _validate_baseline_provenance(
+            baseline_payload, args.baseline, first_payload["run_spec"]
+        )
     payload = merge_shards(args.shards, expected_example_ids=expected_example_ids)
     if baseline_payload is not None:
         try:
