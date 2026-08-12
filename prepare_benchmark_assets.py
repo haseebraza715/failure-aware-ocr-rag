@@ -209,7 +209,6 @@ def main() -> None:
     checkpoint["smoke_doc"] = doc_rel
     checkpoint["plan"] = work
     checkpoint["resumed"] = bool(checkpoint["completed"]) or bool(checkpoint.get("failed"))
-    checkpoint["cache_bytes_before"] = _huggingface_cache_bytes()
     checkpoint["cache_path"] = str(
         (Path(os.getenv("HF_HOME")) if os.getenv("HF_HOME") else Path.home() / ".cache/huggingface").expanduser()
     )
@@ -245,6 +244,7 @@ def main() -> None:
         return
 
     runtime_started = time.perf_counter()
+    checkpoint["cache_bytes_before"] = _huggingface_cache_bytes()
     result = execute_document_preparation(
         project_root=project_root,
         doc_rel=doc_rel,

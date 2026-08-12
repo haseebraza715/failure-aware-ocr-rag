@@ -889,7 +889,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--path", type=Path, default=Path.cwd(), help="Filesystem path whose quota should be measured")
     parser.add_argument("--project-root", type=Path, default=None, help="Repository root for dataset and lock checks (default: --path)")
-    parser.add_argument("--out", type=Path, help="Optional JSON output path (written atomically)")
+    parser.add_argument("--out", type=Path, help="Optional JSON output path, written atomically (raw facts without --check; the checks report with --check)")
     parser.add_argument("--check", action="store_true", help="Run handoff checks with exit codes and a machine-readable report")
     parser.add_argument("--no-cuda", action="store_true", help="Skip all CUDA/GPU checks (safe on login nodes)")
     parser.add_argument("--dry-run", action="store_true", help="Print the report without writing any file")
