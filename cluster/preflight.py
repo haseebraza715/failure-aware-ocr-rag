@@ -718,9 +718,12 @@ def run_checks(
         else project_root / "data/ohr_bench_raw/pdfs.zip"
     )
     missing_paths = [label for label, candidate in dataset_checks if not candidate.exists()]
+    pdf_zip_explicit = bool(pdf_zip_raw and pdf_zip_raw.strip())
     if pdf_root_path is not None and not pdf_root_path.is_dir():
         missing_paths.append(f"pdf root ({pdf_root_path})")
-    if pdf_root_path is None and not pdf_zip.is_file():
+    if pdf_zip_explicit and not pdf_zip.is_file():
+        missing_paths.append(f"pdf zip ({pdf_zip})")
+    if not pdf_zip_explicit and pdf_root_path is None and not pdf_zip.is_file():
         missing_paths.append("pdf source (FAAR_PDF_ROOT or data/ohr_bench_raw/pdfs.zip)")
     if missing_paths:
         record("dataset_paths", "required", "fail", detail="missing: " + ", ".join(missing_paths))

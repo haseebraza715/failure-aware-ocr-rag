@@ -11,21 +11,56 @@ class PdfPreprocessingError(RuntimeError):
     """Raised when Docling cannot produce a usable document representation."""
 
 
+def _locked_docling_models() -> tuple[str, str]:
+    """Immutable docling-models commit from the committed model lock."""
+    candidates = [
+        Path.cwd().resolve() / "config/model_revisions.json",
+        Path(__file__).resolve().parent / "model_revisions.json",
+    ]
+    lock: Any = None
+    errors: list[str] = []
+    for path in candidates:
+        try:
+            lock = json.loads(path.read_text(encoding="utf-8"))
+            break
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(f"{path}: {exc}")
+    if lock is None:
+        raise PdfPreprocessingError("Cannot read the model lock for Docling: " + "; ".join(errors))
+    entry = (lock.get("models") or {}).get("docling") or {}
+    repository = str(entry.get("repository", "")).strip()
+    revision = str(entry.get("revision", "")).strip()
+    if not repository or not revision:
+        raise PdfPreprocessingError("config/model_revisions.json docling lock is incomplete.")
+    return repository, revision
+
+
+@lru_cache(maxsize=1)
+def _docling_artifacts_path() -> Path:
+    """Resolve the Docling model snapshot at the locked revision, once per process."""
+    repository, revision = _locked_docling_models()
+    snapshot_download = import_module("huggingface_hub").snapshot_download
+    return Path(snapshot_download(repo_id=repository, revision=revision))
+
+
 @lru_cache(maxsize=1)
 def _docling_converter() -> Any:
     """One DocumentConverter per process.
 
-    In Docling 1.20.0 constructing a converter resolves the ds4sd/docling-models
+    In Docling 1.20.0 constructing a converter resolves the docling-models
     snapshot and initializes the model pipeline; doing that once per document
-    across 549 validation documents would be avoidable cluster waste.
+    across 549 validation documents would be avoidable cluster waste. The
+    snapshot is pinned to the immutable commit recorded in
+    config/model_revisions.json instead of Docling's mutable v2.0.0 tag.
     """
     document_converter = import_module("docling.document_converter")
-    return document_converter.DocumentConverter()
+    return document_converter.DocumentConverter(artifacts_path=_docling_artifacts_path())
 
 
 def reset_docling_converter() -> None:
     """Drop the cached converter (test isolation; new HF cache locations)."""
     _docling_converter.cache_clear()
+    _docling_artifacts_path.cache_clear()
 
 
 def convert_pdf_with_docling(pdf_path: Path) -> Any:

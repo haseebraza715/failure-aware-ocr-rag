@@ -203,7 +203,7 @@ is the recommended engineering check before full baselines.
 | Stage | Hugging Face | OpenAI/Anthropic key |
 | --- | --- | --- |
 | Preflight | checks model access (no downloads, honors `HF_TOKEN`) | none |
-| 108-page calibration / asset preparation | GOT-OCR-2.0 (locked revision), Docling models snapshot (`ds4sd/docling-models`, locked) | none |
+| 108-page calibration / asset preparation | GOT-OCR-2.0 (locked revision), Docling models snapshot (`docling-project/docling-models` at immutable commit `2bdc831f…`, pinned in `config/model_revisions.json`) | none |
 | B0 baseline | NV-Embed-v2, bge-reranker-v2-m3 | none |
 | B1/B2/B4 | same + VisRAG/ColPali | `OPENAI_API_KEY` (or `ANTHROPIC_API_KEY` if `VLM_BACKEND=claude*`) |
 | Gate tuning | none | none |

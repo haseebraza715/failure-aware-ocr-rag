@@ -62,7 +62,11 @@ def test_execute_one_document_with_injected_backends(
                     "got_ocr": {
                         "repository": "stepfun-ai/GOT-OCR-2.0-hf",
                         "revision": "d3017ef2c2c1395888c8d635c5e0508bcb0ac78d",
-                    }
+                    },
+                    "docling": {
+                        "repository": "docling-project/docling-models",
+                        "revision": "2bdc831fd1edeb61e6d0dfc8ae7596b0c30bdff4",
+                    },
                 }
             }
         )
@@ -129,7 +133,11 @@ def test_execute_document_checks_memory_at_every_expensive_boundary(
                     "got_ocr": {
                         "repository": "stepfun-ai/GOT-OCR-2.0-hf",
                         "revision": "d3017ef2c2c1395888c8d635c5e0508bcb0ac78d",
-                    }
+                    },
+                    "docling": {
+                        "repository": "docling-project/docling-models",
+                        "revision": "2bdc831fd1edeb61e6d0dfc8ae7596b0c30bdff4",
+                    },
                 }
             }
         ),
@@ -266,7 +274,11 @@ def test_cli_smoke_writes_plan_without_execution(tmp_path: Path) -> None:
                     "got_ocr": {
                         "repository": "stepfun-ai/GOT-OCR-2.0-hf",
                         "revision": "d3017ef2c2c1395888c8d635c5e0508bcb0ac78d",
-                    }
+                    },
+                    "docling": {
+                        "repository": "docling-project/docling-models",
+                        "revision": "2bdc831fd1edeb61e6d0dfc8ae7596b0c30bdff4",
+                    },
                 }
             }
         )
@@ -299,6 +311,104 @@ def test_cli_smoke_writes_plan_without_execution(tmp_path: Path) -> None:
     assert payload["mode"] == "plan_only"
     assert payload["page_ids"] == [0]
     assert (out_root / "prepare_checkpoint.json").is_file()
+
+
+def test_calibration_first_run_preemption_persists_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import prepare_benchmark_assets as cli
+
+    project = tmp_path
+    (project / "config").mkdir()
+    (project / "config/model_revisions.json").write_text(
+        json.dumps(
+            {
+                "models": {
+                    "got_ocr": {
+                        "repository": "stepfun-ai/GOT-OCR-2.0-hf",
+                        "revision": "d3017ef2c2c1395888c8d635c5e0508bcb0ac78d",
+                    },
+                    "docling": {
+                        "repository": "docling-project/docling-models",
+                        "revision": "2bdc831fd1edeb61e6d0dfc8ae7596b0c30bdff4",
+                    },
+                }
+            }
+        )
+    )
+    (project / "OHR-Bench/data").mkdir(parents=True)
+    (project / "OHR-Bench/data/qas_v2.json").write_text(json.dumps([{"ID": "e1", "doc_name": "academic/demo"}]))
+    (project / "split.json").write_text(json.dumps({"splits": {"val": ["e1"]}}))
+    gt = project / "OHR-Bench/data/retrieval_base/gt/academic"
+    gt.mkdir(parents=True)
+    (gt / "demo.json").write_text(json.dumps([{"text": "x", "page_idx": 0}]))
+    pdf = project / "pdfs/academic/demo.pdf"
+    pdf.parent.mkdir(parents=True)
+    pdf.write_bytes(b"%PDF")
+    out_root = project / "out"
+    checkpoint_path = out_root / "prepare_checkpoint.json"
+    args = [
+        "--dataset",
+        "ohrbench",
+        "--pdf-root",
+        str(project / "pdfs"),
+        "--document-inventory",
+        str(project / "OHR-Bench/data/retrieval_base/gt"),
+        "--out-root",
+        str(out_root),
+        "--smoke-doc",
+        "academic/demo",
+        "--execute",
+    ]
+    monkeypatch.chdir(project)
+
+    def interrupted_execute(**kwargs):
+        raise SystemExit(143)
+
+    monkeypatch.setattr(cli, "execute_document_preparation", interrupted_execute)
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(args)
+    assert excinfo.value.code == 143
+    assert checkpoint_path.is_file()
+    checkpoint = json.loads(checkpoint_path.read_text())
+    assert checkpoint["attempts"] == 1
+    assert checkpoint["cache_bytes_before"] is not None
+    assert checkpoint["resumed"] is False
+
+    def successful_execute(**kwargs):
+        pdf_out = out_root / "pdfs/academic/demo.pdf"
+        pdf_out.parent.mkdir(parents=True, exist_ok=True)
+        pdf_out.write_bytes(b"%PDF")
+        return SimpleNamespace(
+            doc_name="academic/demo",
+            page_ids=[0],
+            pdf_path=pdf_out,
+            pdf_sha256="a" * 64,
+            got_ocr_repository="stepfun-ai/GOT-OCR-2.0-hf",
+            got_ocr_revision="d3017ef2c2c1395888c8d635c5e0508bcb0ac78d",
+            device="cpu",
+            metrics={
+                "docling_runtime_sec": 1.0,
+                "render_runtime_sec": 1.0,
+                "got_ocr_runtime_sec_total": 1.0,
+                "per_page_got_ocr_runtime_sec": {"0": 1.0},
+                "peak_rss_bytes": 1,
+                "storage": {"png_bytes_total": 1, "ocr_bytes_total": 1, "per_page_bytes": {}},
+            },
+            outputs={"pdf": "out/pdfs/academic/demo.pdf"},
+        )
+
+    monkeypatch.setattr(cli, "execute_document_preparation", successful_execute)
+    cli.main(args)
+    checkpoint = json.loads(checkpoint_path.read_text())
+    assert checkpoint["attempts"] == 2
+    assert checkpoint["resumed"] is True
+    calibration = checkpoint["calibration"]
+    assert calibration["attempts"] == 2
+    assert calibration["attempts_elapsed_sec"] > 0
+    assert calibration["runtime_sec_total_wall"] == calibration["attempts_elapsed_sec"]
+    assert calibration["last_attempt_sec"] > 0
+    assert calibration["cache_bytes_before"] == checkpoint["cache_bytes_before"]
 
 
 def test_plan_imports_do_not_load_inference_runtime() -> None:

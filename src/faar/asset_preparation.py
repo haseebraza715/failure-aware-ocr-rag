@@ -55,6 +55,17 @@ def load_locked_got_ocr(project_root: Path) -> dict[str, str]:
     return {"repository": repository, "revision": revision}
 
 
+def load_locked_docling(project_root: Path) -> dict[str, str]:
+    """Immutable Docling model snapshot lock (used for provenance recording)."""
+    payload = json.loads((project_root / "config/model_revisions.json").read_text(encoding="utf-8"))
+    locked = (payload.get("models") or {}).get("docling") or {}
+    repository = str(locked.get("repository", "")).strip()
+    revision = str(locked.get("revision", "")).strip()
+    if not repository or not revision:
+        raise ValueError("config/model_revisions.json docling lock is incomplete.")
+    return {"repository": repository, "revision": revision}
+
+
 def _rel(path: Path, project_root: Path) -> str:
     try:
         return to_relative_project_path(path, project_root)
@@ -85,6 +96,7 @@ def build_provenance(
     audit_path: Path,
     model_name: str,
     revision: str,
+    docling_models: dict[str, str],
     device: str,
     metrics: dict[str, Any],
     pages_state: dict[str, Any],
@@ -97,6 +109,7 @@ def build_provenance(
         "page_ids": page_ids,
         "got_ocr_repository": model_name,
         "got_ocr_revision": revision,
+        "docling_models": dict(docling_models),
         "device": device,
         "docling_audit": {
             "pdf_sha256": pdf_sha256,
@@ -326,6 +339,7 @@ def execute_document_preparation(
     out_root.mkdir(parents=True, exist_ok=True)
     inventory_dir = (inventory_dir or project_root / "OHR-Bench/data/retrieval_base/gt").resolve()
     locked = load_locked_got_ocr(project_root)
+    locked_docling = load_locked_docling(project_root)
     device = _device_name()
     peak_rss = _rss_bytes()
 
@@ -500,6 +514,7 @@ def execute_document_preparation(
                 audit_path,
                 model_name,
                 revision,
+                locked_docling,
                 device,
                 metrics,
                 pages_state,
@@ -570,6 +585,7 @@ def execute_document_preparation(
                     audit_path,
                     model_name,
                     revision,
+                    locked_docling,
                     device,
                     metrics,
                     pages_state,
@@ -610,6 +626,7 @@ def execute_document_preparation(
                 audit_path,
                 model_name,
                 revision,
+                locked_docling,
                 device,
                 metrics,
                 pages_state,

@@ -204,6 +204,7 @@ def build_summary(
             "render_sec": round(render_total, 4),
             "ocr_sec": round(ocr_total, 4),
             "total_wall_sec": round(float(calibration.get("runtime_sec_total_wall") or 0.0), 4),
+            "attempts": calibration.get("attempts"),
         },
         "documents": {
             "attempted": len(docs),

@@ -36,7 +36,17 @@ def build_project(tmp_path: Path) -> Path:
         )
     )
     (project / "config/model_revisions.json").write_text(
-        json.dumps({"models": {"got_ocr": {"repository": "stepfun-ai/GOT-OCR-2.0-hf", "revision": "d" * 40}}})
+        json.dumps(
+            {
+                "models": {
+                    "got_ocr": {"repository": "stepfun-ai/GOT-OCR-2.0-hf", "revision": "d" * 40},
+                    "docling": {
+                        "repository": "docling-project/docling-models",
+                        "revision": "2bdc831fd1edeb61e6d0dfc8ae7596b0c30bdff4",
+                    },
+                }
+            }
+        )
     )
     return project
 
@@ -272,7 +282,10 @@ def test_hf_access_uses_cdn_head_without_download(tmp_path: Path, clean_env, mon
         lambda repo, rev: calls.append((repo, rev)) or (True, "HTTP 200"),
     )
     preflight.run_checks(gpu_payload(), project_root=project, path=project, cuda=False)
-    assert calls == [("stepfun-ai/GOT-OCR-2.0-hf", "d" * 40)]
+    assert calls == [
+        ("stepfun-ai/GOT-OCR-2.0-hf", "d" * 40),
+        ("docling-project/docling-models", "2bdc831fd1edeb61e6d0dfc8ae7596b0c30bdff4"),
+    ]
 
 
 def test_cli_check_dry_run_writes_nothing(tmp_path: Path, capsys) -> None:
@@ -317,6 +330,21 @@ def test_cli_check_exit_code_matches_blocking_failure(tmp_path: Path) -> None:
         ["--check", "--no-cuda", "--dry-run", "--project-root", str(project), "--path", str(project)]
     )
     assert code == 1
+
+
+def test_run_checks_explicit_missing_zip_fails_even_with_valid_root(
+    tmp_path: Path, clean_env, monkeypatch
+) -> None:
+    project = build_project(tmp_path)
+    pdf_root = tmp_path / "valid-root"
+    pdf_root.mkdir()
+    monkeypatch.setenv("FAAR_PDF_ROOT", str(pdf_root))
+    monkeypatch.setenv("FAAR_PDF_ZIP", str(tmp_path / "missing.zip"))
+    report = preflight.run_checks(gpu_payload(), project_root=project, path=project, cuda=False)
+    assert report["exit_code"] == 1
+    matching = [check for check in report["checks"] if check["name"] == "dataset_paths"]
+    assert matching[0]["status"] == "fail"
+    assert "pdf zip" in matching[0]["detail"]
 
 
 def test_hf_checks_can_be_disabled_offline(tmp_path: Path, clean_env, monkeypatch) -> None:

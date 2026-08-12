@@ -95,7 +95,7 @@ def _inventory_page_ids(project_root: Path, doc_rel: str, inventory_dir: Path, p
     return inventory[doc_rel]
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Plan or execute one-document PDF → Docling → PNG → GOT-OCR asset preparation."
     )
@@ -136,7 +136,7 @@ def main() -> None:
         action="store_true",
         help="Print OHR inventory gap diagnosis for qas_v2 and exit.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     install_graceful_termination_handler()
 
     def _env_path(name: str) -> Path | None:
@@ -220,7 +220,11 @@ def main() -> None:
     checkpoint["dataset"] = args.dataset
     checkpoint["smoke_doc"] = doc_rel
     checkpoint["plan"] = work
-    checkpoint["resumed"] = bool(checkpoint["completed"]) or bool(checkpoint.get("failed"))
+    checkpoint["resumed"] = (
+        bool(checkpoint["completed"])
+        or bool(checkpoint.get("failed"))
+        or int(checkpoint.get("attempts") or 0) > 0
+    )
     checkpoint["cache_path"] = str(
         (Path(os.getenv("HF_HOME")) if os.getenv("HF_HOME") else Path.home() / ".cache/huggingface").expanduser()
     )
@@ -258,17 +262,38 @@ def main() -> None:
     runtime_started = time.perf_counter()
     if checkpoint.get("cache_bytes_before") is None:
         checkpoint["cache_bytes_before"] = _huggingface_cache_bytes()
-    result = execute_document_preparation(
-        project_root=project_root,
-        doc_rel=doc_rel,
-        page_ids=page_ids,
-        out_root=out_root,
-        pdf_root=pdf_root,
-        pdf_zip=pdf_zip,
-        inventory_dir=inventory_dir,
+    checkpoint["attempts"] = int(checkpoint.get("attempts") or 0) + 1
+    checkpoint["attempt_started_at_utc"] = datetime.now(UTC).isoformat()
+    # Persist the pre-execution state (identity, cache baseline, attempt count)
+    # so a first-run preemption still leaves a resumable checkpoint.
+    save_checkpoint(checkpoint_path, checkpoint)
+    try:
+        result = execute_document_preparation(
+            project_root=project_root,
+            doc_rel=doc_rel,
+            page_ids=page_ids,
+            out_root=out_root,
+            pdf_root=pdf_root,
+            pdf_zip=pdf_zip,
+            inventory_dir=inventory_dir,
+        )
+    except BaseException:
+        checkpoint["attempts_elapsed_sec"] = round(
+            float(checkpoint.get("attempts_elapsed_sec") or 0.0) + (time.perf_counter() - runtime_started),
+            3,
+        )
+        checkpoint["interrupted_at_utc"] = datetime.now(UTC).isoformat()
+        save_checkpoint(checkpoint_path, checkpoint)
+        raise
+    checkpoint["attempts_elapsed_sec"] = round(
+        float(checkpoint.get("attempts_elapsed_sec") or 0.0) + (time.perf_counter() - runtime_started),
+        3,
     )
     checkpoint["calibration"] = {
-        "runtime_sec_total_wall": round(time.perf_counter() - runtime_started, 3),
+        "runtime_sec_total_wall": checkpoint["attempts_elapsed_sec"],
+        "attempts_elapsed_sec": checkpoint["attempts_elapsed_sec"],
+        "last_attempt_sec": round(time.perf_counter() - runtime_started, 3),
+        "attempts": checkpoint["attempts"],
         "resumed": bool(checkpoint.get("resumed")),
         "cache_bytes_before": checkpoint.get("cache_bytes_before"),
         "cache_bytes_after": _huggingface_cache_bytes(),
@@ -334,4 +359,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

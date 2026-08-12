@@ -15,8 +15,8 @@
       "revision": "d3017ef2c2c1395888c8d635c5e0508bcb0ac78d"
     },
     "docling": {
-      "repository": "ds4sd/docling-models",
-      "revision": "v2.0.0"
+      "repository": "docling-project/docling-models",
+      "revision": "2bdc831fd1edeb61e6d0dfc8ae7596b0c30bdff4"
     },
     "colpali": {
       "repository": "vidore/colpali-v1.2-hf",

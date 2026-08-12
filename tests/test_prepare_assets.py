@@ -23,7 +23,11 @@ MODEL_LOCK = {
         "got_ocr": {
             "repository": "stepfun-ai/GOT-OCR-2.0-hf",
             "revision": "d3017ef2c2c1395888c8d635c5e0508bcb0ac78d",
-        }
+        },
+        "docling": {
+            "repository": "docling-project/docling-models",
+            "revision": "2bdc831fd1edeb61e6d0dfc8ae7596b0c30bdff4",
+        },
     }
 }
 
@@ -696,6 +700,10 @@ def test_end_to_end_prepare_interrupt_resume_finish_merge(
         assert provenance["doc_name"] == doc
         assert provenance["pdf_sha256"]
         assert provenance["got_ocr_revision"] == "d3017ef2c2c1395888c8d635c5e0508bcb0ac78d"
+        assert provenance["docling_models"] == {
+            "repository": "docling-project/docling-models",
+            "revision": "2bdc831fd1edeb61e6d0dfc8ae7596b0c30bdff4",
+        }
         for page_id in PAGES:
             page = provenance["pages"][str(page_id)]
             assert page["ocr_sha256"]

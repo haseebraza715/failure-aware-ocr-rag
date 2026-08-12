@@ -58,6 +58,11 @@ def main(argv: list[str] | None = None) -> int:
     verify_split_checksums(project_root)
     doc_names, _example_count = load_split_documents(project_root, args.split)
     merged = merge_shard_manifests([path.expanduser().resolve() for path in args.manifests], expected_documents=doc_names)
+    if merged["split"] != args.split:
+        raise SystemExit(
+            f"manifests declare split {merged['split']!r} but --split {args.split!r} was requested; "
+            "refusing to publish a mismatched merge."
+        )
 
     payload = {
         "schema_version": SCHEMA_VERSION,

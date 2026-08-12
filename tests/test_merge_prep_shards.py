@@ -19,12 +19,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 from test_prepare_assets import DOCS, build_project  # noqa: E402
 
 
-def shard_manifest(tmp_path: Path, index: int, num_shards: int, docs: list[str]) -> Path:
+def shard_manifest(tmp_path: Path, index: int, num_shards: int, docs: list[str], split: str = "val") -> Path:
     payload = {
         "schema_version": 1,
         "kind": "ohr-asset-shard-manifest",
         "dataset": "ohrbench",
-        "split": "val",
+        "split": split,
         "shard_index": index,
         "num_shards": num_shards,
         "created_at_utc": "t",
@@ -86,6 +86,24 @@ def test_merge_cli_rejects_expected_document_mismatch(tmp_path: Path) -> None:
     m0 = shard_manifest(tmp_path, 0, 1, [DOCS[0]])
     with pytest.raises(SystemExit, match="do not match the expected document set"):
         merge.main(["--project-root", str(project), "--out", str(tmp_path / "m.json"), str(m0)])
+
+
+def test_merge_cli_rejects_split_label_mismatch(tmp_path: Path) -> None:
+    project = build_project(tmp_path)
+    test_manifest = shard_manifest(tmp_path, 0, 1, DOCS, split="test")
+    with pytest.raises(SystemExit, match="mismatched merge"):
+        merge.main(
+            [
+                "--project-root",
+                str(project),
+                "--split",
+                "val",
+                "--out",
+                str(tmp_path / "merged.json"),
+                str(test_manifest),
+            ]
+        )
+    assert not (tmp_path / "merged.json").exists()
 
 
 def test_merge_cli_subprocess_end_to_end(tmp_path: Path) -> None:
