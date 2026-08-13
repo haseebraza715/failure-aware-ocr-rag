@@ -1,12 +1,13 @@
-# FAAR: Failure-Aware Agentic Recovery for OCR-RAG
+# Historical: phase-overview execution plan stub
 
-## Supervisor-Aligned Execution Plan (Canonical Phase Overview)
-
-This phase-overview location is the canonical entrypoint for execution planning in the modularized docs layout.
+This is a leftover pointer from an earlier docs migration. It is not the
+current cluster procedure. Start at
+[SUPERVISOR_HANDOFF.md](../../../SUPERVISOR_HANDOFF.md). The full legacy text
+is [docs/history/legacy-execution-plan.md](../../history/legacy-execution-plan.md).
 
 For full plan details, see:
 
-- `docs/faar_execution_plan.md` (legacy full text source, retained during migration)
+- `docs/history/legacy-execution-plan.md` (legacy full text source, retained during migration)
 
 ## Navigation
 

@@ -1,5 +1,8 @@
 # Architecture
 
+Current system summary for FAAR. Operational cluster steps are in
+[SUPERVISOR_HANDOFF.md](../../SUPERVISOR_HANDOFF.md).
+
 ## System Summary
 
 FAAR improves OCR-heavy document QA by combining text-first retrieval with failure-aware recovery. The controller first evaluates answerability with a quality gate, then applies typed recovery only when needed:

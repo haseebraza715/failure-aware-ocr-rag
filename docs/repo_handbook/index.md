@@ -1,4 +1,8 @@
-# Repo Handbook
+# Historical: repo handbook
+
+Cross-phase prototype handbook. Current navigation is
+[docs/README.md](../README.md). Cluster operations start at
+[SUPERVISOR_HANDOFF.md](../../SUPERVISOR_HANDOFF.md).
 
 This is the non-phase, cross-phase documentation area for the whole repository.
 

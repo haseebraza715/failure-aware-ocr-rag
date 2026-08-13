@@ -1,7 +1,7 @@
-# FailSafeRAG (faar) — Portfolio
+# Historical: prototype portfolio write-up
 
 This page is a historical prototype write-up from `main`. For the current AAAI
-cluster workflow, start at [SUPERVISOR_HANDOFF.md](SUPERVISOR_HANDOFF.md).
+cluster workflow, start at [SUPERVISOR_HANDOFF.md](../../SUPERVISOR_HANDOFF.md).
 The 40-example mock-backend numbers here are not B0-B4 paper results.
 
 > OCR-RAG pipeline that detects its own retrieval failures and recovers — re-reading pages or answering with measured confidence, paying for visual reasoning only when needed.

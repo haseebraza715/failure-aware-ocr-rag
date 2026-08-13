@@ -22,7 +22,7 @@ Turn Phases 0 through 4 into a supervisor-ready draft while keeping the narrativ
 ## Required Inputs
 
 - [README.md](/README.md)
-- [ARCHITECTURE.md](/ARCHITECTURE.md)
+- [docs/architecture/overview.md](/docs/architecture/overview.md)
 - [docs/phases/phase2/methodology_formalization.md](/docs/phases/phase2/methodology_formalization.md)
 - [docs/reports/phase3_report.md](/docs/reports/phase3_report.md)
 - [docs/reports/phase4_report.md](/docs/reports/phase4_report.md)

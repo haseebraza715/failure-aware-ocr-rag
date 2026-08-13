@@ -213,7 +213,7 @@ The most defensible thesis position at this point is:
 ### Project overview
 
 - [README.md](/README.md)
-- [ARCHITECTURE.md](/ARCHITECTURE.md)
+- [docs/architecture/overview.md](/docs/architecture/overview.md)
 
 ### Phase and report links
 

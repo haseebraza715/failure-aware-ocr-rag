@@ -1,6 +1,8 @@
-# Repository Architecture Docs (Legacy)
+# Historical: repository architecture docs
 
-This folder documents the FAAR repository using a Diataxis-oriented layout:
+Leftover Diataxis layout from an earlier docs migration. Current navigation is
+[docs/README.md](../README.md). For cluster work start at
+[SUPERVISOR_HANDOFF.md](../../SUPERVISOR_HANDOFF.md).
 
 - Tutorial: learn by doing
 - How-to: complete specific tasks
@@ -11,7 +13,7 @@ This folder documents the FAAR repository using a Diataxis-oriented layout:
 
 Canonical modular docs entrypoint:
 
-- [Docs Home](/docs/index.md)
+- [Docs Home](/docs/README.md)
 
 - [Repository Handbook Index](/docs/repo_handbook/index.md)
 - [Architecture Overview](/docs/repo_handbook/architecture_overview.md)

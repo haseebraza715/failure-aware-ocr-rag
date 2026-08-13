@@ -1,6 +1,14 @@
+# Historical: legacy execution plan
+
+Superseded prototype execution plan. It is not the current AAAI cluster
+procedure. Start at [SUPERVISOR_HANDOFF.md](../../SUPERVISOR_HANDOFF.md).
+The current protocol is [docs/experiments/aaai-plan.md](../experiments/aaai-plan.md).
+
+---
+
 # FAAR: Failure-Aware Agentic Recovery for OCR-RAG
 
-## Supervisor-Aligned Execution Plan
+## Supervisor-aligned execution plan
 
 **Research title:** Failure-Aware Agentic Recovery for OCR-Induced Errors in Document QA  
 **Target venue:** EMNLP 2026 / ACL Findings / EACL  

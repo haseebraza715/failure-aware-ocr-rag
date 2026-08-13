@@ -1,4 +1,13 @@
-# FAAR AAAI Experimental Execution Plan
+# Historical: AAAI execution status notes
+
+This file is a dated implementation log, not the current cluster procedure.
+Start at [SUPERVISOR_HANDOFF.md](../../SUPERVISOR_HANDOFF.md) and
+[RUNBOOK.md](../../RUNBOOK.md). The current experiment protocol is
+[docs/experiments/aaai-plan.md](../experiments/aaai-plan.md).
+
+---
+
+# FAAR AAAI experimental execution plan
 
 This plan mirrors the fixed Phase 0-7 experimental plan. Each phase is a checkpoint: implement, run, verify against the phase success criteria, commit, then continue.
 
@@ -53,7 +62,7 @@ Status (2026-07-23):
 - Use the BGE-reranker-v2-m3 top-1 score as the gate signal.
 - Run the theta grid on the validation split only: `0.3`, `0.4`, `0.5`, `0.6`, `0.7`.
 - Log precision, recall, and F1 for each theta.
-- Lock the winning theta in config and write it verbatim to `RUNLOG.md`.
+- Lock the winning theta in config and write it verbatim to `docs/history/runlog.md`.
 - Verify gate precision is at least `0.75` and gate recall is at least `0.70`.
 - Commit as `phase2: gate threshold`.
 

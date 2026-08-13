@@ -73,8 +73,8 @@ def main() -> None:
     root = args.root.resolve()
     paper = args.paper if args.paper.is_absolute() else root / args.paper
     allowed_checklist_references = {
-        "./docs/faar-aaai-plan.md",
-        "./PLAN.md",
+        "./docs/experiments/aaai-plan.md",
+        "./docs/history/aaai-execution-status.md",
         "./pre_submission_check.py",
     }
     try:

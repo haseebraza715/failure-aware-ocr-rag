@@ -1,4 +1,8 @@
-# Phases Documentation
+# Phases documentation
+
+These folders record the prototype workstream. They are not the current AAAI
+cluster procedure. Start at [SUPERVISOR_HANDOFF.md](../../SUPERVISOR_HANDOFF.md)
+and [docs/experiments/aaai-plan.md](../experiments/aaai-plan.md).
 
 Phase-scoped documentation is organized as:
 

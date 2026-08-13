@@ -1,4 +1,11 @@
-# FAAR AAAI Run Log
+# Historical: AAAI run log
+
+Dated command log from the experiment branch. It is not a runbook.
+Current operations are in [RUNBOOK.md](../../RUNBOOK.md).
+
+---
+
+# FAAR AAAI run log
 
 | Timestamp UTC | Phase | Command | Result |
 | --- | --- | --- | --- |

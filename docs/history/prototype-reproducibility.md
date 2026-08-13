@@ -1,3 +1,11 @@
+# Historical: prototype reproducibility notes
+
+This page describes the older offline prototype path (`local-hash-v1`,
+`constraints-py312.txt`). Paper runs follow
+[docs/experiments/aaai-reproducibility.md](../experiments/aaai-reproducibility.md).
+
+---
+
 # Reproducibility and asset provenance
 
 ## Runtime
@@ -22,7 +30,7 @@ license. No nested benchmark data or result has been rewritten during cleanup.
 
 `data/phase0/`, `logs/`, and `artifacts/` contain sampled inputs, manual labels,
 and derived offline evidence. Their per-file Git object ids and classifications
-are listed in `evidence-manifest.tsv`. New experiment runs must use versioned
+are listed in `docs/evidence/evidence-manifest.tsv`. New experiment runs must use versioned
 destinations and must never overwrite a cited artifact.
 
 ## Capacity bounds

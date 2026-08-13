@@ -35,3 +35,10 @@ docs/tmp/
 OHR-Bench/.git/
 AGENT.MD
 *.partial
+
+tmp/
+cache/
+results/calibration/
+results/baselines/
+results/environment/preflight*.json
+cluster/preflight_*.json
