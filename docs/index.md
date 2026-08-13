@@ -1,13 +1,18 @@
-# Documentation Home
+# Documentation home
+
+For the current AAAI cluster workflow, start with the
+[supervisor handoff](../SUPERVISOR_HANDOFF.md), then follow the
+[shared-cluster runbook](../RUNBOOK.md). Older phase reports describe the
+prototype workstream and do not replace the current experiment gates.
 
 This documentation is organized into modular areas:
 
-- [`phases/`](/docs/phases/index.md): phase-scoped planning, methodology, checklists, and completion records
-- [`repo_handbook/`](/docs/repo_handbook/index.md): cross-phase repository knowledge and stable architecture
-- [`reports/`](/docs/reports/index.md): phase summary reports for supervisors and reviewers
-- [`archives/`](/docs/archives/index.md): documentation-facing indexes of logs and artifacts
+- [`phases/`](phases/index.md): phase-scoped planning, methodology, checklists, and completion records
+- [`repo_handbook/`](repo_handbook/index.md): cross-phase repository knowledge and stable architecture
+- [`reports/`](reports/index.md): historical prototype phase reports and evidence
+- [`archives/`](archives/index.md): documentation-facing indexes of logs and artifacts
 
-## Update Policy
+## Update policy
 
 - Update phase docs inside `docs/phases/phaseX/` while a phase is active.
 - After a phase is completed, update:

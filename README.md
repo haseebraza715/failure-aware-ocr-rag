@@ -1,6 +1,22 @@
-# failure-aware-ocr-rag
+# Failure-aware OCR-RAG
 
 Failure-Aware Agentic Recovery (FAAR) for OCR-RAG document question answering.
+
+## Current research status
+
+The AAAI experiment workflow lives on the `faar-aaai-experiments` branch. It
+is ready for a supervisor to run the bounded 108-page CUDA calibration on a
+shared cluster. It is not yet ready for full validation or paper-result claims.
+Those require calibration measurements, approval of the projected resource
+plan, a representative pilot, and then the ordered B0-B4 runs.
+
+- Supervisor starting point: [SUPERVISOR_HANDOFF.md](SUPERVISOR_HANDOFF.md)
+- Exact shared-cluster procedure: [RUNBOOK.md](RUNBOOK.md)
+- Experiment protocol and gates: [docs/faar-aaai-plan.md](docs/faar-aaai-plan.md)
+- Reproducibility rules: [docs/aaai-reproducibility.md](docs/aaai-reproducibility.md)
+
+The older 40-example prototype reports under `docs/reports/` are development
+history. Their mock-backend numbers are not the AAAI B0-B4 baseline results.
 
 ## Overview
 
@@ -15,9 +31,10 @@ Research objective:
 - improve answer quality on OCR-heavy inputs
 - reduce unnecessary multimodal cost compared to always-on visual pipelines
 
-## Setup
+## Local prototype setup
 
 Prerequisites:
+
 - Python 3.12+
 - phase assets under `data/phase0/` and `artifacts/phase0/`
 
@@ -33,7 +50,7 @@ Basic verification:
 python -m pytest
 ```
 
-## Usage
+## Local prototype usage
 
 Run one end-to-end example:
 
@@ -42,13 +59,17 @@ faar-demo run-example --example-id 446d159e-b5c2-45dc-91cc-faaa931f3649 --projec
 ```
 
 Notes:
+
 - `vlm-backend=mock` is the default for offline reproducibility
 - outputs are written to `logs/` and phase artifacts under `artifacts/`
 
+Do not use this demo command for paper baselines. Cluster and paper runs use
+the pinned environment and ordered runner documented in [RUNBOOK.md](RUNBOOK.md).
+
 ## Architecture
 
-- Top-level architecture summary: [ARCHITECTURE.md](/ARCHITECTURE.md)
-- Detailed handbook view: [docs/repo_handbook/architecture_overview.md](/docs/repo_handbook/architecture_overview.md)
+- Top-level architecture summary: [ARCHITECTURE.md](ARCHITECTURE.md)
+- Detailed handbook view: [docs/repo_handbook/architecture_overview.md](docs/repo_handbook/architecture_overview.md)
 
 ## Repository Structure
 
@@ -62,8 +83,8 @@ Notes:
 
 ## Documentation
 
-- Docs home: [docs/index.md](/docs/index.md)
-- Phase docs: [docs/phases/index.md](/docs/phases/index.md)
-- Repo handbook: [docs/repo_handbook/index.md](/docs/repo_handbook/index.md)
-- Reports: [docs/reports/index.md](/docs/reports/index.md)
-- Archives: [docs/archives/index.md](/docs/archives/index.md)
+- Docs home: [docs/index.md](docs/index.md)
+- Phase docs: [docs/phases/index.md](docs/phases/index.md)
+- Repo handbook: [docs/repo_handbook/index.md](docs/repo_handbook/index.md)
+- Reports: [docs/reports/index.md](docs/reports/index.md)
+- Archives: [docs/archives/index.md](docs/archives/index.md)

@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "faar"
 version = "0.1.0"
-description = "Phase 1 prototype for Failure-Aware Agentic Recovery for OCR-RAG"
-readme = "docs/faar_execution_plan.md"
+description = "Failure-Aware Agentic Recovery for OCR-RAG document question answering"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "anthropic==0.49.0",

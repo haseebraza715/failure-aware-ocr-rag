@@ -1,5 +1,10 @@
 # Supervisor Progress Report
 
+> Historical prototype report dated April 21, 2026. It uses a 40-example
+> mock-backend evaluation and does not describe the current AAAI baseline or
+> cluster readiness. Use [SUPERVISOR_HANDOFF.md](../../SUPERVISOR_HANDOFF.md)
+> for the current status.
+
 ## FAAR: Failure-Aware Agentic Recovery for OCR-RAG
 
 **Status date:** April 21, 2026  
