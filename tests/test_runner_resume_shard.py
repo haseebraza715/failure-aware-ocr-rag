@@ -412,6 +412,30 @@ def _text_run_spec() -> dict[str, Any]:
     return {"dataset": "ohrbench", "split": "test"}
 
 
+def test_profile_result_forwards_nondefault_seed_to_every_row(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _prepare_run_environment(monkeypatch, tmp_path)
+    settings = _settings(tmp_path)
+    settings.experiment.random_seed = 17
+    run_spec = _text_run_spec()
+    run_spec["seed"] = 17
+
+    payload = run._run_profile_to_result(
+        settings,
+        "faar_full",
+        tmp_path / "faar.json",
+        "FAAR",
+        2,
+        run_spec,
+        "ohrbench",
+        "test",
+    )
+
+    assert {row["run_metadata"]["seed"] for row in payload["rows"]} == {17}
+
+
 def test_cli_profile_resume_reports_totals_for_cached_and_new_rows(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

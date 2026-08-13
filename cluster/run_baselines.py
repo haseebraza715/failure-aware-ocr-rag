@@ -308,6 +308,22 @@ def _validate_summary_against_rows(payload: dict, path: Path, baseline_payload: 
             )
 
 
+def _reject_failed_rows(payload: dict, path: Path) -> None:
+    failed_ids = [
+        str(row.get("example_id") or "<unknown>")
+        for row in payload["rows"]
+        if isinstance(row, dict)
+        and (
+            (row.get("action_outcome") or {}).get("status") == "failed"
+            or bool(row.get("error"))
+        )
+    ]
+    if failed_ids:
+        raise SystemExit(
+            f"{path} contains failed rows that cannot be scored or published: {failed_ids}."
+        )
+
+
 def validate_output(
     path: Path,
     stage: str,
@@ -322,6 +338,9 @@ def validate_output(
         raise SystemExit(f"Stage output is unreadable JSON: {path}") from exc
     if not isinstance(payload, dict):
         raise SystemExit(f"Stage output must be a JSON object: {path}")
+    if not isinstance(payload.get("rows"), list):
+        raise SystemExit(f"{path} has no rows list.")
+    _reject_failed_rows(payload, path)
     expected_profile, expected_label = STAGE_SPEC[stage]
     if payload.get("profile") != expected_profile:
         raise SystemExit(

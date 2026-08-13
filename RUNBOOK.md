@@ -9,7 +9,7 @@ cluster. Everything here is copy-paste; edit only the bracketed placeholders.
 ## 1. Clone and checkout the exact branch
 
 ```bash
-git clone https://github.com/haseebraza715/failure-aware-ocr-rag.git faar
+git clone https://github.com/haseebraza715/FailSafeRAG.git faar
 cd faar
 git checkout faar-aaai-experiments
 git rev-parse HEAD          # record this SHA; it goes into the calibration report

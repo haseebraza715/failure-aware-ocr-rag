@@ -121,6 +121,19 @@ def test_merge_rejects_duplicate_example_ids(tmp_path: Path) -> None:
         merge_shards.merge_shards([first, second])
 
 
+def test_merge_rejects_failed_rows_with_metrics(tmp_path: Path) -> None:
+    first = tmp_path / "a.json"
+    second = tmp_path / "b.json"
+    failed = _row("e1")
+    failed["action_outcome"] = {"action": "failed", "status": "failed"}
+    failed["error"] = "FileNotFoundError: missing OCR text"
+    _shard(first, [failed], shard_index=0)
+    _shard(second, [_row("e2")], shard_index=1)
+
+    with pytest.raises(SystemExit, match="failed row 'e1'"):
+        merge_shards.merge_shards([first, second])
+
+
 def test_merge_rejects_mismatched_run_specs(tmp_path: Path) -> None:
     first = tmp_path / "a.json"
     second = tmp_path / "b.json"

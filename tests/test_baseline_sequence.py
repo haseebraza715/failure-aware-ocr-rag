@@ -555,6 +555,24 @@ def test_resume_rejects_summary_that_disagrees_with_rows(monkeypatch, tmp_path: 
         run_baselines.main(["--project-root", str(tmp_path), "--resume"])
 
 
+def test_resume_rejects_failed_row_even_when_it_has_zero_metrics(monkeypatch, tmp_path: Path) -> None:
+    _gate_lock(tmp_path)
+    args = _args(tmp_path, resume=True)
+    payload = _payload("b0", args, IDS)
+    payload["rows"][0]["metrics"] = {"em": 0.0, "f1": 0.0}
+    payload["rows"][0]["action_outcome"] = {"action": "failed", "status": "failed"}
+    payload["rows"][0]["error"] = "FileNotFoundError: missing OCR text"
+    payload["summary"]["EM"] = 0.5
+    payload["summary"]["F1"] = 0.5
+    path = run_baselines.output_path(tmp_path, DATASET, SPLIT, "b0")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    monkeypatch.setattr(run_baselines, "run_child", _never)
+
+    with pytest.raises(SystemExit, match="failed rows"):
+        run_baselines.main(["--project-root", str(tmp_path), "--resume"])
+
+
 def test_dry_run_prints_commands_in_order(monkeypatch, tmp_path: Path, capsys) -> None:
     monkeypatch.setattr(run_baselines, "run_child", _never)
     result = run_baselines.main(["--project-root", str(tmp_path), "--dry-run"])

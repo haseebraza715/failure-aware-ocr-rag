@@ -262,6 +262,20 @@ def test_analysis_rejects_duplicate_result_example_ids(tmp_path: Path) -> None:
         summarize_analysis([faar], baseline)
 
 
+def test_analysis_rejects_failed_rows_even_when_metrics_exist(tmp_path: Path) -> None:
+    baseline, faar = tmp_path / "b0.json", tmp_path / "faar.json"
+    spec = _run_spec()
+    baseline_rows = [_row("e1", 1.0)]
+    failed = _row("e1", 0.0)
+    failed["action_outcome"] = {"action": "failed", "status": "failed"}
+    failed["error"] = "FileNotFoundError: missing OCR text"
+    _result(baseline, "B0", baseline_rows, profile="naive_rag", run_spec=spec)
+    _result(faar, "FAAR", [failed], run_spec=spec, baseline_rows=baseline_rows)
+
+    with pytest.raises(ValueError, match="failed row 'e1'"):
+        summarize_analysis([faar], baseline)
+
+
 def test_analysis_rejects_duplicate_baseline_example_ids(tmp_path: Path) -> None:
     baseline, faar = tmp_path / "b0.json", tmp_path / "faar.json"
     spec = _run_spec()

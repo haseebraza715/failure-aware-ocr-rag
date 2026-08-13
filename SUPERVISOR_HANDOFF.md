@@ -9,6 +9,8 @@ The `faar-aaai-experiments` branch is ready for a bounded CUDA calibration on
 a shared cluster. The code has explicit GPU and process-memory budgets,
 single-GPU scheduler templates, resumable checkpoints, atomic outputs, pinned
 model revisions, dataset integrity checks, and fail-closed shard merging.
+Missing input files and failed rows remain checkpointed for diagnosis but
+cannot enter a summary, shard merge, or paper analysis.
 
 The current gate is intentionally narrow:
 
@@ -25,10 +27,10 @@ prototype evidence only. They are not full-scale AAAI baselines.
 
 ## Repository and branch
 
-Repository: <https://github.com/haseebraza715/failure-aware-ocr-rag>
+Repository: <https://github.com/haseebraza715/FailSafeRAG>
 
 ```bash
-git clone https://github.com/haseebraza715/failure-aware-ocr-rag.git faar
+git clone https://github.com/haseebraza715/FailSafeRAG.git faar
 cd faar
 git checkout faar-aaai-experiments
 git rev-parse HEAD

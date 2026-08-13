@@ -44,7 +44,7 @@ Prerequisites:
 Install:
 
 ```bash
-git clone https://github.com/haseebraza715/failure-aware-ocr-rag.git faar
+git clone https://github.com/haseebraza715/FailSafeRAG.git faar
 cd faar
 git checkout faar-aaai-experiments
 python3 -m venv .venv && source .venv/bin/activate

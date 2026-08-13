@@ -38,7 +38,12 @@ def test_hugging_face_revisions_must_be_immutable_commit_shas(tmp_path) -> None:
     settings.validate_model_revisions(include_visual="colpali")
 
     provenance = settings.model_provenance()
+    assert provenance["embedding"]["backend"] == "sentence-transformers"
     assert provenance["embedding"]["revision"] == locked.retrieval.embedding_revision
+    assert provenance["recovery"] == {
+        "enable_byt5": True,
+        "byt5_correction": settings.recovery.correction.model_dump(),
+    }
     assert provenance["vlm"]["backend"] == "openai"
     assert provenance["vlm"]["provider"] == "openai"
     assert provenance["vlm"]["model"] == "gpt-4o-2024-11-20"
@@ -78,3 +83,15 @@ def test_vlm_provenance_tracks_selected_request_model(tmp_path) -> None:
     settings.recovery.vlm_backend = "anthropic"
     assert settings.model_provenance()["vlm"]["model"] == settings.recovery.anthropic_model
     assert settings.vlm_request_model() == settings.recovery.anthropic_model
+
+
+def test_embedding_backend_changes_published_model_provenance(tmp_path) -> None:
+    settings = AppSettings(project_root=tmp_path)
+    neural = settings.model_provenance()
+    settings.retrieval.embedding_backend = "local-hash-v1"
+    local = settings.model_provenance()
+
+    assert neural["embedding"]["repository"] == local["embedding"]["repository"]
+    assert neural["embedding"]["backend"] == "sentence-transformers"
+    assert local["embedding"]["backend"] == "local-hash-v1"
+    assert neural != local

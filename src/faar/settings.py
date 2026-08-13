@@ -370,9 +370,10 @@ class AppSettings(BaseModel):
             return self.recovery.anthropic_model
         return None
 
-    def model_provenance(self) -> dict[str, dict[str, str | None]]:
+    def model_provenance(self) -> dict[str, dict[str, object]]:
         return {
             "embedding": {
+                "backend": self.retrieval.embedding_backend,
                 "repository": _canonical_model_repository(self.retrieval.embedding_model),
                 "revision": self.retrieval.embedding_revision,
             },
@@ -388,6 +389,10 @@ class AppSettings(BaseModel):
                 "backend": self.recovery.vlm_backend,
                 "provider": self.vlm_provider(),
                 "model": self.vlm_request_model(),
+            },
+            "recovery": {
+                "enable_byt5": self.recovery.enable_byt5,
+                "byt5_correction": self.recovery.correction.model_dump(),
             },
         }
 

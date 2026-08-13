@@ -310,9 +310,16 @@ def merge_shards(
     rows: list[dict[str, Any]] = []
     for path, payload in zip(shard_paths, payloads):
         for row in payload["rows"]:
+            if not isinstance(row, dict):
+                raise SystemExit(f"shard {path} contains a row that is not an object.")
             example_id = str(row.get("example_id", ""))
             if not example_id:
                 raise SystemExit(f"shard {path} contains a row without example_id.")
+            if (row.get("action_outcome") or {}).get("status") == "failed" or row.get("error"):
+                raise SystemExit(
+                    f"shard {path} contains failed row {example_id!r}; "
+                    "failed examples cannot be merged or scored."
+                )
             if example_id in seen:
                 raise SystemExit(
                     f"duplicate example_id {example_id!r} in shards {seen[example_id]} and {path}."

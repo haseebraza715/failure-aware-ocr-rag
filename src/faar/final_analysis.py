@@ -49,6 +49,8 @@ def _require_unique_example_ids(rows: list[dict[str, Any]], path: Path) -> None:
             raise ValueError(f"{path} contains a row with a missing example_id.")
         if example_id in seen:
             raise ValueError(f"{path} contains duplicate example_id {example_id!r}.")
+        if (row.get("action_outcome") or {}).get("status") == "failed" or row.get("error"):
+            raise ValueError(f"{path} contains failed row {example_id!r}; failed rows cannot be analyzed.")
         seen.add(example_id)
 
 

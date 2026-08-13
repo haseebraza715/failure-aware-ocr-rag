@@ -26,12 +26,6 @@ def _effect_label(actual: float, counterfactual: float) -> str:
     return "equal"
 
 
-def _is_scoring_failure(exc: Exception) -> bool:
-    if isinstance(exc, FileNotFoundError):
-        return False
-    return True
-
-
 def run_profile(
     settings: AppSettings,
     profile_name: str,
@@ -193,47 +187,27 @@ def run_profile(
             if is_fatal_resource_error(exc):
                 raise
             reason = f"{type(exc).__name__}: {exc}"
-            if _is_scoring_failure(exc):
-                failed_row = {
+            failed_row = {
+                "profile": profile_name,
+                "example_id": example_id,
+                "action_outcome": {"action": "failed", "status": "failed", "reason": reason},
+                "api_usage": zero_api_usage(),
+                "error": reason,
+                "run_metadata": {
                     "profile": profile_name,
-                    "example_id": example_id,
-                    "action_outcome": {"action": "failed", "status": "failed", "reason": reason},
-                    "api_usage": zero_api_usage(),
-                    "error": reason,
-                    "run_metadata": {
-                        "profile": profile_name,
-                        "run_id": run_id,
-                        "run_fingerprint": fingerprint,
-                        "manifest_sha256": getattr(repo, "manifest_sha256", None),
-                        "evaluation_size": len(selected_ids),
-                        "selection": selection or {"max_examples": max_examples},
-                        "dataset": dataset or "phase0",
-                        "split": split or "development",
-                    },
-                }
-                atomic_write_json(_checkpoint_path(base_output, example_id), failed_row)
-                failures.append((example_id, reason))
-                print(f"[faar] example {example_id!r} FAILED and was not scored: {reason}", flush=True)
-                processed += 1
-                reporter.update(processed)
-                continue
-            error_row = _error_row(
-                profile_name,
-                example_id,
-                exc,
-                run_id,
-                seed,
-                settings,
-                selection,
-                max_examples,
-                len(selected_ids),
-                fingerprint,
-                getattr(repo, "manifest_sha256", None),
-                dataset,
-                split,
-            )
-            rows_by_id[example_id] = error_row
-            atomic_write_json(_checkpoint_path(base_output, example_id), error_row)
+                    "run_id": run_id,
+                    "run_fingerprint": fingerprint,
+                    "manifest_sha256": getattr(repo, "manifest_sha256", None),
+                    "evaluation_size": len(selected_ids),
+                    "selection": selection or {"max_examples": max_examples},
+                    "dataset": dataset or "phase0",
+                    "split": split or "development",
+                    "seed": seed,
+                },
+            }
+            atomic_write_json(_checkpoint_path(base_output, example_id), failed_row)
+            failures.append((example_id, reason))
+            print(f"[faar] example {example_id!r} FAILED and was not scored: {reason}", flush=True)
             processed += 1
             reporter.update(processed)
             continue
@@ -250,62 +224,6 @@ def run_profile(
         )
     reporter.finish()
     return [rows_by_id[example_id] for example_id in selected_ids if example_id in rows_by_id]
-
-
-def _error_row(
-    profile_name: str,
-    example_id: str,
-    exc: Exception,
-    run_id: str,
-    seed: int,
-    settings: AppSettings,
-    selection: dict[str, Any] | None,
-    max_examples: int | None,
-    evaluation_size: int,
-    fingerprint: str,
-    manifest_sha256: str | None,
-    dataset: str | None,
-    split: str | None,
-) -> dict[str, Any]:
-    return {
-        "profile": profile_name,
-        "example_id": example_id,
-        "question": "",
-        "gold_answer": "",
-        "predicted_answer": "",
-        "failure_type": "error",
-        "policy_action": "error",
-        "action_outcome": {
-            "action": "failed",
-            "status": "failed",
-            "reason": f"{type(exc).__name__}: {exc}",
-        },
-        "metrics": {"ndcg@5": 0.0, "recall@5": 0.0, "em": 0.0, "f1": 0.0},
-        "recovery_metrics": {
-            "counterfactual_answer": "",
-            "recovery_changed_answer": False,
-            "em": {"actual": 0.0, "counterfactual": 0.0, "delta": 0.0, "effect": "equal"},
-            "f1": {"actual": 0.0, "counterfactual": 0.0, "delta": 0.0, "effect": "equal"},
-        },
-        "api_usage": zero_api_usage(),
-        "top_hit_texts": [],
-        "run_metadata": {
-            "profile": profile_name,
-            "run_id": run_id,
-            "run_fingerprint": fingerprint,
-            "manifest_sha256": manifest_sha256,
-            "api_enabled": settings.recovery.api_enabled,
-            "vlm_backend": settings.recovery.vlm_backend,
-            "openai_model": settings.recovery.openai_model,
-            "enable_byt5": settings.recovery.enable_byt5,
-            "byt5_model": settings.recovery.byt5_model,
-            "seed": seed,
-            "evaluation_size": evaluation_size,
-            "selection": selection or {"max_examples": max_examples},
-            "dataset": dataset or "phase0",
-            "split": split or "development",
-        },
-    }
 
 
 def _checkpoint_path(base_output: Path, example_id: str) -> Path:

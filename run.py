@@ -181,6 +181,7 @@ def _run_profile_to_result(
         resume=resume,
         shard_index=shard_index,
         num_shards=num_shards,
+        seed=int(run_spec.get("seed", settings.experiment.random_seed)),
     )
     summary = summarize_examples(rows)
     api_totals = summarize_api_usage(rows)
