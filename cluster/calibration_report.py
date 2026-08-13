@@ -268,19 +268,16 @@ def project_preparation(
     val_pages: int,
     test_documents: int,
     test_pages: int,
-    scheduler_elapsed_sec: float | None = None,
 ) -> dict[str, Any]:
     runtime = summary.get("runtime") or {}
     timing_complete = runtime.get("timing_complete")
-    if timing_complete is False and scheduler_elapsed_sec is None:
+    if timing_complete is False:
         raise SystemExit(
             "calibration timing is incomplete because an attempt ended in an unclean shutdown. "
-            "Projection refuses an incomplete wall-time total. Re-run calibration, or pass "
-            "--scheduler-elapsed-sec with the scheduler-reported duration for the killed attempt."
+            "Projection refuses an incomplete wall-time total and does not accept scheduler timing. "
+            "Apply scheduler timing with prepare_benchmark_assets.py --scheduler-elapsed-sec, "
+            "rebuild the calibration summary, then run projection again."
         )
-    if scheduler_elapsed_sec is not None:
-        if scheduler_elapsed_sec <= 0 or scheduler_elapsed_sec != scheduler_elapsed_sec or scheduler_elapsed_sec == float("inf"):
-            raise SystemExit("--scheduler-elapsed-sec must be a positive finite number of seconds.")
     throughput = (summary.get("throughput") or {}).get("ocr_page_runtime_sec") or {}
     storage = summary.get("storage") or {}
     documents_completed = max(1, int((summary.get("documents") or {}).get("completed") or 1))
@@ -367,19 +364,9 @@ def project_preparation(
             "or single-document runs only.",
         ],
         "timing": {
-            "complete": timing_complete is not False or scheduler_elapsed_sec is not None,
-            "scheduler_elapsed_sec": scheduler_elapsed_sec,
-            "scheduler_elapsed_source": "scheduler" if scheduler_elapsed_sec is not None else None,
+            "complete": timing_complete is not False,
         },
     }
-    if scheduler_elapsed_sec is not None:
-        result["warnings"].append(
-            f"Unclean calibration timing was completed with a scheduler-reported "
-            f"{scheduler_elapsed_sec} s correction; this was not measured by the process."
-        )
-        result["assumptions"].append(
-            f"Unclean-attempt elapsed time supplied from the scheduler: {scheduler_elapsed_sec} s."
-        )
     return result
 
 
@@ -443,7 +430,6 @@ def project_command(args: argparse.Namespace) -> int:
         val_pages=args.val_pages,
         test_documents=args.test_documents,
         test_pages=args.test_pages,
-        scheduler_elapsed_sec=args.scheduler_elapsed_sec,
     )
     _print_projection(projection)
     if args.out:
@@ -472,16 +458,6 @@ def main(argv: list[str] | None = None) -> int:
     project_parser.add_argument("--val-pages", type=int, default=DEFAULT_VAL["pages"])
     project_parser.add_argument("--test-documents", type=int, default=DEFAULT_TEST["documents"])
     project_parser.add_argument("--test-pages", type=int, default=DEFAULT_TEST["pages"])
-    project_parser.add_argument(
-        "--scheduler-elapsed-sec",
-        type=float,
-        default=None,
-        help=(
-            "Scheduler-reported wall seconds for an unclean calibration attempt. "
-            "Required when the summary has timing_complete=false. "
-            "Does not invent elapsed time from start timestamps."
-        ),
-    )
     project_parser.set_defaults(handler=project_command)
 
     args = parser.parse_args(argv)

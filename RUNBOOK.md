@@ -124,9 +124,9 @@ Re-running a finished job is idempotent: completed documents are re-validated
 and skipped, and the split checksum is verified before anything starts.
 
 If calibration was hard-killed (SIGKILL / node failure) the checkpoint keeps a
-running attempt. Resume records it as `unclean`. To complete cumulative timing
-from the scheduler's reported wall time instead of guessing from the start
-timestamp:
+running attempt. Resume records it as `unclean`. Hard-kill timing correction
+happens only against the calibration checkpoint. Do not guess elapsed time from
+the start timestamp. Supply the scheduler-reported wall time for that attempt:
 
 ```bash
 .venv-aaai/bin/python prepare_benchmark_assets.py \
@@ -136,6 +136,11 @@ timestamp:
   --smoke-doc manual/User_Manual_1500S_Classic_EN \
   --scheduler-elapsed-sec <seconds from sacct/qstat>
 ```
+
+Every unclean attempt needs its own scheduler-reported duration. If several
+attempts are unresolved, repeat that checkpoint command once per attempt, or
+rerun calibration. Then rebuild the summary and project. The projection command
+does not accept scheduler timing.
 
 Use a new `--checkpoint` path if the smoke document, page set, source PDF, or
 GOT-OCR/Docling lock changed. The runner refuses to mix those identities.
@@ -157,13 +162,13 @@ GOT-OCR/Docling lock changed. The runner refuses to mix those identities.
 The summary contains the commit SHA, GPU model, peak RSS, per-stage and total
 runtimes, per-page OCR throughput distributions, storage, cache growth, resume
 flag, timing_complete, and split/manifest hashes. `total_wall_sec` is present
-only when every attempt has measured or scheduler-supplied elapsed time. The
-projection command refuses `timing_complete=false` unless you pass
-`--scheduler-elapsed-sec` with the scheduler-reported duration for the killed
-attempt, or you re-run calibration until timing is complete. The projection
-sizes validation (549 docs / 7,037 pages) and test (567 docs / 6,849 pages)
-separately for Docling (document-level), rendering, and OCR (page-level), with
-a configurable headroom, suggested shard counts, and explicit assumptions.
+only when every attempt has measured or scheduler-supplied elapsed time. If
+`timing_complete=false`, correct the checkpoint first as in section 8, rebuild
+this summary, then run projection. Projection refuses incomplete timing and
+does not take a scheduler duration of its own. The projection sizes validation
+(549 docs / 7,037 pages) and test (567 docs / 6,849 pages) separately for
+Docling (document-level), rendering, and OCR (page-level), with a configurable
+headroom, suggested shard counts, and explicit assumptions.
 
 **Return to the research team:** `calibration_summary.json`,
 `preparation_projection.json`, `cluster/preflight_<jobid>.json`, and the
@@ -218,7 +223,7 @@ is the recommended engineering check before full baselines.
 | `Immutable split integrity check failed` | The split/QA files changed or the clone is wrong; restore them, never edit |
 | `FAAR_GPU_BUDGET_GB` missing | Choose it from the preflight GPU report |
 | Job killed at walltime (143) | Re-submit; checkpoints resume automatically |
-| Hard kill / SIGKILL / node death | Resume marks the running attempt unclean and `timing_complete=false`. Supply `--scheduler-elapsed-sec` from sacct/qstat, or re-run calibration. Projection refuses incomplete timing until then. |
+| Hard kill / SIGKILL / node death | Resume marks the running attempt unclean and `timing_complete=false`. Apply `prepare_benchmark_assets.py --scheduler-elapsed-sec` from sacct/qstat to the checkpoint, rebuild the summary, then project. Repeat once per unresolved unclean attempt, or re-run calibration. Projection does not accept scheduler timing. |
 | Checkpoint identity mismatch | The smoke document, pages, source PDF, or model lock changed. Use a new `--checkpoint` path. |
 | `CUDA out of memory` / `MemoryError` | Job aborts safely with checkpoint; reduce budget or re-check the preflight |
 | Recoverable document errors | Listed in the shard manifest; the job exits non-zero; re-submit with `--resume` to retry failed documents |

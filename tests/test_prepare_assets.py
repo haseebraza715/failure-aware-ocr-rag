@@ -999,10 +999,18 @@ def test_split_checksum_mismatch_fails_closed(tmp_path: Path) -> None:
     assert "integrity check failed" in tampered.stderr
 
 
-def _rewrite_lock(project: Path, *, got_revision: str | None = None, docling_revision: str | None = None) -> None:
+def _rewrite_lock(
+    project: Path,
+    *,
+    got_revision: str | None = None,
+    got_repository: str | None = None,
+    docling_revision: str | None = None,
+) -> None:
     payload = json.loads((project / "config/model_revisions.json").read_text(encoding="utf-8"))
     if got_revision is not None:
         payload["models"]["got_ocr"]["revision"] = got_revision
+    if got_repository is not None:
+        payload["models"]["got_ocr"]["repository"] = got_repository
     if docling_revision is not None:
         payload["models"]["docling"]["revision"] = docling_revision
     (project / "config/model_revisions.json").write_text(json.dumps(payload), encoding="utf-8")
@@ -1020,6 +1028,74 @@ def test_got_ocr_lock_change_does_not_skip_completed_document(
     assert ocr_calls
     provenance = json.loads((project / "out/provenance/academic/doc_a.json").read_text())
     assert provenance["got_ocr_revision"] == "c" * 40
+
+
+def test_got_ocr_repository_change_reruns_ocr_and_records_new_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = build_project(tmp_path)
+    run_shard(project, monkeypatch=monkeypatch)
+    new_repository = "example/new-got-ocr-repository"
+    revision = MODEL_LOCK["models"]["got_ocr"]["revision"]
+    _rewrite_lock(project, got_repository=new_repository)
+    ocr_calls: list[str] = []
+    summary = run_shard(project, monkeypatch=monkeypatch, ocr_calls=ocr_calls, resume=True)
+    assert summary["skipped"] == []
+    assert ocr_calls
+    for doc in DOCS:
+        for page_id in PAGES:
+            assert f"{Path(doc).name}_page_{page_id}.png" in ocr_calls
+        provenance = json.loads((project / f"out/provenance/{doc}.json").read_text())
+        assert provenance["got_ocr_repository"] == new_repository
+        assert provenance["got_ocr_revision"] == revision
+        for page_id in PAGES:
+            page = provenance["pages"][str(page_id)]
+            assert page["got_ocr_repository"] == new_repository
+            assert page["got_ocr_revision"] == revision
+    checkpoint = json.loads((project / "out/checkpoint.json").read_text())
+    locked_got = prepare.load_locked_got_ocr(project)
+    locked_docling = prepare.load_locked_docling(project)
+    for doc in DOCS:
+        source_sha = prepare._source_pdf_sha256(
+            project_root=project,
+            doc_rel=doc,
+            pdf_root=project / "pdfs",
+            pdf_zip=None,
+            inventory_dir=project / "OHR-Bench/data/retrieval_base/gt",
+        )
+        assert prepare._completed_doc_valid(
+            project,
+            doc,
+            checkpoint["completed"][doc],
+            page_ids=PAGES,
+            source_sha256=source_sha,
+            got_ocr=locked_got,
+            docling=locked_docling,
+        )
+    ocr_calls.clear()
+    summary = run_shard(project, monkeypatch=monkeypatch, ocr_calls=ocr_calls, resume=True)
+    assert summary["skipped"] == DOCS
+    assert ocr_calls == []
+
+
+def test_missing_page_got_ocr_repository_forces_ocr_regeneration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = build_project(tmp_path)
+    run_shard(project, monkeypatch=monkeypatch)
+    for doc in DOCS:
+        path = project / f"out/provenance/{doc}.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        for page in payload["pages"].values():
+            page.pop("got_ocr_repository", None)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    ocr_calls: list[str] = []
+    summary = run_shard(project, monkeypatch=monkeypatch, ocr_calls=ocr_calls, resume=True)
+    assert summary["skipped"] == []
+    assert ocr_calls
+    provenance = json.loads((project / "out/provenance/academic/doc_a.json").read_text())
+    assert provenance["got_ocr_repository"] == MODEL_LOCK["models"]["got_ocr"]["repository"]
+    assert provenance["pages"]["0"]["got_ocr_repository"] == MODEL_LOCK["models"]["got_ocr"]["repository"]
 
 
 def test_docling_lock_change_does_not_skip_completed_document(

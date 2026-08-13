@@ -635,17 +635,6 @@ def test_unclean_running_attempt_is_detected_and_projection_refuses(
             test_documents=10,
             test_pages=100,
         )
-    projection = report.project_preparation(
-        summary,
-        headroom_fraction=0.25,
-        walltime_hours_per_shard=24.0,
-        val_documents=10,
-        val_pages=100,
-        test_documents=10,
-        test_pages=100,
-        scheduler_elapsed_sec=12.5,
-    )
-    assert projection["timing"]["scheduler_elapsed_sec"] == 12.5
     cli.main(_cli_args(project, "academic/demo", extra=["--scheduler-elapsed-sec", "12.5"]))
     checkpoint = json.loads(checkpoint_path.read_text())
     assert checkpoint["timing_complete"] is True
@@ -653,6 +642,79 @@ def test_unclean_running_attempt_is_detected_and_projection_refuses(
     assert checkpoint["calibration"]["runtime_sec_total_wall"] == pytest.approx(
         checkpoint["calibration"]["measured_wall_sec"]
     )
+    rebuilt = report.build_summary(checkpoint_path=checkpoint_path, project_root=project)
+    assert rebuilt["runtime"]["timing_complete"] is True
+    projection = report.project_preparation(
+        rebuilt,
+        headroom_fraction=0.25,
+        walltime_hours_per_shard=24.0,
+        val_documents=10,
+        val_pages=100,
+        test_documents=10,
+        test_pages=100,
+    )
+    assert projection["timing"]["complete"] is True
+    assert "scheduler_elapsed_sec" not in projection["timing"]
+
+
+def test_scheduler_elapsed_corrects_one_unclean_attempt_at_a_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import prepare_benchmark_assets as cli
+
+    project = _calibration_project(tmp_path)
+    monkeypatch.setattr(cli, "execute_document_preparation", lambda **kwargs: _fake_result(project, kwargs["doc_rel"]))
+    cli.main(_cli_args(project, "academic/demo", execute=True))
+    checkpoint_path = project / "out/prepare_checkpoint.json"
+    checkpoint = json.loads(checkpoint_path.read_text())
+    checkpoint["attempt_records"].extend(
+        [
+            {
+                "id": 98,
+                "state": "unclean",
+                "elapsed_sec": None,
+                "elapsed_source": None,
+            },
+            {
+                "id": 99,
+                "state": "unclean",
+                "elapsed_sec": None,
+                "elapsed_source": None,
+            },
+        ]
+    )
+    checkpoint["timing_complete"] = False
+    checkpoint["calibration"]["timing_complete"] = False
+    checkpoint["calibration"]["runtime_sec_total_wall"] = None
+    checkpoint_path.write_text(json.dumps(checkpoint), encoding="utf-8")
+    cli.main(_cli_args(project, "academic/demo", extra=["--scheduler-elapsed-sec", "8.0"]))
+    after_one = json.loads(checkpoint_path.read_text())
+    unresolved = [
+        record
+        for record in after_one["attempt_records"]
+        if record.get("state") == "unclean" and not isinstance(record.get("elapsed_sec"), (int, float))
+    ]
+    assert len(unresolved) == 1
+    assert after_one["timing_complete"] is False
+    cli.main(_cli_args(project, "academic/demo", extra=["--scheduler-elapsed-sec", "9.0"]))
+    after_two = json.loads(checkpoint_path.read_text())
+    assert after_two["timing_complete"] is True
+    scheduler_records = [
+        record for record in after_two["attempt_records"] if record.get("elapsed_source") == "scheduler"
+    ]
+    assert {record["elapsed_sec"] for record in scheduler_records} == {8.0, 9.0}
+
+
+def test_scheduler_elapsed_fails_when_no_unresolved_unclean_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import prepare_benchmark_assets as cli
+
+    project = _calibration_project(tmp_path)
+    monkeypatch.setattr(cli, "execute_document_preparation", lambda **kwargs: _fake_result(project, kwargs["doc_rel"]))
+    cli.main(_cli_args(project, "academic/demo", execute=True))
+    with pytest.raises(SystemExit, match="no unclean attempt is missing elapsed time"):
+        cli.main(_cli_args(project, "academic/demo", extra=["--scheduler-elapsed-sec", "12.5"]))
 
 
 def test_fast_attempt_stores_positive_raw_duration(

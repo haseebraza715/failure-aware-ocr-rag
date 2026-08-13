@@ -634,6 +634,7 @@ def execute_document_preparation(
                 and ocr_path.stat().st_size > 0
                 and page_prov.get("pdf_sha256") == pdf_sha256
                 and page_prov.get("png_sha256") == png_sha
+                and page_prov.get("got_ocr_repository") == model_name
                 and page_prov.get("got_ocr_revision") == revision
                 and page_prov.get("ocr_sha256") == sha256_file(ocr_path)
             ):

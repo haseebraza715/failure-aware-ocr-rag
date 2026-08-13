@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import math
 import sys
@@ -336,6 +337,62 @@ def test_build_summary_exposes_incomplete_timing(tmp_path: Path) -> None:
     assert summary["runtime"]["timing_complete"] is False
     assert summary["runtime"]["total_wall_sec"] is None
     assert summary["runtime"]["measured_wall_sec"] == 12.0
+    with pytest.raises(SystemExit, match="prepare_benchmark_assets.py --scheduler-elapsed-sec"):
+        report.project_preparation(
+            summary,
+            headroom_fraction=0.25,
+            walltime_hours_per_shard=24.0,
+            val_documents=10,
+            val_pages=100,
+            test_documents=10,
+            test_pages=100,
+        )
+
+
+def test_project_cli_rejects_incomplete_timing(tmp_path: Path) -> None:
+    project = build_project(tmp_path)
+    checkpoint = json.loads(build_checkpoint(tmp_path).read_text())
+    checkpoint["calibration"]["timing_complete"] = False
+    checkpoint["calibration"]["runtime_sec_total_wall"] = None
+    path = tmp_path / "incomplete.json"
+    path.write_text(json.dumps(checkpoint))
+    summary = report.build_summary(checkpoint_path=path, project_root=project)
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text(json.dumps(summary))
+    with pytest.raises(SystemExit, match="prepare_benchmark_assets.py --scheduler-elapsed-sec"):
+        report.main(["project", "--summary", str(summary_path)])
+
+
+def test_project_parser_rejects_scheduler_elapsed_sec(capsys: pytest.CaptureFixture[str]) -> None:
+    assert "scheduler_elapsed_sec" not in inspect.signature(report.project_preparation).parameters
+    with pytest.raises(SystemExit) as exc:
+        report.main(["project", "--summary", "missing.json", "--scheduler-elapsed-sec", "12"])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "unrecognized arguments" in err
+    assert "--scheduler-elapsed-sec" in err
+
+
+def test_complete_summary_projects_successfully(tmp_path: Path) -> None:
+    summary = make_summary(tmp_path)
+    assert summary["runtime"]["timing_complete"] is not False
+    projection = report.project_preparation(
+        summary,
+        headroom_fraction=0.25,
+        walltime_hours_per_shard=24.0,
+        val_documents=10,
+        val_pages=100,
+        test_documents=10,
+        test_pages=100,
+    )
+    assert projection["kind"] == "preparation-projection"
+    assert projection["timing"]["complete"] is True
+    assert "scheduler_elapsed_sec" not in projection["timing"]
+
+
+def test_projection_cannot_claim_complete_while_summary_is_incomplete(tmp_path: Path) -> None:
+    summary = make_summary(tmp_path)
+    summary["runtime"]["timing_complete"] = False
     with pytest.raises(SystemExit, match="timing is incomplete"):
         report.project_preparation(
             summary,
@@ -346,15 +403,3 @@ def test_build_summary_exposes_incomplete_timing(tmp_path: Path) -> None:
             test_documents=10,
             test_pages=100,
         )
-    projection = report.project_preparation(
-        summary,
-        headroom_fraction=0.25,
-        walltime_hours_per_shard=24.0,
-        val_documents=10,
-        val_pages=100,
-        test_documents=10,
-        test_pages=100,
-        scheduler_elapsed_sec=90.0,
-    )
-    assert projection["timing"]["scheduler_elapsed_source"] == "scheduler"
-    assert projection["timing"]["scheduler_elapsed_sec"] == 90.0
