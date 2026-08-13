@@ -318,3 +318,43 @@ def test_cli_project_rejects_non_summary(tmp_path: Path) -> None:
     junk.write_text(json.dumps({"kind": "other"}))
     with pytest.raises(SystemExit, match="not a calibration-summary"):
         report.main(["project", "--summary", str(junk)])
+
+
+def test_build_summary_exposes_incomplete_timing(tmp_path: Path) -> None:
+    project = build_project(tmp_path)
+    checkpoint = json.loads(build_checkpoint(tmp_path).read_text())
+    checkpoint["calibration"]["timing_complete"] = False
+    checkpoint["calibration"]["runtime_sec_total_wall"] = None
+    checkpoint["calibration"]["measured_wall_sec"] = 12.0
+    checkpoint["attempt_records"] = [
+        {"id": 1, "state": "completed", "elapsed_sec": 4.0},
+        {"id": 2, "state": "unclean", "elapsed_sec": None},
+    ]
+    path = tmp_path / "incomplete.json"
+    path.write_text(json.dumps(checkpoint))
+    summary = report.build_summary(checkpoint_path=path, project_root=project)
+    assert summary["runtime"]["timing_complete"] is False
+    assert summary["runtime"]["total_wall_sec"] is None
+    assert summary["runtime"]["measured_wall_sec"] == 12.0
+    with pytest.raises(SystemExit, match="timing is incomplete"):
+        report.project_preparation(
+            summary,
+            headroom_fraction=0.25,
+            walltime_hours_per_shard=24.0,
+            val_documents=10,
+            val_pages=100,
+            test_documents=10,
+            test_pages=100,
+        )
+    projection = report.project_preparation(
+        summary,
+        headroom_fraction=0.25,
+        walltime_hours_per_shard=24.0,
+        val_documents=10,
+        val_pages=100,
+        test_documents=10,
+        test_pages=100,
+        scheduler_elapsed_sec=90.0,
+    )
+    assert projection["timing"]["scheduler_elapsed_source"] == "scheduler"
+    assert projection["timing"]["scheduler_elapsed_sec"] == 90.0

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import os
 import shutil
@@ -14,9 +15,11 @@ from typing import Any, Callable
 from .asset_paths import to_relative_project_path
 from .ohr_inventory import resolve_ohr_inventory_path
 from .operations import check_termination
-from .pdf_preprocessing import export_docling_markdown
+from .pdf_preprocessing import export_docling_markdown, resolve_docling_lock
 from .resource_limits import enforce_memory_budget
 from .run_io import atomic_write_text
+
+RENDER_SCALE = 2.0
 
 
 STAGE_ORDER = ("extract_pdf", "docling_audit", "render_pages", "got_ocr")
@@ -56,13 +59,8 @@ def load_locked_got_ocr(project_root: Path) -> dict[str, str]:
 
 
 def load_locked_docling(project_root: Path) -> dict[str, str]:
-    """Immutable Docling model snapshot lock (used for provenance recording)."""
-    payload = json.loads((project_root / "config/model_revisions.json").read_text(encoding="utf-8"))
-    locked = (payload.get("models") or {}).get("docling") or {}
-    repository = str(locked.get("repository", "")).strip()
-    revision = str(locked.get("revision", "")).strip()
-    if not repository or not revision:
-        raise ValueError("config/model_revisions.json docling lock is incomplete.")
+    """Immutable Docling model snapshot lock from the explicit project root."""
+    repository, revision = resolve_docling_lock(project_root=project_root)
     return {"repository": repository, "revision": revision}
 
 
@@ -114,6 +112,10 @@ def build_provenance(
         "docling_audit": {
             "pdf_sha256": pdf_sha256,
             "output": _rel(audit_path, project_root),
+            "repository": docling_models.get("repository"),
+            "revision": docling_models.get("revision"),
+            "audit_sha256": sha256_file(audit_path) if audit_path.is_file() else None,
+            "stage": "docling_audit",
         },
         "pages": dict(pages_state),
         "metrics": {
@@ -244,7 +246,75 @@ def extract_pdf_from_zip(zip_path: Path, member: str, destination: Path) -> Path
     return destination
 
 
-def render_pdf_pages(pdf_path: Path, page_ids: list[int], image_paths: dict[int, Path], scale: float = 2.0) -> dict[str, Any]:
+def hash_source_pdf(
+    *,
+    project_root: Path,
+    doc_rel: str,
+    pdf_root: Path | None,
+    pdf_zip: Path | None,
+    inventory_dir: Path,
+) -> str:
+    """Hash the current source PDF. Missing or unreadable sources raise."""
+    kind, source = resolve_pdf_source(
+        project_root=project_root,
+        doc_rel=doc_rel,
+        pdf_root=pdf_root,
+        pdf_zip=pdf_zip,
+        inventory_dir=inventory_dir,
+    )
+    if kind == "missing" or source is None:
+        raise FileNotFoundError(f"Could not locate PDF for document {doc_rel!r}.")
+    if kind == "filesystem":
+        try:
+            return sha256_file(source)
+        except OSError as exc:
+            raise FileNotFoundError(
+                f"Source PDF is unreadable for {doc_rel!r}: {source}: {exc}"
+            ) from exc
+    zip_path = (pdf_zip or project_root / "data/ohr_bench_raw/pdfs.zip").resolve()
+    try:
+        with zipfile.ZipFile(zip_path) as archive:
+            with archive.open(source.as_posix()) as handle:
+                digest = hashlib.sha256()
+                while True:
+                    chunk = handle.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                return digest.hexdigest()
+    except OSError as exc:
+        raise FileNotFoundError(
+            f"Source PDF zip member is unreadable for {doc_rel!r}: {zip_path}:{source}: {exc}"
+        ) from exc
+
+
+def _invoke_export_docling(
+    export_docling_fn: Callable[..., Path],
+    pdf_path: Path,
+    output_path: Path,
+    *,
+    repository: str,
+    revision: str,
+    project_root: Path,
+) -> Path:
+    try:
+        parameters = inspect.signature(export_docling_fn).parameters
+    except (TypeError, ValueError):
+        return export_docling_fn(pdf_path, output_path)
+    accepts_var_kw = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
+    kwargs: dict[str, Any] = {}
+    if accepts_var_kw or "repository" in parameters:
+        kwargs["repository"] = repository
+    if accepts_var_kw or "revision" in parameters:
+        kwargs["revision"] = revision
+    if accepts_var_kw or "project_root" in parameters:
+        kwargs["project_root"] = project_root
+    return export_docling_fn(pdf_path, output_path, **kwargs)
+
+
+def render_pdf_pages(
+    pdf_path: Path, page_ids: list[int], image_paths: dict[int, Path], scale: float = RENDER_SCALE
+) -> dict[str, Any]:
     import pypdfium2 as pdfium
 
     started = time.perf_counter()
@@ -332,7 +402,7 @@ def execute_document_preparation(
     pdf_zip: Path | None = None,
     inventory_dir: Path | None = None,
     extract_got_ocr_fn: Callable[..., str] | None = None,
-    export_docling_fn: Callable[[Path, Path], Path] = export_docling_markdown,
+    export_docling_fn: Callable[..., Path] = export_docling_markdown,
 ) -> PreparationResult:
     project_root = project_root.expanduser().resolve()
     out_root = out_root if out_root.is_absolute() else project_root / out_root
@@ -405,15 +475,21 @@ def execute_document_preparation(
         enforce_memory_budget("asset preparation before Docling audit")
         check_termination()
         docling_started = time.perf_counter()
-        expected_audit = {
-            "pdf_sha256": pdf_sha256,
-            "stage": "docling_audit",
-        }
         audit_prov = (existing.get("docling_audit") or {}) if isinstance(existing, dict) else {}
+        stored_audit_sha = audit_prov.get("audit_sha256")
+        audit_hash_ok = True
+        if stored_audit_sha:
+            try:
+                audit_hash_ok = sha256_file(audit_path) == stored_audit_sha
+            except OSError:
+                audit_hash_ok = False
         if (
             audit_path.is_file()
             and audit_path.stat().st_size > 0
             and audit_prov.get("pdf_sha256") == pdf_sha256
+            and audit_prov.get("repository") == locked_docling["repository"]
+            and audit_prov.get("revision") == locked_docling["revision"]
+            and audit_hash_ok
         ):
             # A skipped Docling stage reuses work from a previous attempt; keep
             # that attempt's measured runtime so resumed calibration does not
@@ -423,14 +499,38 @@ def execute_document_preparation(
         else:
             partial = audit_path.with_suffix(audit_path.suffix + ".partial")
             _remove_quietly(partial)
-            export_docling_fn(pdf_path, partial)
+            _invoke_export_docling(
+                export_docling_fn,
+                pdf_path,
+                partial,
+                repository=locked_docling["repository"],
+                revision=locked_docling["revision"],
+                project_root=project_root,
+            )
             if not partial.is_file() or partial.stat().st_size <= 0:
                 _remove_quietly(partial)
                 raise RuntimeError("Docling produced empty audit output.")
             partial.replace(audit_path)
             metrics["docling_runtime_sec"] = time.perf_counter() - docling_started
             metrics["docling_skipped"] = False
-            existing["docling_audit"] = expected_audit
+            _publish_provenance(
+                provenance_path,
+                build_provenance(
+                    doc_rel,
+                    pdf_path,
+                    pdf_sha256,
+                    page_ids,
+                    audit_path,
+                    locked["repository"],
+                    locked["revision"],
+                    locked_docling,
+                    device,
+                    metrics,
+                    dict(existing.get("pages") or {}),
+                    project_root,
+                ),
+            )
+            existing = _read_json(provenance_path) or existing
         enforce_memory_budget("asset preparation after Docling audit")
         check_termination()
 
@@ -452,7 +552,7 @@ def execute_document_preparation(
                 pages_to_render.append(page_id)
                 _remove_quietly(image_path)
                 _remove_quietly(ocr_paths[page_id])  # OCR depends on image contents.
-        render_meta = {"pdf_page_count": None, "render_runtime_sec": 0.0, "render_scale": 2.0}
+        render_meta = {"pdf_page_count": None, "render_runtime_sec": 0.0, "render_scale": RENDER_SCALE}
         if pages_to_render:
             render_meta = render_pdf_pages(
                 pdf_path,

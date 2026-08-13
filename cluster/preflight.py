@@ -22,6 +22,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+SRC = Path(__file__).resolve().parents[1] / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from faar.dataset_paths import DatasetPathError, env_raw, resolve_dataset_paths
+
 try:
     import resource
 except ImportError:
@@ -702,29 +708,17 @@ def run_checks(
         ("split.json", project_root / "split.json"),
         ("qas_v2.json", project_root / "OHR-Bench/data/qas_v2.json"),
     ]
-    inventory_raw = os.getenv("FAAR_DOCUMENT_INVENTORY")
-    inventory = (
-        Path(inventory_raw).expanduser()
-        if inventory_raw and inventory_raw.strip()
-        else project_root / "OHR-Bench/data/retrieval_base/gt"
-    )
-    dataset_checks.append(("document inventory", inventory))
-    pdf_root_raw = os.getenv("FAAR_PDF_ROOT")
-    pdf_zip_raw = os.getenv("FAAR_PDF_ZIP")
-    pdf_root_path = Path(pdf_root_raw).expanduser() if pdf_root_raw and pdf_root_raw.strip() else None
-    pdf_zip = (
-        Path(pdf_zip_raw).expanduser()
-        if pdf_zip_raw and pdf_zip_raw.strip()
-        else project_root / "data/ohr_bench_raw/pdfs.zip"
-    )
-    missing_paths = [label for label, candidate in dataset_checks if not candidate.exists()]
-    pdf_zip_explicit = bool(pdf_zip_raw and pdf_zip_raw.strip())
-    if pdf_root_path is not None and not pdf_root_path.is_dir():
-        missing_paths.append(f"pdf root ({pdf_root_path})")
-    if pdf_zip_explicit and not pdf_zip.is_file():
-        missing_paths.append(f"pdf zip ({pdf_zip})")
-    if not pdf_zip_explicit and pdf_root_path is None and not pdf_zip.is_file():
-        missing_paths.append("pdf source (FAAR_PDF_ROOT or data/ohr_bench_raw/pdfs.zip)")
+    missing_paths = [label for label, candidate in dataset_checks if not candidate.is_file()]
+    try:
+        resolve_dataset_paths(
+            project_root=project_root,
+            inventory=env_raw("FAAR_DOCUMENT_INVENTORY"),
+            pdf_root=env_raw("FAAR_PDF_ROOT"),
+            pdf_zip=env_raw("FAAR_PDF_ZIP"),
+            require_pdf_source=True,
+        )
+    except DatasetPathError as exc:
+        missing_paths.append(str(exc))
     if missing_paths:
         record("dataset_paths", "required", "fail", detail="missing: " + ", ".join(missing_paths))
     else:

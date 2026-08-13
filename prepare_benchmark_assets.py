@@ -15,11 +15,13 @@ Full-dataset execution remains disabled. Use `--smoke-doc` for one document.
 import argparse
 import json
 import os
+import signal
 import sys
 import time
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 SRC = Path(__file__).resolve().parent / "src"
 if str(SRC) not in sys.path:
@@ -27,14 +29,18 @@ if str(SRC) not in sys.path:
 
 from faar.asset_paths import to_relative_project_path
 from faar.asset_preparation import (
+    RENDER_SCALE,
     STAGE_ORDER,
     execute_document_preparation,
+    hash_source_pdf,
+    load_locked_docling,
     load_locked_got_ocr,
     page_image_name,
     page_ocr_name,
     plan_document_work,
     resolve_pdf_source,
 )
+from faar.dataset_paths import DatasetPathError, env_raw, resolve_dataset_paths
 from faar.ohr_inventory import (
     diagnose_ohr_inventory_gaps,
     load_resolved_ohr_document_inventory,
@@ -42,6 +48,18 @@ from faar.ohr_inventory import (
 )
 from faar.operations import install_graceful_termination_handler
 from faar.run_io import atomic_write_text
+
+CHECKPOINT_IDENTITY_SCHEMA = 1
+IDENTITY_FIELDS = (
+    "schema_version",
+    "dataset",
+    "smoke_doc",
+    "page_ids",
+    "source_pdf_sha256",
+    "got_ocr",
+    "docling",
+    "render_scale",
+)
 
 
 def _rel(path: Path, project_root: Path) -> str:
@@ -95,11 +113,180 @@ def _inventory_page_ids(project_root: Path, doc_rel: str, inventory_dir: Path, p
     return inventory[doc_rel]
 
 
+def build_run_identity(
+    *,
+    dataset: str,
+    smoke_doc: str,
+    page_ids: list[int],
+    source_pdf_sha256: str,
+    got_ocr: dict[str, str],
+    docling: dict[str, str],
+    render_scale: float = RENDER_SCALE,
+) -> dict[str, Any]:
+    return {
+        "schema_version": CHECKPOINT_IDENTITY_SCHEMA,
+        "dataset": dataset,
+        "smoke_doc": smoke_doc,
+        "page_ids": list(page_ids),
+        "source_pdf_sha256": source_pdf_sha256,
+        "got_ocr": {"repository": got_ocr["repository"], "revision": got_ocr["revision"]},
+        "docling": {"repository": docling["repository"], "revision": docling["revision"]},
+        "render_scale": render_scale,
+    }
+
+
+def _identity_mismatches(stored: Any, requested: dict[str, Any]) -> list[str]:
+    if not isinstance(stored, dict):
+        return ["run_identity"]
+    return [field for field in IDENTITY_FIELDS if stored.get(field) != requested.get(field)]
+
+
+def _checkpoint_has_work(checkpoint: dict[str, Any]) -> bool:
+    if checkpoint.get("completed"):
+        return True
+    if checkpoint.get("failed"):
+        return True
+    if checkpoint.get("attempt_records"):
+        return True
+    if int(checkpoint.get("attempts") or 0) > 0:
+        return True
+    return False
+
+
+def _ensure_checkpoint_identity(
+    checkpoint: dict[str, Any],
+    requested: dict[str, Any],
+    checkpoint_path: Path,
+) -> None:
+    stored = checkpoint.get("run_identity")
+    if stored is None and not _checkpoint_has_work(checkpoint):
+        checkpoint["run_identity"] = requested
+        return
+    if stored is None:
+        raise SystemExit(
+            f"checkpoint {checkpoint_path} has no run identity and cannot be migrated. "
+            "Use a new --checkpoint path for this calibration run."
+        )
+    mismatches = _identity_mismatches(stored, requested)
+    if mismatches:
+        details = ", ".join(
+            f"{field}: stored={stored.get(field)!r} requested={requested.get(field)!r}"
+            for field in mismatches
+        )
+        raise SystemExit(
+            f"checkpoint {checkpoint_path} identity mismatch ({details}). "
+            "Refusing to combine calibration work from different runs. Use a new --checkpoint path."
+        )
+
+
+def _attempt_records(checkpoint: dict[str, Any]) -> list[dict[str, Any]]:
+    records = checkpoint.get("attempt_records")
+    if isinstance(records, list):
+        return [record for record in records if isinstance(record, dict)]
+    checkpoint["attempt_records"] = []
+    return checkpoint["attempt_records"]
+
+
+def _mark_unclean_running_attempts(checkpoint: dict[str, Any]) -> bool:
+    found = False
+    now = datetime.now(UTC).isoformat()
+    for record in _attempt_records(checkpoint):
+        if record.get("state") == "running":
+            record["state"] = "unclean"
+            record["interrupted_at_utc"] = now
+            found = True
+    return found
+
+
+def _timing_from_attempts(records: list[dict[str, Any]]) -> tuple[bool, float]:
+    measured = 0.0
+    complete = True
+    for record in records:
+        state = record.get("state")
+        elapsed = record.get("elapsed_sec")
+        if state == "running":
+            complete = False
+        if isinstance(elapsed, (int, float)):
+            measured += float(elapsed)
+        elif state in {"unclean", "interrupted", "completed"}:
+            complete = False
+        if state == "unclean" and not isinstance(elapsed, (int, float)):
+            complete = False
+    return complete, measured
+
+
+def _close_attempt(
+    record: dict[str, Any],
+    *,
+    state: str,
+    elapsed_sec: float,
+    exit_code: int | None = None,
+    signal_number: int | None = None,
+) -> None:
+    record["state"] = state
+    record["elapsed_sec"] = elapsed_sec
+    record["elapsed_source"] = "monotonic"
+    if state == "interrupted":
+        record["interrupted_at_utc"] = datetime.now(UTC).isoformat()
+    if exit_code is not None:
+        record["exit_code"] = exit_code
+    if signal_number is not None:
+        record["signal"] = signal_number
+
+
+def _exit_signal(exc: BaseException) -> tuple[int | None, int | None]:
+    if isinstance(exc, SystemExit) and isinstance(exc.code, int):
+        code = exc.code
+        if code >= 128:
+            return code, code - 128
+        return code, None
+    if isinstance(exc, KeyboardInterrupt):
+        return 130, int(signal.SIGINT)
+    return None, None
+
+
+def _apply_scheduler_elapsed(checkpoint: dict[str, Any], elapsed_sec: float) -> None:
+    if elapsed_sec <= 0 or not (elapsed_sec == elapsed_sec) or elapsed_sec == float("inf"):
+        raise SystemExit("--scheduler-elapsed-sec must be a positive finite number of seconds.")
+    for record in reversed(_attempt_records(checkpoint)):
+        if record.get("state") == "unclean" and not isinstance(record.get("elapsed_sec"), (int, float)):
+            record["elapsed_sec"] = elapsed_sec
+            record["elapsed_source"] = "scheduler"
+            return
+    raise SystemExit(
+        "no unclean attempt is missing elapsed time; --scheduler-elapsed-sec was not applied. "
+        "Use this flag only to record scheduler wall time for a hard-killed attempt."
+    )
+
+
+def _sync_timing_fields(checkpoint: dict[str, Any], last_attempt_sec: float | None = None) -> None:
+    records = _attempt_records(checkpoint)
+    complete, measured = _timing_from_attempts(records)
+    checkpoint["attempts"] = len(records)
+    checkpoint["attempts_elapsed_sec"] = measured
+    checkpoint["timing_complete"] = complete
+    calibration = checkpoint.setdefault("calibration", {})
+    calibration["attempts"] = len(records)
+    calibration["attempts_elapsed_sec"] = measured
+    calibration["timing_complete"] = complete
+    calibration["measured_wall_sec"] = measured
+    if complete:
+        calibration["runtime_sec_total_wall"] = measured
+    else:
+        calibration["runtime_sec_total_wall"] = None
+    if last_attempt_sec is not None:
+        calibration["last_attempt_sec"] = last_attempt_sec
+    calibration["resumed"] = bool(checkpoint.get("resumed"))
+    calibration["cache_bytes_before"] = checkpoint.get("cache_bytes_before")
+    calibration["cache_path"] = checkpoint.get("cache_path")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Plan or execute one-document PDF → Docling → PNG → GOT-OCR asset preparation."
     )
     parser.add_argument("--dataset", required=True, choices=["ohrbench", "mpdocvqa", "arxivqa"])
+    parser.add_argument("--project-root", type=Path, default=None, help="Repository root (default: current directory).")
     parser.add_argument("--pdf-root", type=Path, help="Optional filesystem root containing source PDFs.")
     parser.add_argument(
         "--pdf-zip",
@@ -132,6 +319,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--checkpoint", type=Path, help="Resumable checkpoint JSON path.")
     parser.add_argument(
+        "--scheduler-elapsed-sec",
+        type=float,
+        default=None,
+        help=(
+            "Scheduler-reported wall seconds for an unclean (SIGKILL) attempt. "
+            "Does not invent elapsed time from the start timestamp."
+        ),
+    )
+    parser.add_argument(
         "--diagnose-inventory",
         action="store_true",
         help="Print OHR inventory gap diagnosis for qas_v2 and exit.",
@@ -139,26 +335,19 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     install_graceful_termination_handler()
 
-    def _env_path(name: str) -> Path | None:
-        raw = os.getenv(name)
-        return Path(raw).expanduser() if raw and raw.strip() else None
-
-    project_root = Path.cwd().resolve()
-    pdf_root = args.pdf_root or _env_path("FAAR_PDF_ROOT")
-    pdf_zip = args.pdf_zip or _env_path("FAAR_PDF_ZIP")
-    inventory_dir = (
-        args.document_inventory
-        or _env_path("FAAR_DOCUMENT_INVENTORY")
-        or (project_root / "OHR-Bench/data/retrieval_base/gt")
-    )
-    if not inventory_dir.is_absolute():
-        inventory_dir = project_root / inventory_dir
-    if pdf_root is not None and not pdf_root.is_dir():
-        raise SystemExit(f"FAAR_PDF_ROOT / --pdf-root is not a directory: {pdf_root}")
-    if pdf_zip is not None and not pdf_zip.is_file():
-        raise SystemExit(f"FAAR_PDF_ZIP / --pdf-zip is not a file: {pdf_zip}")
-    if not inventory_dir.is_dir():
-        raise SystemExit(f"document inventory is not a directory: {inventory_dir}")
+    project_root = (args.project_root or Path.cwd()).expanduser().resolve()
+    try:
+        dataset_paths = resolve_dataset_paths(
+            project_root=project_root,
+            inventory=args.document_inventory or env_raw("FAAR_DOCUMENT_INVENTORY"),
+            pdf_root=args.pdf_root or env_raw("FAAR_PDF_ROOT"),
+            pdf_zip=args.pdf_zip or env_raw("FAAR_PDF_ZIP"),
+        )
+    except DatasetPathError as exc:
+        raise SystemExit(str(exc)) from exc
+    pdf_root = dataset_paths.pdf_root
+    pdf_zip = dataset_paths.pdf_zip
+    inventory_dir = dataset_paths.inventory_dir
 
     if args.diagnose_inventory:
         diagnose_zip = pdf_zip or (project_root / "data/ohr_bench_raw/pdfs.zip")
@@ -177,6 +366,8 @@ def main(argv: list[str] | None = None) -> int:
     out_root = args.out_root if args.out_root.is_absolute() else project_root / args.out_root
     out_root.mkdir(parents=True, exist_ok=True)
     checkpoint_path = args.checkpoint or (out_root / "prepare_checkpoint.json")
+    if not checkpoint_path.is_absolute():
+        checkpoint_path = project_root / checkpoint_path
 
     if not args.smoke_doc:
         raise SystemExit(
@@ -200,9 +391,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     if kind == "missing":
         raise SystemExit(f"PDF for {doc_rel!r} was not found in --pdf-root or pdfs.zip.")
+    try:
+        source_sha256 = hash_source_pdf(
+            project_root=project_root,
+            doc_rel=doc_rel,
+            pdf_root=pdf_root,
+            pdf_zip=pdf_zip,
+            inventory_dir=inventory_dir,
+        )
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc)) from exc
 
     pdf_path = out_root / "pdfs" / f"{doc_rel}.pdf"
     locked = load_locked_got_ocr(project_root)
+    locked_docling = load_locked_docling(project_root)
+    requested_identity = build_run_identity(
+        dataset=args.dataset,
+        smoke_doc=doc_rel,
+        page_ids=page_ids,
+        source_pdf_sha256=source_sha256,
+        got_ocr=locked,
+        docling=locked_docling,
+    )
     work = plan_document_work(
         project_root=project_root,
         doc_rel=doc_rel,
@@ -216,18 +426,22 @@ def main(argv: list[str] | None = None) -> int:
         "source": source.as_posix() if isinstance(source, Path) else None,
     }
     checkpoint = load_checkpoint(checkpoint_path)
+    _ensure_checkpoint_identity(checkpoint, requested_identity, checkpoint_path)
+    unclean = _mark_unclean_running_attempts(checkpoint)
+    if args.scheduler_elapsed_sec is not None:
+        _apply_scheduler_elapsed(checkpoint, args.scheduler_elapsed_sec)
+    elif unclean:
+        checkpoint["timing_complete"] = False
     checkpoint.setdefault("completed", {})
+    checkpoint["run_identity"] = requested_identity
     checkpoint["dataset"] = args.dataset
     checkpoint["smoke_doc"] = doc_rel
     checkpoint["plan"] = work
-    checkpoint["resumed"] = (
-        bool(checkpoint["completed"])
-        or bool(checkpoint.get("failed"))
-        or int(checkpoint.get("attempts") or 0) > 0
-    )
+    checkpoint["resumed"] = _checkpoint_has_work(checkpoint)
     checkpoint["cache_path"] = str(
         (Path(os.getenv("HF_HOME")) if os.getenv("HF_HOME") else Path.home() / ".cache/huggingface").expanduser()
     )
+    _sync_timing_fields(checkpoint)
 
     plan_path = out_root / f"prepare_plan_{doc_rel.replace('/', '__')}.json"
     atomic_write_text(plan_path, json.dumps(work, indent=2) + "\n")
@@ -244,6 +458,7 @@ def main(argv: list[str] | None = None) -> int:
                     "page_count": len(page_ids),
                     "pdf_source": work["pdf_source"],
                     "got_ocr": locked,
+                    "docling": locked_docling,
                     "expected_outputs": {
                         "pdf": work["pdf"],
                         "docling_audit": work["stages"]["docling_audit"]["output"],
@@ -253,6 +468,7 @@ def main(argv: list[str] | None = None) -> int:
                     "plan": _rel(plan_path, project_root),
                     "checkpoint": _rel(checkpoint_path, project_root),
                     "stages": STAGE_ORDER,
+                    "timing_complete": checkpoint.get("timing_complete"),
                 },
                 indent=2,
             )
@@ -262,10 +478,21 @@ def main(argv: list[str] | None = None) -> int:
     runtime_started = time.perf_counter()
     if checkpoint.get("cache_bytes_before") is None:
         checkpoint["cache_bytes_before"] = _huggingface_cache_bytes()
-    checkpoint["attempts"] = int(checkpoint.get("attempts") or 0) + 1
-    checkpoint["attempt_started_at_utc"] = datetime.now(UTC).isoformat()
-    # Persist the pre-execution state (identity, cache baseline, attempt count)
-    # so a first-run preemption still leaves a resumable checkpoint.
+    records = _attempt_records(checkpoint)
+    attempt = {
+        "id": len(records) + 1,
+        "started_at_utc": datetime.now(UTC).isoformat(),
+        "state": "running",
+        "elapsed_sec": None,
+        "elapsed_source": None,
+        "interrupted_at_utc": None,
+        "exit_code": None,
+        "signal": None,
+    }
+    records.append(attempt)
+    checkpoint["attempt_records"] = records
+    checkpoint["attempt_started_at_utc"] = attempt["started_at_utc"]
+    _sync_timing_fields(checkpoint)
     save_checkpoint(checkpoint_path, checkpoint)
     try:
         result = execute_document_preparation(
@@ -277,28 +504,23 @@ def main(argv: list[str] | None = None) -> int:
             pdf_zip=pdf_zip,
             inventory_dir=inventory_dir,
         )
-    except BaseException:
-        checkpoint["attempts_elapsed_sec"] = round(
-            float(checkpoint.get("attempts_elapsed_sec") or 0.0) + (time.perf_counter() - runtime_started),
-            3,
+    except BaseException as exc:
+        elapsed = time.perf_counter() - runtime_started
+        exit_code, signal_number = _exit_signal(exc)
+        _close_attempt(
+            attempt,
+            state="interrupted",
+            elapsed_sec=elapsed,
+            exit_code=exit_code,
+            signal_number=signal_number,
         )
-        checkpoint["interrupted_at_utc"] = datetime.now(UTC).isoformat()
+        _sync_timing_fields(checkpoint, last_attempt_sec=elapsed)
         save_checkpoint(checkpoint_path, checkpoint)
         raise
-    checkpoint["attempts_elapsed_sec"] = round(
-        float(checkpoint.get("attempts_elapsed_sec") or 0.0) + (time.perf_counter() - runtime_started),
-        3,
-    )
-    checkpoint["calibration"] = {
-        "runtime_sec_total_wall": checkpoint["attempts_elapsed_sec"],
-        "attempts_elapsed_sec": checkpoint["attempts_elapsed_sec"],
-        "last_attempt_sec": round(time.perf_counter() - runtime_started, 3),
-        "attempts": checkpoint["attempts"],
-        "resumed": bool(checkpoint.get("resumed")),
-        "cache_bytes_before": checkpoint.get("cache_bytes_before"),
-        "cache_bytes_after": _huggingface_cache_bytes(),
-        "cache_path": checkpoint.get("cache_path"),
-    }
+    elapsed = time.perf_counter() - runtime_started
+    _close_attempt(attempt, state="completed", elapsed_sec=elapsed, exit_code=0)
+    _sync_timing_fields(checkpoint, last_attempt_sec=elapsed)
+    checkpoint["calibration"]["cache_bytes_after"] = _huggingface_cache_bytes()
     checkpoint["completed"][doc_rel] = {
         "page_ids": page_ids,
         "pdf_sha256": result.pdf_sha256,
@@ -352,6 +574,7 @@ def main(argv: list[str] | None = None) -> int:
                     "peak_rss_bytes": result.metrics.get("peak_rss_bytes"),
                     "storage": result.metrics.get("storage"),
                 },
+                "timing_complete": checkpoint.get("timing_complete"),
             },
             indent=2,
         )

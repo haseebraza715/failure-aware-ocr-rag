@@ -182,7 +182,7 @@ def test_run_checks_nonexistent_pdf_root_is_blocking(tmp_path: Path, clean_env, 
     assert report["exit_code"] == 1
     matching = [check for check in report["checks"] if check["name"] == "dataset_paths"]
     assert matching[0]["status"] == "fail"
-    assert "pdf root" in matching[0]["detail"]
+    assert "FAAR_PDF_ROOT" in matching[0]["detail"]
 
 
 def test_run_checks_missing_pdf_zip_env_is_blocking(tmp_path: Path, clean_env, monkeypatch) -> None:
@@ -344,7 +344,7 @@ def test_run_checks_explicit_missing_zip_fails_even_with_valid_root(
     assert report["exit_code"] == 1
     matching = [check for check in report["checks"] if check["name"] == "dataset_paths"]
     assert matching[0]["status"] == "fail"
-    assert "pdf zip" in matching[0]["detail"]
+    assert "FAAR_PDF_ZIP" in matching[0]["detail"]
 
 
 def test_hf_checks_can_be_disabled_offline(tmp_path: Path, clean_env, monkeypatch) -> None:
@@ -366,3 +366,30 @@ def test_cli_check_login_node_safe_without_cuda() -> None:
     )
     assert completed.returncode in (0, 2)
     assert "cuda_visibility" in completed.stdout
+
+
+def test_run_checks_inventory_file_is_blocking(tmp_path: Path, clean_env, monkeypatch) -> None:
+    project = build_project(tmp_path)
+    inventory = project / "OHR-Bench/data/retrieval_base/gt"
+    inventory.rmdir()
+    inventory.write_text("not a directory")
+    report = preflight.run_checks(gpu_payload(), project_root=project, path=project, cuda=False)
+    assert report["exit_code"] == 1
+    matching = [check for check in report["checks"] if check["name"] == "dataset_paths"]
+    assert matching[0]["status"] == "fail"
+    assert "document inventory is not a directory" in matching[0]["detail"]
+
+
+def test_run_checks_relative_inventory_resolves_against_project_root(
+    tmp_path: Path, clean_env, monkeypatch
+) -> None:
+    project = build_project(tmp_path)
+    outsider = tmp_path / "elsewhere"
+    outsider.mkdir()
+    monkeypatch.chdir(outsider)
+    monkeypatch.setenv("FAAR_DOCUMENT_INVENTORY", "OHR-Bench/data/retrieval_base/gt")
+    monkeypatch.setenv("FAAR_PDF_ROOT", "data/ohr_bench_raw")
+    (project / "data/ohr_bench_raw").mkdir(parents=True, exist_ok=True)
+    report = preflight.run_checks(gpu_payload(), project_root=project, path=project, cuda=False)
+    matching = [check for check in report["checks"] if check["name"] == "dataset_paths"]
+    assert matching[0]["status"] == "pass", matching[0]

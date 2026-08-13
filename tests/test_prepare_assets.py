@@ -997,3 +997,159 @@ def test_split_checksum_mismatch_fails_closed(tmp_path: Path) -> None:
     )
     assert tampered.returncode != 0
     assert "integrity check failed" in tampered.stderr
+
+
+def _rewrite_lock(project: Path, *, got_revision: str | None = None, docling_revision: str | None = None) -> None:
+    payload = json.loads((project / "config/model_revisions.json").read_text(encoding="utf-8"))
+    if got_revision is not None:
+        payload["models"]["got_ocr"]["revision"] = got_revision
+    if docling_revision is not None:
+        payload["models"]["docling"]["revision"] = docling_revision
+    (project / "config/model_revisions.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_got_ocr_lock_change_does_not_skip_completed_document(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = build_project(tmp_path)
+    run_shard(project, monkeypatch=monkeypatch)
+    _rewrite_lock(project, got_revision="c" * 40)
+    ocr_calls: list[str] = []
+    summary = run_shard(project, monkeypatch=monkeypatch, ocr_calls=ocr_calls, resume=True)
+    assert summary["skipped"] == []
+    assert ocr_calls
+    provenance = json.loads((project / "out/provenance/academic/doc_a.json").read_text())
+    assert provenance["got_ocr_revision"] == "c" * 40
+
+
+def test_docling_lock_change_does_not_skip_completed_document(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = build_project(tmp_path)
+    run_shard(project, monkeypatch=monkeypatch)
+    _rewrite_lock(project, docling_revision="b" * 40)
+    docling_calls: list[str] = []
+    fake_ocr, _unused = install_fakes(monkeypatch)
+
+    def counting_docling(pdf_path: Path, output_path: Path, **kwargs) -> Path:
+        docling_calls.append(str(kwargs.get("revision")))
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("# audit B\n", encoding="utf-8")
+        return output_path
+
+    summary = prepare.run_shard(
+        project_root=project,
+        split="val",
+        doc_names=DOCS,
+        page_ids_by_doc={doc: PAGES for doc in DOCS},
+        out_root=project / "out",
+        checkpoint_path=project / "out/checkpoint.json",
+        manifest_path=project / "out/shard_manifest.json",
+        pdf_root=project / "pdfs",
+        extract_got_ocr_fn=fake_ocr,
+        export_docling_fn=counting_docling,
+        resume=True,
+    )
+    assert summary["skipped"] == []
+    assert docling_calls
+    assert set(docling_calls) == {"b" * 40}
+    provenance = json.loads((project / "out/provenance/academic/doc_a.json").read_text())
+    assert provenance["docling_models"]["revision"] == "b" * 40
+    assert provenance["docling_audit"]["revision"] == "b" * 40
+
+
+def test_missing_source_pdf_fails_closed_on_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = build_project(tmp_path)
+    run_shard(project, monkeypatch=monkeypatch)
+    for doc in DOCS:
+        (project / "pdfs" / f"{doc}.pdf").unlink()
+    with pytest.raises(SystemExit, match="Cannot verify source PDF"):
+        run_shard(project, monkeypatch=monkeypatch, resume=True)
+
+
+def test_modified_image_or_ocr_invalidates_completed_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = build_project(tmp_path)
+    run_shard(project, monkeypatch=monkeypatch)
+    image = project / "out/images/academic/doc_a_page_0.png"
+    image.write_bytes(image.read_bytes() + b"tamper")
+    ocr_calls: list[str] = []
+    fake_ocr, fake_docling = install_fakes(monkeypatch, ocr_calls)
+    import faar.asset_preparation as prep
+
+    def fake_render(pdf_path: Path, page_ids: list[int], image_paths: dict[int, Path], scale: float = 2.0):
+        for page_id, path in image_paths.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes([page_id]))
+        return {"pdf_page_count": len(PAGES), "render_runtime_sec": 0.01, "render_scale": scale}
+
+    monkeypatch.setattr(prep, "render_pdf_pages", fake_render)
+    summary = prepare.run_shard(
+        project_root=project,
+        split="val",
+        doc_names=DOCS,
+        page_ids_by_doc={doc: PAGES for doc in DOCS},
+        out_root=project / "out",
+        checkpoint_path=project / "out/checkpoint.json",
+        manifest_path=project / "out/shard_manifest.json",
+        pdf_root=project / "pdfs",
+        extract_got_ocr_fn=fake_ocr,
+        export_docling_fn=fake_docling,
+        resume=True,
+    )
+    assert "academic/doc_a" not in summary["skipped"]
+    assert any("doc_a_page_0" in name for name in ocr_calls)
+
+    ocr_calls.clear()
+    run_shard(project, monkeypatch=monkeypatch, resume=True)
+    text = project / "out/ocr/academic/doc_b_page_1.txt"
+    text.write_text(text.read_text(encoding="utf-8") + "tamper", encoding="utf-8")
+    summary = run_shard(project, monkeypatch=monkeypatch, ocr_calls=ocr_calls, resume=True)
+    assert "academic/doc_b" not in summary["skipped"]
+    assert any("doc_b_page_1" in name for name in ocr_calls)
+
+
+def test_matching_completed_document_is_still_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = build_project(tmp_path)
+    ocr_calls: list[str] = []
+    run_shard(project, monkeypatch=monkeypatch, ocr_calls=ocr_calls)
+    ocr_calls.clear()
+    summary = run_shard(project, monkeypatch=monkeypatch, ocr_calls=ocr_calls, resume=True)
+    assert summary["skipped"] == DOCS
+    assert ocr_calls == []
+
+
+def test_cli_relative_dataset_paths_resolve_against_project_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = build_project(tmp_path)
+    outsider = tmp_path / "elsewhere"
+    outsider.mkdir()
+    monkeypatch.chdir(outsider)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(PREPARE_PATH),
+            "--project-root",
+            str(project),
+            "--out-root",
+            "out",
+            "--pdf-root",
+            "pdfs",
+            "--document-inventory",
+            "OHR-Bench/data/retrieval_base/gt",
+            "--dry-run",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=outsider,
+    )
+    assert completed.returncode == 0, completed.stderr + completed.stdout
+    payload = json.loads(completed.stdout)
+    assert payload["mode"] == "dry_run"

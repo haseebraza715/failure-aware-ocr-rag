@@ -105,7 +105,11 @@ df -h "$FAAR_SCRATCH"
 
 Progress lines appear as `[faar] stage=... progress=N/M ...`. A job interrupted
 by the 120 s SIGTERM warning exits 143 after saving its checkpoint; completed
-stages are never re-done.
+stages are never re-done. The interrupted attempt is closed with its measured
+elapsed time. A SIGKILL / hard timeout cannot run that cleanup: the next resume
+marks the still-running attempt as an unclean shutdown and sets
+`timing_complete=false`. Do not treat that incomplete sum as the exact cluster
+wall time.
 
 ## 8. Resume a preempted job
 
@@ -118,6 +122,23 @@ sbatch cluster/templates/slurm_prepare_val_shard.sbatch  # sharded prep (per sha
 
 Re-running a finished job is idempotent: completed documents are re-validated
 and skipped, and the split checksum is verified before anything starts.
+
+If calibration was hard-killed (SIGKILL / node failure) the checkpoint keeps a
+running attempt. Resume records it as `unclean`. To complete cumulative timing
+from the scheduler's reported wall time instead of guessing from the start
+timestamp:
+
+```bash
+.venv-aaai/bin/python prepare_benchmark_assets.py \
+  --project-root "$PWD" \
+  --dataset ohrbench \
+  --out-root results/calibration/faar-ohr-108 \
+  --smoke-doc manual/User_Manual_1500S_Classic_EN \
+  --scheduler-elapsed-sec <seconds from sacct/qstat>
+```
+
+Use a new `--checkpoint` path if the smoke document, page set, source PDF, or
+GOT-OCR/Docling lock changed. The runner refuses to mix those identities.
 
 ## 9. Build the calibration report and send it back
 
@@ -135,10 +156,14 @@ and skipped, and the split checksum is verified before anything starts.
 
 The summary contains the commit SHA, GPU model, peak RSS, per-stage and total
 runtimes, per-page OCR throughput distributions, storage, cache growth, resume
-flag, and split/manifest hashes. The projection sizes validation (549 docs /
-7,037 pages) and test (567 docs / 6,849 pages) separately for Docling
-(document-level), rendering, and OCR (page-level), with a configurable
-headroom, suggested shard counts, and explicit assumptions.
+flag, timing_complete, and split/manifest hashes. `total_wall_sec` is present
+only when every attempt has measured or scheduler-supplied elapsed time. The
+projection command refuses `timing_complete=false` unless you pass
+`--scheduler-elapsed-sec` with the scheduler-reported duration for the killed
+attempt, or you re-run calibration until timing is complete. The projection
+sizes validation (549 docs / 7,037 pages) and test (567 docs / 6,849 pages)
+separately for Docling (document-level), rendering, and OCR (page-level), with
+a configurable headroom, suggested shard counts, and explicit assumptions.
 
 **Return to the research team:** `calibration_summary.json`,
 `preparation_projection.json`, `cluster/preflight_<jobid>.json`, and the
@@ -193,6 +218,8 @@ is the recommended engineering check before full baselines.
 | `Immutable split integrity check failed` | The split/QA files changed or the clone is wrong; restore them, never edit |
 | `FAAR_GPU_BUDGET_GB` missing | Choose it from the preflight GPU report |
 | Job killed at walltime (143) | Re-submit; checkpoints resume automatically |
+| Hard kill / SIGKILL / node death | Resume marks the running attempt unclean and `timing_complete=false`. Supply `--scheduler-elapsed-sec` from sacct/qstat, or re-run calibration. Projection refuses incomplete timing until then. |
+| Checkpoint identity mismatch | The smoke document, pages, source PDF, or model lock changed. Use a new `--checkpoint` path. |
 | `CUDA out of memory` / `MemoryError` | Job aborts safely with checkpoint; reduce budget or re-check the preflight |
 | Recoverable document errors | Listed in the shard manifest; the job exits non-zero; re-submit with `--resume` to retry failed documents |
 | Missing HF model | Check `hf_model_access` in preflight; export `HF_TOKEN` for gated models |

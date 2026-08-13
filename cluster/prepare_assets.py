@@ -44,7 +44,6 @@ import math
 import os
 import sys
 import time
-import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -56,9 +55,11 @@ if str(SRC) not in sys.path:
 from faar.asset_preparation import (
     execute_document_preparation,
     export_docling_markdown,
+    hash_source_pdf,
+    load_locked_docling,
     load_locked_got_ocr,
-    resolve_pdf_source,
 )
+from faar.dataset_paths import DatasetPathError, env_raw, resolve_dataset_paths
 from faar.ohr_inventory import load_resolved_ohr_document_inventory
 from faar.operations import check_termination, install_graceful_termination_handler
 from faar.resource_limits import enforce_memory_budget, is_fatal_resource_error
@@ -183,30 +184,109 @@ def _safe_output_path(value: Any, project_root: Path) -> Path:
     return resolved.expanduser().resolve()
 
 
-def _completed_doc_valid(project_root: Path, entry: Any) -> bool:
-    """Verify recorded outputs and provenance still exist for a completed doc."""
+def _read_json_file(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _recorded_hash_matches(path: Path, recorded: Any) -> bool:
+    if not isinstance(recorded, str) or not recorded:
+        return False
+    try:
+        return sha256_file(path) == recorded
+    except OSError:
+        return False
+
+
+def _completed_doc_valid(
+    project_root: Path,
+    doc_rel: str,
+    entry: Any,
+    *,
+    page_ids: list[int],
+    source_sha256: str,
+    got_ocr: dict[str, str],
+    docling: dict[str, str],
+) -> bool:
+    """Skip a completed document only when provenance identity and hashes match."""
     if not isinstance(entry, dict):
+        return False
+    if list(entry.get("page_ids") or []) != list(page_ids):
+        return False
+    if entry.get("pdf_sha256") != source_sha256:
         return False
     outputs = entry.get("outputs")
     if not isinstance(outputs, dict):
         return False
     try:
-        for key in ("pdf", "docling_audit", "provenance"):
-            if not _safe_output_path(outputs.get(key), project_root).is_file():
-                return False
-        audit = _safe_output_path(outputs["docling_audit"], project_root)
-        if audit.stat().st_size <= 0:
+        pdf_path = _safe_output_path(outputs.get("pdf"), project_root)
+        audit_path = _safe_output_path(outputs.get("docling_audit"), project_root)
+        provenance_path = _safe_output_path(outputs.get("provenance"), project_root)
+        image_values = outputs.get("images")
+        ocr_values = outputs.get("ocr")
+        if not isinstance(image_values, list) or not image_values:
             return False
-        for key in ("images", "ocr"):
-            values = outputs.get(key)
-            if not isinstance(values, list) or not values:
-                return False
-            for value in values:
-                path = _safe_output_path(value, project_root)
-                if not path.is_file() or path.stat().st_size <= 0:
-                    return False
+        if not isinstance(ocr_values, list) or not ocr_values:
+            return False
+        image_paths = [_safe_output_path(value, project_root) for value in image_values]
+        ocr_paths = [_safe_output_path(value, project_root) for value in ocr_values]
     except (ValueError, OSError):
         return False
+    required = [pdf_path, audit_path, provenance_path, *image_paths, *ocr_paths]
+    try:
+        if any(not path.is_file() or path.stat().st_size <= 0 for path in required):
+            return False
+    except OSError:
+        return False
+    provenance = _read_json_file(provenance_path)
+    if provenance is None:
+        return False
+    if provenance.get("doc_name") != doc_rel:
+        return False
+    if list(provenance.get("page_ids") or []) != list(page_ids):
+        return False
+    if provenance.get("pdf_sha256") != source_sha256:
+        return False
+    if provenance.get("got_ocr_repository") != got_ocr.get("repository"):
+        return False
+    if provenance.get("got_ocr_revision") != got_ocr.get("revision"):
+        return False
+    stored_docling = provenance.get("docling_models") if isinstance(provenance.get("docling_models"), dict) else {}
+    if stored_docling.get("repository") != docling.get("repository"):
+        return False
+    if stored_docling.get("revision") != docling.get("revision"):
+        return False
+    if not _recorded_hash_matches(pdf_path, provenance.get("pdf_sha256")):
+        return False
+    audit_prov = provenance.get("docling_audit") if isinstance(provenance.get("docling_audit"), dict) else {}
+    if audit_prov.get("repository") != docling.get("repository"):
+        return False
+    if audit_prov.get("revision") != docling.get("revision"):
+        return False
+    if audit_prov.get("pdf_sha256") != source_sha256:
+        return False
+    if not _recorded_hash_matches(audit_path, audit_prov.get("audit_sha256")):
+        return False
+    pages = provenance.get("pages") if isinstance(provenance.get("pages"), dict) else {}
+    if len(image_paths) != len(page_ids) or len(ocr_paths) != len(page_ids):
+        return False
+    for page_id, image_path, ocr_path in zip(page_ids, image_paths, ocr_paths):
+        page_prov = pages.get(str(page_id)) if isinstance(pages.get(str(page_id)), dict) else {}
+        if page_prov.get("pdf_sha256") != source_sha256:
+            return False
+        if page_prov.get("got_ocr_repository") != got_ocr.get("repository"):
+            return False
+        if page_prov.get("got_ocr_revision") != got_ocr.get("revision"):
+            return False
+        if not _recorded_hash_matches(image_path, page_prov.get("png_sha256")):
+            return False
+        if not _recorded_hash_matches(ocr_path, page_prov.get("ocr_sha256")):
+            return False
     return True
 
 
@@ -217,36 +297,16 @@ def _source_pdf_sha256(
     pdf_root: Path | None,
     pdf_zip: Path | None,
     inventory_dir: Path | None,
-) -> str | None:
-    """Hash the current source PDF; None when the source cannot be located."""
+) -> str:
+    """Hash the current source PDF. Missing or unreadable sources raise."""
     resolved_inventory = inventory_dir or (project_root / "OHR-Bench/data/retrieval_base/gt")
-    kind, source = resolve_pdf_source(
+    return hash_source_pdf(
         project_root=project_root,
         doc_rel=doc_rel,
         pdf_root=pdf_root,
         pdf_zip=pdf_zip,
         inventory_dir=resolved_inventory,
     )
-    if kind == "filesystem" and source is not None:
-        try:
-            return sha256_file(source)
-        except OSError:
-            return None
-    if kind == "zip" and source is not None:
-        zip_path = pdf_zip or (project_root / "data/ohr_bench_raw/pdfs.zip")
-        try:
-            with zipfile.ZipFile(zip_path) as archive:
-                with archive.open(source.as_posix()) as handle:
-                    digest = hashlib.sha256()
-                    while True:
-                        chunk = handle.read(1024 * 1024)
-                        if not chunk:
-                            break
-                        digest.update(chunk)
-                    return digest.hexdigest()
-        except OSError:
-            return None
-    return None
 
 
 def run_shard(
@@ -267,7 +327,7 @@ def run_shard(
     max_pages: int | None = None,
     resume: bool = False,
     extract_got_ocr_fn: Callable[..., str] | None = None,
-    export_docling_fn: Callable[[Path, Path], Path] | None = None,
+    export_docling_fn: Callable[..., Path] | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     shard_docs, bounds_hit = bound_documents(
@@ -280,6 +340,8 @@ def run_shard(
         "max_documents": max_documents,
         "max_pages": max_pages,
     }
+    locked_got = load_locked_got_ocr(project_root)
+    locked_docling = load_locked_docling(project_root)
     checkpoint = load_checkpoint(checkpoint_path)
     for key, expected in identity.items():
         if key in checkpoint and checkpoint[key] != expected:
@@ -312,25 +374,32 @@ def run_shard(
             check_termination()
             enforce_memory_budget(f"asset preparation before document {doc}")
             entry = checkpoint["completed"].get(doc)
-            if (
-                entry is not None
-                and isinstance(entry, dict)
-                and entry.get("page_ids") == page_ids_by_doc[doc]
-                and _completed_doc_valid(project_root, entry)
-            ):
-                source_sha = _source_pdf_sha256(
-                    project_root=project_root,
-                    doc_rel=doc,
-                    pdf_root=pdf_root,
-                    pdf_zip=pdf_zip,
-                    inventory_dir=inventory_dir,
-                )
-                recorded_sha = entry.get("pdf_sha256") if isinstance(entry, dict) else None
-                if source_sha is None or source_sha == recorded_sha:
+            if entry is not None:
+                try:
+                    source_sha = _source_pdf_sha256(
+                        project_root=project_root,
+                        doc_rel=doc,
+                        pdf_root=pdf_root,
+                        pdf_zip=pdf_zip,
+                        inventory_dir=inventory_dir,
+                    )
+                except FileNotFoundError as exc:
+                    raise SystemExit(
+                        f"Cannot verify source PDF for completed document {doc}: {exc}. "
+                        "Refusing to skip completed work or publish a shard manifest."
+                    ) from exc
+                if _completed_doc_valid(
+                    project_root,
+                    doc,
+                    entry,
+                    page_ids=page_ids_by_doc[doc],
+                    source_sha256=source_sha,
+                    got_ocr=locked_got,
+                    docling=locked_docling,
+                ):
                     completed_pages += len(page_ids_by_doc[doc])
                     skipped_docs.append(doc)
                     continue
-            if entry is not None:
                 del checkpoint["completed"][doc]
             result = execute_document_preparation(
                 project_root=project_root,
@@ -587,23 +656,18 @@ def main(argv: list[str] | None = None) -> int:
     verify_split_checksums(project_root)
     doc_names, example_count = load_split_documents(project_root, args.split)
 
-    def env_path(name: str) -> Path | None:
-        raw = os.getenv(name)
-        return Path(raw).expanduser() if raw and raw.strip() else None
-
-    pdf_root = args.pdf_root or env_path("FAAR_PDF_ROOT")
-    pdf_zip = args.pdf_zip or env_path("FAAR_PDF_ZIP")
-    inventory_dir = args.document_inventory or env_path("FAAR_DOCUMENT_INVENTORY") or (
-        project_root / "OHR-Bench/data/retrieval_base/gt"
-    )
-    if pdf_root is not None and not pdf_root.is_dir():
-        raise SystemExit(f"FAAR_PDF_ROOT / --pdf-root is not a directory: {pdf_root}")
-    if pdf_zip is not None and not pdf_zip.is_file():
-        raise SystemExit(f"FAAR_PDF_ZIP / --pdf-zip is not a file: {pdf_zip}")
-    if not inventory_dir.is_absolute():
-        inventory_dir = project_root / inventory_dir
-    if not inventory_dir.is_dir():
-        raise SystemExit(f"document inventory is not a directory: {inventory_dir}")
+    try:
+        dataset_paths = resolve_dataset_paths(
+            project_root=project_root,
+            inventory=args.document_inventory or env_raw("FAAR_DOCUMENT_INVENTORY"),
+            pdf_root=args.pdf_root or env_raw("FAAR_PDF_ROOT"),
+            pdf_zip=args.pdf_zip or env_raw("FAAR_PDF_ZIP"),
+        )
+    except DatasetPathError as exc:
+        raise SystemExit(str(exc)) from exc
+    pdf_root = dataset_paths.pdf_root
+    pdf_zip = dataset_paths.pdf_zip
+    inventory_dir = dataset_paths.inventory_dir
     shard_docs = select_shard(doc_names, args.shard_index, args.num_shards)
     page_ids_by_doc, _resolutions = load_resolved_ohr_document_inventory(inventory_dir, set(shard_docs))
     missing_inventory = sorted(set(shard_docs) - set(page_ids_by_doc))

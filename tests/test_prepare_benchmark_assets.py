@@ -374,6 +374,12 @@ def test_calibration_first_run_preemption_persists_checkpoint(
     assert checkpoint["attempts"] == 1
     assert checkpoint["cache_bytes_before"] is not None
     assert checkpoint["resumed"] is False
+    records = checkpoint["attempt_records"]
+    assert len(records) == 1
+    assert records[0]["state"] == "interrupted"
+    assert records[0]["exit_code"] == 143
+    assert records[0]["elapsed_sec"] > 0
+    assert records[0]["elapsed_source"] == "monotonic"
 
     def successful_execute(**kwargs):
         pdf_out = out_root / "pdfs/academic/demo.pdf"
@@ -409,6 +415,9 @@ def test_calibration_first_run_preemption_persists_checkpoint(
     assert calibration["runtime_sec_total_wall"] == calibration["attempts_elapsed_sec"]
     assert calibration["last_attempt_sec"] > 0
     assert calibration["cache_bytes_before"] == checkpoint["cache_bytes_before"]
+    assert calibration["timing_complete"] is True
+    assert [record["state"] for record in checkpoint["attempt_records"]] == ["interrupted", "completed"]
+    assert all(record["elapsed_sec"] > 0 for record in checkpoint["attempt_records"])
 
 
 def test_plan_imports_do_not_load_inference_runtime() -> None:
@@ -437,3 +446,378 @@ print("PLAN_IMPORTS_CLEAN")
     )
     assert completed.returncode == 0, completed.stderr + completed.stdout
     assert "PLAN_IMPORTS_CLEAN" in completed.stdout
+
+
+LOCK = {
+    "models": {
+        "got_ocr": {
+            "repository": "stepfun-ai/GOT-OCR-2.0-hf",
+            "revision": "d3017ef2c2c1395888c8d635c5e0508bcb0ac78d",
+        },
+        "docling": {
+            "repository": "docling-project/docling-models",
+            "revision": "2bdc831fd1edeb61e6d0dfc8ae7596b0c30bdff4",
+        },
+    }
+}
+
+
+def _calibration_project(tmp_path: Path, docs: tuple[str, ...] = ("academic/demo",)) -> Path:
+    project = tmp_path
+    (project / "config").mkdir()
+    (project / "config/model_revisions.json").write_text(json.dumps(LOCK), encoding="utf-8")
+    (project / "OHR-Bench/data").mkdir(parents=True)
+    (project / "OHR-Bench/data/qas_v2.json").write_text(
+        json.dumps([{"ID": f"e{i}", "doc_name": doc} for i, doc in enumerate(docs)])
+    )
+    (project / "split.json").write_text(json.dumps({"splits": {"val": [f"e{i}" for i in range(len(docs))]}}))
+    for doc in docs:
+        gt = project / "OHR-Bench/data/retrieval_base/gt" / Path(doc).parent
+        gt.mkdir(parents=True, exist_ok=True)
+        (gt / f"{Path(doc).name}.json").write_text(json.dumps([{"text": "x", "page_idx": 0}]))
+        pdf = project / "pdfs" / f"{doc}.pdf"
+        pdf.parent.mkdir(parents=True, exist_ok=True)
+        pdf.write_bytes(f"%PDF-{doc}".encode())
+    return project
+
+
+def _cli_args(project: Path, doc: str, *, execute: bool = False, extra: list[str] | None = None) -> list[str]:
+    args = [
+        "--project-root",
+        str(project),
+        "--dataset",
+        "ohrbench",
+        "--pdf-root",
+        str(project / "pdfs"),
+        "--document-inventory",
+        str(project / "OHR-Bench/data/retrieval_base/gt"),
+        "--out-root",
+        str(project / "out"),
+        "--smoke-doc",
+        doc,
+        "--checkpoint",
+        str(project / "out/prepare_checkpoint.json"),
+    ]
+    if execute:
+        args.append("--execute")
+    if extra:
+        args.extend(extra)
+    return args
+
+
+def _fake_result(project: Path, doc: str) -> SimpleNamespace:
+    pdf_out = project / f"out/pdfs/{doc}.pdf"
+    pdf_out.parent.mkdir(parents=True, exist_ok=True)
+    pdf_out.write_bytes(b"%PDF")
+    return SimpleNamespace(
+        doc_name=doc,
+        page_ids=[0],
+        pdf_path=pdf_out,
+        pdf_sha256="a" * 64,
+        got_ocr_repository="stepfun-ai/GOT-OCR-2.0-hf",
+        got_ocr_revision="d3017ef2c2c1395888c8d635c5e0508bcb0ac78d",
+        device="cpu",
+        metrics={
+            "docling_runtime_sec": 1.0,
+            "render_runtime_sec": 1.0,
+            "got_ocr_runtime_sec_total": 1.0,
+            "per_page_got_ocr_runtime_sec": {"0": 1.0},
+            "peak_rss_bytes": 1,
+            "storage": {"png_bytes_total": 1, "ocr_bytes_total": 1, "per_page_bytes": {}},
+        },
+        outputs={"pdf": f"out/pdfs/{doc}.pdf"},
+    )
+
+
+def test_checkpoint_rejects_different_smoke_document(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import prepare_benchmark_assets as cli
+
+    project = _calibration_project(tmp_path, ("academic/demo", "manual/other"))
+    monkeypatch.setattr(cli, "execute_document_preparation", lambda **kwargs: _fake_result(project, kwargs["doc_rel"]))
+    cli.main(_cli_args(project, "academic/demo", execute=True))
+    checkpoint_path = project / "out/prepare_checkpoint.json"
+    before = checkpoint_path.read_bytes()
+    with pytest.raises(SystemExit, match="identity mismatch"):
+        cli.main(_cli_args(project, "manual/other", execute=True))
+    assert checkpoint_path.read_bytes() == before
+
+
+def test_checkpoint_rejects_lock_and_page_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import prepare_benchmark_assets as cli
+
+    project = _calibration_project(tmp_path)
+    monkeypatch.setattr(cli, "execute_document_preparation", lambda **kwargs: _fake_result(project, kwargs["doc_rel"]))
+    cli.main(_cli_args(project, "academic/demo", execute=True))
+    checkpoint_path = project / "out/prepare_checkpoint.json"
+    before = checkpoint_path.read_bytes()
+    with pytest.raises(SystemExit, match="identity mismatch"):
+        cli.main(_cli_args(project, "academic/demo", execute=True, extra=["--page-ids", "0,1"]))
+    assert checkpoint_path.read_bytes() == before
+    (project / "pdfs/academic/demo.pdf").write_bytes(b"%PDF-changed")
+    with pytest.raises(SystemExit, match="identity mismatch"):
+        cli.main(_cli_args(project, "academic/demo", execute=True))
+    assert checkpoint_path.read_bytes() == before
+    (project / "pdfs/academic/demo.pdf").write_bytes(b"%PDF-academic/demo")
+    lock = json.loads((project / "config/model_revisions.json").read_text())
+    lock["models"]["got_ocr"]["revision"] = "c" * 40
+    (project / "config/model_revisions.json").write_text(json.dumps(lock))
+    with pytest.raises(SystemExit, match="identity mismatch"):
+        cli.main(_cli_args(project, "academic/demo", execute=True))
+    assert checkpoint_path.read_bytes() == before
+    lock["models"]["got_ocr"]["revision"] = "d3017ef2c2c1395888c8d635c5e0508bcb0ac78d"
+    lock["models"]["docling"]["revision"] = "b" * 40
+    (project / "config/model_revisions.json").write_text(json.dumps(lock))
+    with pytest.raises(SystemExit, match="identity mismatch"):
+        cli.main(_cli_args(project, "academic/demo", execute=True))
+    assert checkpoint_path.read_bytes() == before
+
+
+def test_identical_resume_succeeds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import prepare_benchmark_assets as cli
+
+    project = _calibration_project(tmp_path)
+    monkeypatch.setattr(cli, "execute_document_preparation", lambda **kwargs: _fake_result(project, kwargs["doc_rel"]))
+    cli.main(_cli_args(project, "academic/demo", execute=True))
+    cli.main(_cli_args(project, "academic/demo", execute=True))
+    checkpoint = json.loads((project / "out/prepare_checkpoint.json").read_text())
+    assert checkpoint["attempts"] == 2
+    assert checkpoint["timing_complete"] is True
+
+
+def test_unclean_running_attempt_is_detected_and_projection_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import prepare_benchmark_assets as cli
+    from importlib.util import module_from_spec, spec_from_file_location
+
+    project = _calibration_project(tmp_path)
+    monkeypatch.setattr(cli, "execute_document_preparation", lambda **kwargs: _fake_result(project, kwargs["doc_rel"]))
+    cli.main(_cli_args(project, "academic/demo", execute=True))
+    checkpoint_path = project / "out/prepare_checkpoint.json"
+    checkpoint = json.loads(checkpoint_path.read_text())
+    checkpoint["attempt_records"].append(
+        {
+            "id": 99,
+            "started_at_utc": "2026-01-01T00:00:00+00:00",
+            "state": "running",
+            "elapsed_sec": None,
+            "elapsed_source": None,
+        }
+    )
+    checkpoint_path.write_text(json.dumps(checkpoint), encoding="utf-8")
+    cli.main(_cli_args(project, "academic/demo", execute=True))
+    checkpoint = json.loads(checkpoint_path.read_text())
+    unclean = [record for record in checkpoint["attempt_records"] if record["state"] == "unclean"]
+    assert unclean
+    assert unclean[0]["elapsed_sec"] is None
+    assert checkpoint["timing_complete"] is False
+    assert checkpoint["calibration"]["runtime_sec_total_wall"] is None
+
+    report_path = Path(__file__).resolve().parents[1] / "cluster/calibration_report.py"
+    spec = spec_from_file_location("calibration_report_unclean", report_path)
+    assert spec and spec.loader
+    report = module_from_spec(spec)
+    spec.loader.exec_module(report)
+    summary = report.build_summary(checkpoint_path=checkpoint_path, project_root=project)
+    assert summary["runtime"]["timing_complete"] is False
+    assert summary["runtime"]["total_wall_sec"] is None
+    with pytest.raises(SystemExit, match="timing is incomplete"):
+        report.project_preparation(
+            summary,
+            headroom_fraction=0.25,
+            walltime_hours_per_shard=24.0,
+            val_documents=10,
+            val_pages=100,
+            test_documents=10,
+            test_pages=100,
+        )
+    projection = report.project_preparation(
+        summary,
+        headroom_fraction=0.25,
+        walltime_hours_per_shard=24.0,
+        val_documents=10,
+        val_pages=100,
+        test_documents=10,
+        test_pages=100,
+        scheduler_elapsed_sec=12.5,
+    )
+    assert projection["timing"]["scheduler_elapsed_sec"] == 12.5
+    cli.main(_cli_args(project, "academic/demo", extra=["--scheduler-elapsed-sec", "12.5"]))
+    checkpoint = json.loads(checkpoint_path.read_text())
+    assert checkpoint["timing_complete"] is True
+    assert any(record.get("elapsed_source") == "scheduler" for record in checkpoint["attempt_records"])
+    assert checkpoint["calibration"]["runtime_sec_total_wall"] == pytest.approx(
+        checkpoint["calibration"]["measured_wall_sec"]
+    )
+
+
+def test_fast_attempt_stores_positive_raw_duration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import prepare_benchmark_assets as cli
+
+    project = _calibration_project(tmp_path)
+    monkeypatch.setattr(cli, "execute_document_preparation", lambda **kwargs: _fake_result(project, kwargs["doc_rel"]))
+    for _ in range(25):
+        if (project / "out/prepare_checkpoint.json").exists():
+            (project / "out/prepare_checkpoint.json").unlink()
+        cli.main(_cli_args(project, "academic/demo", execute=True))
+        checkpoint = json.loads((project / "out/prepare_checkpoint.json").read_text())
+        elapsed = checkpoint["attempt_records"][0]["elapsed_sec"]
+        assert elapsed > 0
+        assert elapsed == checkpoint["calibration"]["last_attempt_sec"]
+
+
+def test_relative_inventory_from_outside_working_directory(tmp_path: Path) -> None:
+    project = _calibration_project(tmp_path)
+    outsider = tmp_path / "cwd"
+    outsider.mkdir()
+    script = Path(__file__).resolve().parents[1] / "prepare_benchmark_assets.py"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--project-root",
+            str(project),
+            "--dataset",
+            "ohrbench",
+            "--pdf-root",
+            "pdfs",
+            "--document-inventory",
+            "OHR-Bench/data/retrieval_base/gt",
+            "--out-root",
+            "out",
+            "--smoke-doc",
+            "academic/demo",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=outsider,
+    )
+    assert completed.returncode == 0, completed.stderr + completed.stdout
+    assert json.loads(completed.stdout)["mode"] == "plan_only"
+
+
+def test_docling_lock_change_regenerates_audit_and_records_new_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import faar.asset_preparation as prep
+
+    project = _calibration_project(tmp_path)
+    calls: list[str] = []
+
+    def fake_docling(pdf_path: Path, output_path: Path, repository: str = "", revision: str = "", **kwargs) -> Path:
+        calls.append(revision)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(f"# audit {revision}\n", encoding="utf-8")
+        return output_path
+
+    def fake_render(pdf_path: Path, page_ids: list[int], image_paths: dict[int, Path], scale: float = 2.0):
+        for page_id, path in image_paths.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes([page_id]))
+        return {"pdf_page_count": len(page_ids), "render_runtime_sec": 0.01, "render_scale": scale}
+
+    monkeypatch.setattr(prep, "render_pdf_pages", fake_render)
+    monkeypatch.setitem(
+        sys.modules,
+        "pypdfium2",
+        __import__("types").SimpleNamespace(
+            PdfDocument=type(
+                "FakePageCountDocument",
+                (),
+                {
+                    "__init__": lambda self, _path: None,
+                    "__len__": lambda self: 1,
+                    "close": lambda self: None,
+                },
+            )
+        ),
+    )
+    execute_document_preparation(
+        project_root=project,
+        doc_rel="academic/demo",
+        page_ids=[0],
+        out_root=project / "prepared",
+        pdf_root=project / "pdfs",
+        extract_got_ocr_fn=lambda *_args, **_kwargs: "text",
+        export_docling_fn=fake_docling,
+    )
+    assert calls == ["2bdc831fd1edeb61e6d0dfc8ae7596b0c30bdff4"]
+    lock = json.loads((project / "config/model_revisions.json").read_text())
+    lock["models"]["docling"]["revision"] = "b" * 40
+    (project / "config/model_revisions.json").write_text(json.dumps(lock), encoding="utf-8")
+    execute_document_preparation(
+        project_root=project,
+        doc_rel="academic/demo",
+        page_ids=[0],
+        out_root=project / "prepared",
+        pdf_root=project / "pdfs",
+        extract_got_ocr_fn=lambda *_args, **_kwargs: "text",
+        export_docling_fn=fake_docling,
+    )
+    assert calls == ["2bdc831fd1edeb61e6d0dfc8ae7596b0c30bdff4", "b" * 40]
+    provenance = json.loads((project / "prepared/provenance/academic/demo.json").read_text())
+    assert provenance["docling_audit"]["revision"] == "b" * 40
+    assert provenance["docling_models"]["revision"] == "b" * 40
+
+
+def test_docling_provenance_survives_termination_after_audit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import faar.asset_preparation as prep
+
+    project = _calibration_project(tmp_path)
+    provenance_path = project / "prepared/provenance/academic/demo.json"
+    docling_calls = {"count": 0}
+
+    def fake_docling(pdf_path: Path, output_path: Path, **kwargs) -> Path:
+        docling_calls["count"] += 1
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("# audit\n", encoding="utf-8")
+        return output_path
+
+    def fake_render(pdf_path: Path, page_ids: list[int], image_paths: dict[int, Path], scale: float = 2.0):
+        for page_id, path in image_paths.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"png")
+        return {"pdf_page_count": 1, "render_runtime_sec": 0.0, "render_scale": scale}
+
+    def terminate_after_docling_publish() -> None:
+        if provenance_path.is_file():
+            payload = json.loads(provenance_path.read_text(encoding="utf-8"))
+            if payload.get("docling_audit", {}).get("revision"):
+                raise SystemExit(143)
+
+    monkeypatch.setattr(prep, "render_pdf_pages", fake_render)
+    monkeypatch.setattr(prep, "check_termination", terminate_after_docling_publish)
+    with pytest.raises(SystemExit) as excinfo:
+        execute_document_preparation(
+            project_root=project,
+            doc_rel="academic/demo",
+            page_ids=[0],
+            out_root=project / "prepared",
+            pdf_root=project / "pdfs",
+            extract_got_ocr_fn=lambda *_args, **_kwargs: "text",
+            export_docling_fn=fake_docling,
+        )
+    assert excinfo.value.code == 143
+    assert (project / "prepared/docling/academic/demo.docling.md").is_file()
+    payload = json.loads(provenance_path.read_text())
+    assert payload["docling_audit"]["revision"] == "2bdc831fd1edeb61e6d0dfc8ae7596b0c30bdff4"
+    monkeypatch.setattr(prep, "check_termination", lambda: None)
+    execute_document_preparation(
+        project_root=project,
+        doc_rel="academic/demo",
+        page_ids=[0],
+        out_root=project / "prepared",
+        pdf_root=project / "pdfs",
+        extract_got_ocr_fn=lambda *_args, **_kwargs: "text",
+        export_docling_fn=fake_docling,
+    )
+    assert docling_calls["count"] == 1
