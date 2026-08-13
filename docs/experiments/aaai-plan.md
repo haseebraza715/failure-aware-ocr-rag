@@ -1,4 +1,4 @@
-# AAR -> AAAI: Full Experimental Plan
+# FAAR -> AAAI: Full Experimental Plan
 
 Please work top to bottom, do not skip any phases.
 

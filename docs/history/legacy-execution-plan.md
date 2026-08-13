@@ -76,8 +76,8 @@ This is now a paper-oriented implementation plan rather than a minimal prototype
 
 ### Deliverables
 
-- [manual_labels.csv](/Users/x/Downloads/Thesis-Paper/Code/data/phase0/manual_labels.csv)
-- [sample_manifest.csv](/Users/x/Downloads/Thesis-Paper/Code/data/phase0/sample_manifest.csv)
+- [manual_labels.csv](../../data/phase0/manual_labels.csv)
+- [sample_manifest.csv](../../data/phase0/sample_manifest.csv)
 - raw OCR outputs, clean page text, and rendered page images under `artifacts/phase0/`
 
 Do not discard this phase. It remains the anchor for later detector analysis.
