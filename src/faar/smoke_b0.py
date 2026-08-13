@@ -54,13 +54,11 @@ class LexicalSmokeRetriever:
         for chunk in self.chunks:
             chunk_terms = set(re.findall(r"[a-z0-9%$]+", chunk.text.lower()))
             overlap = len(query_terms & chunk_terms)
-            # Prefer non-empty OCR chunks; keep a floor so empty query still ranks.
             score = float(overlap) + (0.05 if chunk.text.strip() else 0.0)
             scored.append((score, chunk))
         scored.sort(key=lambda item: item[0], reverse=True)
         hits: list[RetrievalHit] = []
         for rank, (score, chunk) in enumerate(scored[: max(1, min(k, len(scored)))]):
-            # Map to [0, 1] gate range; top hit high enough to pass default threshold.
             rerank = min(0.99, 0.55 + score / 20.0) if score > 0 else 0.15
             if rank > 0:
                 rerank = max(0.05, rerank - 0.1 * rank)
@@ -367,7 +365,6 @@ def run_one_document_b0_smoke(
     if not example_ids:
         raise DatasetUnavailableError("Smoke repository has no examples.")
 
-    # Confirm corpus materialization from prepared OCR before graph run.
     chunks = repo.get_corpus_chunks(settings.retrieval)
     if not chunks:
         raise DatasetUnavailableError("Smoke repository produced no corpus chunks.")
@@ -376,7 +373,6 @@ def run_one_document_b0_smoke(
         raise DatasetUnavailableError("Smoke OCR text is empty; prepared assets look invalid.")
 
     if mock_retrieval:
-        # Patch HybridRetriever for this process only during the smoke.
         import faar.graph as graph_module
 
         original = graph_module.HybridRetriever
@@ -490,7 +486,6 @@ def run_one_document_b0_smoke(
         "rows": rows,
     }
 
-    # Recompute EM/F1 from rows when present to keep summary consistent with evaluate.py.
     if rows:
         payload["summary"]["EM"] = round(
             sum(float((row.get("metrics") or {}).get("em", exact_match(row.get("predicted_answer", ""), row.get("gold_answer", "")))) for row in rows)

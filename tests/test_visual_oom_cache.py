@@ -67,7 +67,6 @@ class _FakeProcessor:
         return self
 
     def score_retrieval(self, query_embeddings, passage_embeddings):
-        count = passage_embeddings.shape[0]
         query = query_embeddings[0]
         dots = torch.einsum("qd,nsd->nqs", query, passage_embeddings)
         scores = dots.max(dim=2).values.sum(dim=1)
@@ -372,7 +371,7 @@ def test_verified_unchanged_corpus_hits_visual_cache(
     repository = _hash_repository(tmp_path)
     model = _CountingModel()
     _install_colpali_fakes(monkeypatch, model)
-    cache_dir = _cache_dir(tmp_path)
+    _cache_dir(tmp_path)
     settings = AppSettings(project_root=tmp_path)
 
     first = visual_baselines.build_visual_retriever("colpali", repository, settings)

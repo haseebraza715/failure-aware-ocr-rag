@@ -95,7 +95,6 @@ def diagnose_ohr_inventory_gaps(
         has_pdf = False
         if pdf_names is not None:
             has_pdf = pdf_key in pdf_names or pdf_alt in pdf_names
-            # also check alias pdf names
             for candidate in _candidate_inventory_names(doc_name):
                 if f"{candidate}.pdf" in pdf_names:
                     has_pdf = True

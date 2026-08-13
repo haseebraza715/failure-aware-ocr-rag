@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 import extract_ocr
-from faar.settings import AppSettings, LOCKED_MODELS
+from faar.settings import LOCKED_MODELS, AppSettings
 
 
 @pytest.mark.parametrize(

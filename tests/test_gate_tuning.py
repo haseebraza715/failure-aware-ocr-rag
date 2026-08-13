@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 
 from faar.gate_tuning import (
-    GateExample,
     GATE_SOURCE_METRIC,
+    GateExample,
     _gate_relevant_source_digest,
     load_gate_examples,
     require_paper_gate_threshold,

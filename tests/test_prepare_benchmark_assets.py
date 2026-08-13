@@ -14,8 +14,8 @@ from faar.asset_preparation import (
     page_ocr_name,
     plan_document_work,
 )
-from prepare_benchmark_assets import page_image_name as cli_page_image_name
 from prepare_benchmark_assets import load_checkpoint, save_checkpoint
+from prepare_benchmark_assets import page_image_name as cli_page_image_name
 
 
 def test_deterministic_output_naming() -> None:
@@ -591,8 +591,9 @@ def test_identical_resume_succeeds(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 def test_unclean_running_attempt_is_detected_and_projection_refuses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import prepare_benchmark_assets as cli
     from importlib.util import module_from_spec, spec_from_file_location
+
+    import prepare_benchmark_assets as cli
 
     project = _calibration_project(tmp_path)
     monkeypatch.setattr(cli, "execute_document_preparation", lambda **kwargs: _fake_result(project, kwargs["doc_rel"]))

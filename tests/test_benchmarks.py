@@ -181,8 +181,8 @@ def test_load_rejects_path_traversal_in_manifest(tmp_path: Path) -> None:
     }
     (asset_dir / "test.json").write_text(json.dumps(payload))
 
-    from faar.benchmarks import load_benchmark_repository
     from faar.asset_paths import AssetPathError
+    from faar.benchmarks import load_benchmark_repository
 
     with pytest.raises((DatasetUnavailableError, AssetPathError, ValueError), match="\\.\\.|escapes|not ready"):
         load_benchmark_repository(tmp_path, "ohrbench", "test")

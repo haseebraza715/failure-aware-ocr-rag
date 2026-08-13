@@ -29,14 +29,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from faar.run_io import atomic_write_text
-
 from prepare_assets import (
     SPLIT_CHOICES,
     load_split_documents,
     merge_shard_manifests,
     verify_split_checksums,
 )
+
+from faar.run_io import atomic_write_text
 
 SCHEMA_VERSION = 1
 

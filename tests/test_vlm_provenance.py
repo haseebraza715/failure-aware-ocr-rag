@@ -5,8 +5,6 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 import run as run_module
 from faar.api_logging import anthropic_cost_rates, openai_cost_rates, vlm_cost_rates
 from faar.experiment_runner import run_profile

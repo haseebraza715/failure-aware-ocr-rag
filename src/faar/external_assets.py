@@ -7,7 +7,6 @@ from typing import Any
 
 from .asset_paths import AssetPathError, resolve_project_asset, to_relative_project_path
 
-
 SUPPORTED_DATASETS = {"mpdocvqa", "arxivqa"}
 
 _ALIASES = {

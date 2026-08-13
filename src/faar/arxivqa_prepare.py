@@ -16,9 +16,8 @@ from typing import Any, Callable, Iterable
 import numpy as np
 import pandas as pd
 
-from .asset_preparation import page_image_name, page_ocr_name, render_pdf_pages, sha256_file
 from .asset_paths import to_relative_project_path
-
+from .asset_preparation import page_image_name, page_ocr_name, render_pdf_pages, sha256_file
 
 VIDORE_EXPECTED_ROWS = 500
 DEFAULT_DOWNLOAD_DELAY_SEC = 3.0
@@ -296,10 +295,6 @@ def verify_source_inputs(parquet_path: Path, jsonl_path: Path, lock: dict[str, A
             )
 
 
-# Back-compat alias for earlier call sites in this module.
-_verify_source_inputs = verify_source_inputs
-
-
 def load_verified_staged(
     staging_manifest_path: Path,
     parquet_path: Path,
@@ -338,11 +333,6 @@ def read_json(path: Path) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ArXivQAPrepareError(f"Could not read JSON {path}: {exc}") from exc
-
-
-# Back-compat aliases used inside this module.
-_write_json = write_json
-_read_json = read_json
 
 
 def _rel(path: Path, project_root: Path | None) -> str:
@@ -490,7 +480,7 @@ def stage_vidore_against_official(
     equal option lists after dropping only empty/'-' placeholders.
     """
     lock = load_source_lock(source_lock_path)
-    _verify_source_inputs(parquet_path, jsonl_path, lock)
+    verify_source_inputs(parquet_path, jsonl_path, lock)
     locked_rows = int(lock["vidore_source"]["expected_rows"])
     if expected_rows is not None and expected_rows != locked_rows:
         raise ArXivQAPrepareError(
@@ -604,7 +594,7 @@ def write_staging_manifest(
     source_lock_path: Path | None = None,
 ) -> dict[str, Any]:
     lock = load_source_lock(source_lock_path)
-    _verify_source_inputs(parquet_path, jsonl_path, lock)
+    verify_source_inputs(parquet_path, jsonl_path, lock)
     fingerprint = staged_row_fingerprint(staged)
     if fingerprint != lock["staged_row_fingerprint_sha256"]:
         raise ArXivQAPrepareError("Cannot write a staging manifest whose rows do not match the committed source lock.")
@@ -637,7 +627,7 @@ def write_staging_manifest(
         },
         "rows": [row.to_dict() for row in staged],
     }
-    _write_json(output, payload)
+    write_json(output, payload)
     return payload
 
 
@@ -705,7 +695,7 @@ def extract_figures_from_parquet(
         "figures_dir": _rel(figures_dir, project_root),
         "figures": sorted(written, key=lambda item: (item["paper_id"], item["qa_id"])),
     }
-    _write_json(figures_dir / "figures_manifest.json", manifest)
+    write_json(figures_dir / "figures_manifest.json", manifest)
     return manifest
 
 
@@ -720,7 +710,7 @@ def build_qa_source(
 ) -> dict[str, Any]:
     """Write project-validation QA inputs while retaining upstream-test provenance."""
     lock = load_source_lock(source_lock_path)
-    _verify_source_inputs(parquet_path, jsonl_path, lock)
+    verify_source_inputs(parquet_path, jsonl_path, lock)
     fingerprint = staged_row_fingerprint(staged)
     if len(staged) != lock["vidore_source"]["expected_rows"] or fingerprint != lock["staged_row_fingerprint_sha256"]:
         raise ArXivQAPrepareError("Cannot create QA source from rows that do not match the committed source lock.")
@@ -800,7 +790,7 @@ def build_qa_source(
         "data": records,
     }
     payload["val"] = records
-    _write_json(output, payload)
+    write_json(output, payload)
     return payload
 
 
@@ -874,7 +864,7 @@ def build_pdf_download_plan(
         },
         "papers": plan_rows,
     }
-    _write_json(output, payload)
+    write_json(output, payload)
     return payload
 
 
@@ -1053,7 +1043,7 @@ def download_pdfs(
         "failures": failures,
         "updated_at_utc": _utc_now(),
     }
-    _write_json(pdf_dir / "download_results.json", summary)
+    write_json(pdf_dir / "download_results.json", summary)
     return summary
 
 
@@ -1192,7 +1182,7 @@ def build_paper_inventory(
             "project_root": str(project_root) if project_root is not None else None,
         },
     }
-    _write_json(output, payload)
+    write_json(output, payload)
     return payload
 
 
@@ -1558,11 +1548,11 @@ def run_prepare_pipeline(
                 project_root=project_root,
             )
             evidence_path = out_root / "evidence_candidates.json"
-            _write_json(evidence_path, evidence)
+            write_json(evidence_path, evidence)
             summary["evidence_candidates"] = _rel(evidence_path, project_root)
             summary["human_review_required"] = True
             summary["candidate_mapping_count"] = evidence["candidate_count"]
             summary["unresolved_mapping_count"] = evidence["unresolved_count"]
 
-    _write_json(out_root / "prepare_summary.json", summary)
+    write_json(out_root / "prepare_summary.json", summary)
     return summary

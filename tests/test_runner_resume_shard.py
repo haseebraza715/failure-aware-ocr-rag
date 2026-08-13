@@ -83,7 +83,7 @@ def test_resume_reuses_matching_checkpoint_without_recomputing(monkeypatch, tmp_
 
 def test_resume_includes_cached_rows_in_returned_rows(monkeypatch, tmp_path: Path) -> None:
     _prepare_phase0(tmp_path, 2)
-    graph = _patch_graph(monkeypatch)
+    _patch_graph(monkeypatch)
     settings = _settings(tmp_path)
     run_profile(settings, profile_name="faar_full", example_ids=["ex1", "ex2"])
     rows = run_profile(settings, profile_name="faar_full", example_ids=["ex1", "ex2"], resume=True)
@@ -153,7 +153,7 @@ def test_resume_does_not_skip_without_flag(monkeypatch, tmp_path: Path) -> None:
 
 def test_shards_partition_selection_without_output_collision(monkeypatch, tmp_path: Path) -> None:
     _prepare_phase0(tmp_path, 4)
-    graph = _patch_graph(monkeypatch)
+    _patch_graph(monkeypatch)
     settings = _settings(tmp_path)
 
     first = run_profile(
@@ -333,7 +333,7 @@ def test_cli_partial_shard_flags_fail_closed(monkeypatch, tmp_path: Path) -> Non
 
 def test_text_row_stores_api_usage(monkeypatch, tmp_path: Path) -> None:
     _prepare_phase0(tmp_path, 1)
-    graph = _patch_graph(monkeypatch)
+    _patch_graph(monkeypatch)
     settings = _settings(tmp_path)
 
     rows = run_profile(settings, profile_name="faar_full", example_ids=["ex1"])

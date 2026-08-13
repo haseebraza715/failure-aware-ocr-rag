@@ -380,11 +380,11 @@ class ColPaliRetriever:
             with torch.no_grad():
                 query_embeddings = self.model(**inputs).embeddings.detach().cpu()
 
-            def score_slice(start: int, batch_size: int) -> Any:
+            def score_slice(start: int, batch_size: int, embeddings: Any) -> Any:
                 stop = min(start + batch_size, len(self.image_paths))
                 enforce_memory_budget("ColPali score batch", torch)
                 return self.processor.score_retrieval(
-                    query_embeddings,
+                    embeddings,
                     self.image_embeddings[start:stop],
                 )[0]
 
@@ -393,7 +393,9 @@ class ColPaliRetriever:
                 batch_scores, self.score_batch_size = _with_oom_retry(
                     torch,
                     "ColPali score",
-                    lambda batch_size: score_slice(start, batch_size),
+                    lambda batch_size: score_slice(
+                        start, batch_size, query_embeddings
+                    ),
                     self.score_batch_size,
                 )
                 stop = min(start + self.score_batch_size, len(self.image_paths))
@@ -417,7 +419,7 @@ class ColPaliRetriever:
             ).indices.tolist()
             return [(self.image_paths[index], float(scores[index])) for index in indices]
         finally:
-            del inputs, query_embeddings, batch_scores, scores
+            inputs = query_embeddings = batch_scores = scores = None
             release_cuda_cache(torch)
 
 

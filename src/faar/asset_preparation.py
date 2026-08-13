@@ -443,7 +443,6 @@ def execute_document_preparation(
     prior_metrics: dict[str, Any] = {}
 
     try:
-        # Stage: extract PDF
         check_termination()
         enforce_memory_budget("asset preparation before PDF extraction")
         if kind == "filesystem":
@@ -471,7 +470,6 @@ def execute_document_preparation(
                 for page_id in page_ids
                 if str(page_id) in prior_per_page
             }
-        # Stage: Docling audit
         enforce_memory_budget("asset preparation before Docling audit")
         check_termination()
         docling_started = time.perf_counter()
@@ -534,7 +532,6 @@ def execute_document_preparation(
         enforce_memory_budget("asset preparation after Docling audit")
         check_termination()
 
-        # Stage: render pages
         enforce_memory_budget("asset preparation before page rendering")
         check_termination()
         pages_to_render: list[int] = []
@@ -559,7 +556,6 @@ def execute_document_preparation(
                 pages_to_render,
                 {page_id: image_paths[page_id] for page_id in pages_to_render},
             )
-        # Validate all inventory pages exist after render/skip.
         for page_id in page_ids:
             image_path = image_paths[page_id]
             if not image_path.is_file() or image_path.stat().st_size <= 0:
@@ -585,7 +581,6 @@ def execute_document_preparation(
         enforce_memory_budget("asset preparation after page rendering")
         check_termination()
 
-        # Stage: GOT-OCR — repository/revision come only from committed lock file.
         model_name = locked["repository"]
         revision = locked["revision"]
         pages_state = dict(existing.get("pages") or {})
@@ -753,11 +748,9 @@ def execute_document_preparation(
             },
         )
     except Exception:
-        # Never silently keep partial outputs from a failed attempt.
         for path in list(image_paths.values()) + list(ocr_paths.values()) + [audit_path]:
             partial = path.with_suffix(path.suffix + ".partial")
             _remove_quietly(partial)
-        # Remove zero-byte outputs created during the failed run.
         for path in list(image_paths.values()) + list(ocr_paths.values()) + [audit_path]:
             if path.is_file() and path.stat().st_size <= 0:
                 _remove_quietly(path)

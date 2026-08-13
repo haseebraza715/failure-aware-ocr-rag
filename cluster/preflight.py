@@ -491,7 +491,7 @@ def _hf_repo_reachable(repo: str, revision: str) -> tuple[bool, str]:
             return response.status < 400, f"HTTP {response.status}"
     except urllib.error.HTTPError as exc:
         return exc.code < 400, f"HTTP {exc.code}"
-    except OSError as exc:
+    except OSError:
         return False, "network error"
 
 

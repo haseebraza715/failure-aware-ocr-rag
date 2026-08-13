@@ -8,7 +8,6 @@ from typing import Any
 
 from .metrics import exact_match
 
-
 LABELS = ("semantic", "word_level", "structural", "other")
 
 

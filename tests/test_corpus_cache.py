@@ -3,9 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import pytest
 
-from faar.retrieval import _encode_corpus_embeddings, _corpus_text_digest
+from faar.retrieval import _corpus_text_digest, _encode_corpus_embeddings
 from faar.settings import RetrievalSettings
 from faar.types import Chunk
 

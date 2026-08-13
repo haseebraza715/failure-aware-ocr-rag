@@ -6,6 +6,7 @@ import pytest
 
 from faar.operations import check_termination, install_graceful_termination_handler
 
+
 def test_termination_raises_system_exit_on_signal() -> None:
     install_graceful_termination_handler()
     try:

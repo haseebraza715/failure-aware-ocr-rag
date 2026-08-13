@@ -8,7 +8,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, model_validator
 
-
 # Local credentials live in an ignored .env file; explicit shell exports win.
 load_dotenv(override=False)
 

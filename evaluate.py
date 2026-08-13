@@ -13,7 +13,6 @@ if str(SRC) not in sys.path:
 
 from faar.metrics import exact_match, token_f1
 
-
 REQUIRED_KEYS = ("EM", "F1", "vlm_rate", "harm_rate")
 
 

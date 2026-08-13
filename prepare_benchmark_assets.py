@@ -49,6 +49,8 @@ from faar.ohr_inventory import (
 from faar.operations import install_graceful_termination_handler
 from faar.run_io import atomic_write_text
 
+__all__ = ["page_image_name", "page_ocr_name"]
+
 CHECKPOINT_IDENTITY_SCHEMA = 1
 IDENTITY_FIELDS = (
     "schema_version",

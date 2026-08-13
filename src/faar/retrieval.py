@@ -26,7 +26,6 @@ from .resource_limits import (
 from .settings import RetrievalSettings
 from .types import Chunk, RetrievalHit
 
-
 MODEL_ALIASES = {
     "NV-Embed-v2": "nvidia/NV-Embed-v2",
     "bge-reranker-v2-m3": "BAAI/bge-reranker-v2-m3",

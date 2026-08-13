@@ -4,7 +4,6 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-
 DEFAULT_INVENTORY = "OHR-Bench/data/retrieval_base/gt"
 DEFAULT_PDF_ZIP = "data/ohr_bench_raw/pdfs.zip"
 

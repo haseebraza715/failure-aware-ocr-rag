@@ -14,7 +14,6 @@ from .ohr_inventory import load_resolved_ohr_document_inventory
 from .settings import RetrievalSettings
 from .types import Phase0Example
 
-
 _IMAGE_HASH_PROGRESS_THRESHOLD = 256
 _IMAGE_HASH_PROGRESS_INTERVAL = 128
 

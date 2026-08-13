@@ -7,8 +7,8 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from .api_logging import zero_api_usage
 from .answering import answer_from_hits
+from .api_logging import zero_api_usage
 from .chunking import build_chunks
 from .data import Phase0Repository
 from .quality import diagnose_failure, quality_gate
@@ -17,7 +17,6 @@ from .retrieval import HybridRetriever
 from .settings import AppSettings
 from .symspell import correct_text as symspell_correct_text
 from .types import Chunk, RetrievalHit
-
 
 RANDOM_RECOVERY_TYPES = ("semantic", "word_level", "structural")
 

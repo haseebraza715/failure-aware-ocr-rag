@@ -3,7 +3,6 @@ import sys
 from pathlib import Path
 
 import run
-
 from faar.experiment_profiles import apply_profile
 from faar.graph import build_graph
 from faar.settings import AppSettings

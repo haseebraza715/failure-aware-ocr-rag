@@ -16,7 +16,6 @@ from faar.annotation import label_studio_config, write_label_studio_tasks
 from faar.ocr import GOT_OCR_MODEL, extract_got_ocr
 from faar.settings import AppSettings
 
-
 IMMUTABLE_REVISION_RE = re.compile(r"[0-9a-f]{40}")
 MUTABLE_REVISION_NAMES = {"main", "master", "latest", "head"}
 MODEL_REVISIONS_PATH = Path(__file__).resolve().parent / "config" / "model_revisions.json"

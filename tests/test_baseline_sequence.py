@@ -593,5 +593,5 @@ def test_dry_run_prints_commands_in_order(monkeypatch, tmp_path: Path, capsys) -
     assert "--mode colpali" in lines[3]
     assert "--mode visrag" in lines[4]
     for line, stage in zip(lines, run_baselines.STAGE_ORDER):
-        assert f"--out" in line
+        assert "--out" in line
         assert f"{stage}.json" in line

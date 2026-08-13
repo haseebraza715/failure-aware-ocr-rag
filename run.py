@@ -28,7 +28,6 @@ from faar.run_io import atomic_write_text, select_shard, shard_label
 from faar.settings import AppSettings, resolve_retrieval_models
 from faar.visual_baselines import run_visual_baseline
 
-
 BASELINE_MAP = {
     ("off", "off"): ("B0", "naive_rag", "Text-only RAG"),
     ("off", "always_vlm"): ("B1", "faar_always_vlm", "Always-VLM"),

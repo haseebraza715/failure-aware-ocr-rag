@@ -10,7 +10,13 @@ SRC = Path(__file__).resolve().parent / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from faar.gate_tuning import THETA_GRID, load_gate_examples, require_validation_payload, search_threshold, write_locked_threshold
+from faar.gate_tuning import (
+    THETA_GRID,
+    load_gate_examples,
+    require_validation_payload,
+    search_threshold,
+    write_locked_threshold,
+)
 
 
 def main() -> None:

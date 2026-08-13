@@ -6,7 +6,6 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
-
 _IMMUTABLE_REVISION = re.compile(r"^[0-9a-f]{40}$")
 _PACKAGED_LOCK = Path(__file__).resolve().parent / "model_revisions.json"
 _ARTIFACTS: dict[tuple[str, str], Path] = {}

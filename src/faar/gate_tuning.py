@@ -9,7 +9,6 @@ from typing import Any, Iterable
 from .metrics import exact_match
 from .run_io import canonical_digest
 
-
 THETA_GRID = (0.3, 0.4, 0.5, 0.6, 0.7)
 
 GATE_PRECISION_MIN = 0.75

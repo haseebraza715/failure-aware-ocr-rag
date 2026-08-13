@@ -13,7 +13,6 @@ from .resource_limits import (
     torch_device,
 )
 
-
 GOT_OCR_MODEL = "stepfun-ai/GOT-OCR-2.0-hf"
 
 

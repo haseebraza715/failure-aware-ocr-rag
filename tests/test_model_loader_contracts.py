@@ -3,7 +3,6 @@ from __future__ import annotations
 from faar import ocr, recovery, retrieval, visual_baselines
 from faar.settings import AppSettings
 
-
 REVISION = "b" * 40
 
 

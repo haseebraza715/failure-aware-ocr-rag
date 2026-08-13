@@ -36,7 +36,6 @@ from faar.final_analysis import _harm_rate
 from faar.results_aggregator import summarize_api_usage, summarize_examples
 from faar.run_io import atomic_write_text
 
-
 RUN_SPEC_MATCH_KEYS = (
     "profile",
     "dataset",
@@ -303,8 +302,6 @@ def merge_shards(
                 f"shard {path} label {payload.get('label')!r} does not match "
                 f"{shard_paths[0]} label {payloads[0].get('label')!r}."
             )
-    # Completeness must succeed before any shard metadata is cleared or the
-    # merged file is published: a partial shard set is never a valid unsharded run.
     _validate_shard_set(shard_paths, payloads, reference_spec["num_shards"])
     seen: dict[str, Path] = {}
     rows: list[dict[str, Any]] = []
