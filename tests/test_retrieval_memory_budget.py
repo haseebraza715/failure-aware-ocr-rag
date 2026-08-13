@@ -85,8 +85,8 @@ def test_byt5_load_calls_memory_budget(monkeypatch) -> None:
         lambda stage, torch_module=None: calls.append(stage),
     )
     monkeypatch.setattr(recovery, "import_module", lambda name: FakeTorch())
-    monkeypatch.setattr(recovery, "AutoTokenizer", FakeTokenizer)
-    monkeypatch.setattr(recovery, "AutoModelForSeq2SeqLM", FakeModel)
+    monkeypatch.setattr("transformers.AutoTokenizer", FakeTokenizer)
+    monkeypatch.setattr("transformers.AutoModelForSeq2SeqLM", FakeModel)
     monkeypatch.setattr(recovery, "torch_device", lambda torch: "cpu")
     monkeypatch.setattr(recovery, "select_dtype", lambda device, torch: None)
     monkeypatch.setattr(recovery, "enforce_gpu_memory_fraction", lambda torch: None)

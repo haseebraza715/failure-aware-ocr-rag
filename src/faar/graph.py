@@ -66,7 +66,11 @@ def build_graph(settings: AppSettings, repo: Phase0Repository | Any | None = Non
     corrector = (
         None
         if wordlevel_fallback == "symspell"
-        else ByT5Corrector(settings.recovery.byt5_model, settings.recovery.byt5_revision)
+        else ByT5Corrector(
+            settings.recovery.byt5_model,
+            settings.recovery.byt5_revision,
+            settings.recovery.correction,
+        )
     )
     visual_fallback = VisualFallback(settings)
     shared_chunks = repo.get_corpus_chunks(settings.retrieval) if hasattr(repo, "get_corpus_chunks") else None
@@ -85,7 +89,16 @@ def build_graph(settings: AppSettings, repo: Phase0Repository | Any | None = Non
     def prepare_retrieval(state: GraphState) -> GraphState:
         example = state["example"]
         chunks = shared_chunks if shared_chunks is not None else build_chunks(example, settings.retrieval)
-        retriever = shared_retriever if shared_retriever is not None else HybridRetriever(chunks, settings.retrieval)
+        if not chunks:
+            raise ValueError(
+                f"No retrieval chunks could be built for example {example.example_id!r}: "
+                "the OCR text contains no words"
+            )
+        retriever = (
+            shared_retriever
+            if shared_retriever is not None
+            else HybridRetriever(chunks, settings.retrieval, cache_dir=cache_dir)
+        )
         return {"chunks": chunks, "retriever": retriever}
 
     def retrieve(state: GraphState) -> GraphState:
@@ -93,7 +106,11 @@ def build_graph(settings: AppSettings, repo: Phase0Repository | Any | None = Non
         return {"retrieved_hits": hits}
 
     def gate_node(state: GraphState) -> GraphState:
-        gate = quality_gate(state["retrieved_hits"], settings.gate)
+        gate = quality_gate(
+            state["retrieved_hits"],
+            settings.gate,
+            prototype_signals=settings.retrieval.embedding_backend == "local-hash-v1",
+        )
         return {"gate": gate}
 
     def route_after_gate(state: GraphState) -> str:
@@ -144,6 +161,14 @@ def build_graph(settings: AppSettings, repo: Phase0Repository | Any | None = Non
                     "applied": corrected_text != hit.chunk.text,
                     "reason": "symspell_local_fallback",
                 }
+            elif not settings.recovery.enable_byt5:
+                proposal = {
+                    "text": hit.chunk.text,
+                    "candidate": hit.chunk.text,
+                    "applied": False,
+                    "reason": "byt5_disabled_by_profile",
+                }
+                corrected_text = hit.chunk.text
             else:
                 assert corrector is not None
                 proposal = corrector.propose_correction(hit.chunk.text)
@@ -173,12 +198,20 @@ def build_graph(settings: AppSettings, repo: Phase0Repository | Any | None = Non
                     reranker_score=hit.reranker_score,
                 )
             )
+        if wordlevel_fallback == "symspell":
+            outcome_reason = "symspell_local_fallback" if applied else "symspell_no_change"
+        elif not settings.recovery.enable_byt5:
+            outcome_reason = "byt5_disabled_by_profile"
+        elif applied:
+            outcome_reason = "byt5_correction_applied"
+        else:
+            outcome_reason = "byt5_correction_guarded"
         return {
             "corrected_hits": updated_hits,
             "action_outcome": {
                 "action": "correct_text",
                 "status": "succeeded" if applied else "skipped",
-                "reason": "byt5_correction_applied" if applied else "byt5_correction_guarded",
+                "reason": outcome_reason,
                 "applied_count": applied,
                 "reviewed_count": len(state["retrieved_hits"]),
                 "decisions": decisions,

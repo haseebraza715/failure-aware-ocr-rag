@@ -12,7 +12,6 @@ from pathlib import Path
 from uuid import uuid4
 
 from openai import OpenAI
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
 from .api_logging import (
     anthropic_cost_rates,
@@ -31,7 +30,8 @@ from .resource_limits import (
     select_dtype,
     torch_device,
 )
-from .settings import AppSettings
+from .settings import AppSettings, CorrectionSettings
+from .textnoise import CORRECTION_ALLOWED_PUNCTUATION, char_noise_ratio
 from .types import RetrievalHit
 
 
@@ -143,6 +143,12 @@ def _sleep_before_retry(backoff_seconds: float, attempts: int) -> None:
 
 @lru_cache(maxsize=1)
 def _load_byt5(model_name: str, revision: str | None):
+    try:
+        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+    except ImportError as exc:
+        raise ImportError(
+            "ByT5 word-level correction needs the ml extra: pip install 'faar[ml]'."
+        ) from exc
     torch = import_module("torch")
     tokenizer = AutoTokenizer.from_pretrained(model_name, revision=revision)
     device = torch_device(torch)
@@ -163,9 +169,15 @@ def _load_byt5(model_name: str, revision: str | None):
 
 
 class ByT5Corrector:
-    def __init__(self, model_name: str, revision: str | None = None) -> None:
+    def __init__(
+        self,
+        model_name: str,
+        revision: str | None = None,
+        correction_settings: CorrectionSettings | None = None,
+    ) -> None:
         self.model_name = model_name
         self.revision = revision
+        self.correction_settings = correction_settings or CorrectionSettings()
 
     def correct(self, text: str, max_new_tokens: int = 128) -> str:
         return self.propose_correction(text, max_new_tokens=max_new_tokens)["text"]
@@ -173,11 +185,18 @@ class ByT5Corrector:
     def propose_correction(self, text: str, max_new_tokens: int = 128) -> dict[str, str | bool]:
         if not text.strip():
             return {"text": text, "candidate": text, "applied": False, "reason": "empty_input"}
-        should_attempt, skip_reason = _should_attempt_correction(text)
+        should_attempt, skip_reason = _should_attempt_correction(text, self.correction_settings)
         if not should_attempt:
             return {"text": text, "candidate": text, "applied": False, "reason": skip_reason}
-        corrected = self._generate_correction(text, max_new_tokens=max_new_tokens)
-        accepted, reason = _should_accept_correction(text, corrected)
+        try:
+            corrected = self._generate_correction(text, max_new_tokens=max_new_tokens)
+        except ImportError:
+            return {"text": text, "candidate": text, "applied": False, "reason": "byt5_ml_extra_missing"}
+        except OSError:
+            return {"text": text, "candidate": text, "applied": False, "reason": "byt5_model_unavailable"}
+        except RuntimeError:
+            return {"text": text, "candidate": text, "applied": False, "reason": "byt5_inference_failed"}
+        accepted, reason = _should_accept_correction(text, corrected, self.correction_settings)
         return {
             "text": corrected if accepted else text,
             "candidate": corrected,
@@ -217,6 +236,16 @@ class VisualFallback:
             return self._answer_with_openai(question, image_paths)
         if self.settings.recovery.vlm_backend in {"claude-sonnet-4-5", "anthropic", "claude"}:
             return self._answer_with_anthropic(question, image_paths, fallback_context)
+        if self.settings.recovery.vlm_backend == "mock":
+            return {
+                "backend": "mock",
+                "status": "skipped",
+                "reason": "mock_backend_noop",
+                "answer": "",
+                "used_images": [str(path) for path in image_paths],
+                "fallback_context": fallback_context[:500],
+                "api_usage": zero_api_usage(),
+            }
         return {
             "backend": "mock",
             "status": "skipped",
@@ -237,11 +266,21 @@ class VisualFallback:
                 "used_images": [],
                 "api_usage": zero_api_usage(),
             }
+        try:
+            payloads, used_images, skipped = _build_image_payloads(image_paths, openai_format=True)
+        except OSError as exc:
+            return {
+                "backend": "openai",
+                "status": "failed",
+                "reason": f"image_read_error:{type(exc).__name__}",
+                "answer": "",
+                "used_images": [str(path) for path in image_paths],
+                "api_usage": make_api_usage(api_requests=0),
+            }
         if not os.getenv("OPENAI_API_KEY"):
             raise RuntimeError("OPENAI_API_KEY is required for VLM_BACKEND=openai.")
         client = OpenAI(max_retries=0)
         request_id = str(uuid4())
-        payloads, used_images, skipped = _build_image_payloads(image_paths, openai_format=True)
         skipped_images = _skipped_images_metadata(skipped)
         if not used_images:
             _raise_all_images_skipped(skipped)
@@ -506,34 +545,45 @@ def semantic_backtrack(query: str, hits: list[RetrievalHit]) -> str:
     return f"{query} {' '.join(anchor_words)}"
 
 
-def _should_attempt_correction(text: str) -> tuple[bool, str]:
+def _should_attempt_correction(
+    text: str,
+    settings: CorrectionSettings | None = None,
+) -> tuple[bool, str]:
+    thresholds = settings or CorrectionSettings()
     if _contains_cjk(text):
         return False, "non_latin_source"
     if _looks_formula_like(text):
         return False, "formula_like_source"
-    if _weird_char_ratio(text) < 0.08 and not _has_ocr_like_token_noise(text):
+    if _weird_char_ratio(text) < thresholds.min_weird_char_ratio and not _has_ocr_like_token_noise(text):
         return False, "source_not_noisy_enough"
     return True, "eligible"
 
 
-def _should_accept_correction(source: str, candidate: str) -> tuple[bool, str]:
+def _should_accept_correction(
+    source: str,
+    candidate: str,
+    settings: CorrectionSettings | None = None,
+) -> tuple[bool, str]:
+    thresholds = settings or CorrectionSettings()
     if not candidate.strip():
         return False, "empty_correction"
     if _normalize_whitespace(source) == _normalize_whitespace(candidate):
         return False, "no_change"
     if _numeric_signature(source) != _numeric_signature(candidate):
         return False, "numeric_signature_changed"
-    if not 0.6 <= _length_ratio(source, candidate) <= 1.4:
+    if not thresholds.min_length_ratio <= _length_ratio(source, candidate) <= thresholds.max_length_ratio:
         return False, "length_shift_too_large"
-    if _informative_token_overlap(source, candidate) < 0.5:
+    if _informative_token_overlap(source, candidate) < thresholds.min_token_overlap:
         return False, "low_token_preservation"
-    if _weird_char_ratio(candidate) > _weird_char_ratio(source) + 0.01:
+    if _weird_char_ratio(candidate) > _weird_char_ratio(source) + thresholds.max_noise_increase:
         return False, "noise_not_reduced"
     return True, "accepted"
 
 
 def _contains_cjk(text: str) -> bool:
-    return bool(re.search(r"[\u3400-\u9fff]", text))
+    # Covers kana (3040-30ff), CJK unified ideographs (3400-9fff) and hangul
+    # (ac00-d7af) so non-Latin scripts never reach the Latin-tuned corrector.
+    return bool(re.search(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]", text))
 
 
 def _looks_formula_like(text: str) -> bool:
@@ -542,10 +592,9 @@ def _looks_formula_like(text: str) -> bool:
 
 
 def _weird_char_ratio(text: str) -> float:
-    if not text:
-        return 0.0
-    weird = sum(1 for char in text if not (char.isalnum() or char.isspace() or char in ".,;:!?$%()-/'\"&"))
-    return weird / max(len(text), 1)
+    # Shares the counting mechanism with the quality gate but keeps its own
+    # punctuation whitelist; see faar/textnoise.py for why the sets differ.
+    return char_noise_ratio(text, CORRECTION_ALLOWED_PUNCTUATION)
 
 
 def _has_ocr_like_token_noise(text: str) -> bool:
@@ -556,8 +605,14 @@ def _normalize_whitespace(text: str) -> str:
     return " ".join(text.split())
 
 
+_NUMERIC_SIGNATURE_RE = re.compile(r"(?<![A-Za-z])(?:US\s*)?\$?\d[\d,]*(?:\.\d+)?%?(?![A-Za-z])")
+
+
 def _numeric_signature(text: str) -> list[str]:
-    return re.findall(r"(?:US\s*)?\$?\d[\d,]*(?:\.\d+)?%?", text)
+    # Digits embedded inside words (e.g. "t0tal") are OCR noise, not numeric
+    # facts: guard with letter boundaries so correcting them is not treated as
+    # numeric drift.
+    return _NUMERIC_SIGNATURE_RE.findall(text)
 
 
 def _informative_token_overlap(source: str, candidate: str) -> float:

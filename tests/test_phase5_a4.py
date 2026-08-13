@@ -13,7 +13,7 @@ from faar.types import Chunk, RetrievalHit
 class CountingRetriever:
     instances: list["CountingRetriever"] = []
 
-    def __init__(self, chunks, settings) -> None:
+    def __init__(self, chunks, settings, *, cache_dir=None) -> None:
         self.queries: list[str] = []
         self.hits = [
             RetrievalHit(

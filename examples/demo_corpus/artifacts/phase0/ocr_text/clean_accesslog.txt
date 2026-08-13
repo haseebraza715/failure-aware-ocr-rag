@@ -1,0 +1,3 @@
+===== PAGE 0 =====
+Access logging is mandatory for all systems.
+Administrators review access logs on a monthly basis.

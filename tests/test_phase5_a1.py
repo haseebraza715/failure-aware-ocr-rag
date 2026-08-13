@@ -29,7 +29,7 @@ class _SingleExampleRepository:
 
 
 class _PassingRetriever:
-    def __init__(self, chunks, settings) -> None:
+    def __init__(self, chunks, settings, *, cache_dir=None) -> None:
         self.hits = [
             RetrievalHit(
                 chunk=Chunk(

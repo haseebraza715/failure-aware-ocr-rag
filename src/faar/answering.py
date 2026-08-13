@@ -20,8 +20,6 @@ NUMBER_WITH_UNIT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 YES_NO_PREFIXES = ("is ", "are ", "was ", "were ", "do ", "does ", "did ", "can ", "could ", "should ", "has ", "have ", "had ", "will ", "would ")
-YES_CUES = (" is ", " are ", " was ", " were ", " mandatory", " required", " must ", " shall ", " yes")
-NO_CUES = (" not ", " no ", " never ", " prohibited", " forbidden", " optional", " not required", " cannot ", " can't ")
 STOPWORDS = {
     "a",
     "an",
@@ -112,7 +110,7 @@ def _extract_answer(question: str, candidate: str) -> tuple[str, str]:
         return "", "extractive_overlap"
     question_lower = question.lower().strip()
     if question_lower.startswith(YES_NO_PREFIXES):
-        verdict = _extract_yes_no_answer(cleaned_candidate)
+        verdict = _extract_yes_no_answer(question_lower, cleaned_candidate)
         if verdict:
             return verdict, "yes_no_inference"
     if _expects_date_like_answer(question_lower):
@@ -130,13 +128,97 @@ def _extract_answer(question: str, candidate: str) -> tuple[str, str]:
     return cleaned_candidate, "extractive_overlap"
 
 
-def _extract_yes_no_answer(candidate: str) -> str:
+# "not X" flips the polarity of X. Which family X belongs to decides whether the
+# whole phrase asserts the requirement (double negative) or denies it. Phrases
+# are matched positionally; the earliest phrase in the candidate wins, with
+# longer (more specific) phrases breaking ties, so " not optional" beats both
+# " not " and " optional" inside "is not optional".
+_REQUIRED_FAMILY_CUES = (
+    (" not optional", "Yes"),
+    (" not discretionary", "Yes"),
+    (" not voluntary", "Yes"),
+    (" not negotiable", "Yes"),
+    (" mandatory", "Yes"),
+    (" required", "Yes"),
+    (" must ", "Yes"),
+    (" shall ", "Yes"),
+    (" yes", "Yes"),
+    (" not required", "No"),
+    (" not mandatory", "No"),
+    (" not necessary", "No"),
+    (" not eligible", "No"),
+    (" not allowed", "No"),
+    (" not permitted", "No"),
+    (" not ", "No"),
+    (" never ", "No"),
+    (" cannot", "No"),
+    (" can't", "No"),
+    (" optional", "No"),
+    (" voluntary", "No"),
+    (" discretionary", "No"),
+    (" recommended", "No"),
+    (" prohibited", "No"),
+    (" forbidden", "No"),
+)
+_FORBIDDEN_FAMILY_CUES = (
+    (" not allowed", "Yes"),
+    (" not permitted", "Yes"),
+    (" not legal", "Yes"),
+    (" prohibited", "Yes"),
+    (" forbidden", "Yes"),
+    (" banned", "Yes"),
+    (" not prohibited", "No"),
+    (" not forbidden", "No"),
+    (" not banned", "No"),
+    (" allowed", "No"),
+    (" permitted", "No"),
+    (" legal", "No"),
+    (" not ", "No"),
+    (" never ", "No"),
+)
+_ALLOWED_FAMILY_CUES = (
+    (" not prohibited", "Yes"),
+    (" not forbidden", "Yes"),
+    (" not banned", "Yes"),
+    (" not disallowed", "Yes"),
+    (" not restricted", "Yes"),
+    (" allowed", "Yes"),
+    (" permitted", "Yes"),
+    (" eligible", "Yes"),
+    (" may ", "Yes"),
+    (" not allowed", "No"),
+    (" not permitted", "No"),
+    (" not eligible", "No"),
+    (" prohibited", "No"),
+    (" forbidden", "No"),
+    (" banned", "No"),
+    (" disallowed", "No"),
+    (" restricted", "No"),
+    (" cannot", "No"),
+    (" can't", "No"),
+    (" not ", "No"),
+    (" never ", "No"),
+)
+
+
+def _extract_yes_no_answer(question: str, candidate: str) -> str:
     lower = f" {candidate.lower()} "
-    if any(cue in lower for cue in NO_CUES):
-        return "No"
-    if any(cue in lower for cue in YES_CUES):
-        return "Yes"
-    return ""
+    if any(term in question for term in ("prohibited", "forbidden", "banned")):
+        cues = _FORBIDDEN_FAMILY_CUES
+    elif any(term in question for term in ("allowed", "permitted", "eligible")):
+        cues = _ALLOWED_FAMILY_CUES
+    else:
+        cues = _REQUIRED_FAMILY_CUES
+    best_pos = len(lower)
+    best_phrase = ""
+    best_value = ""
+    for phrase, value in cues:
+        pos = lower.find(phrase)
+        if pos == -1 or pos > best_pos:
+            continue
+        if pos < best_pos or (pos == best_pos and len(phrase) > len(best_phrase or "")):
+            best_pos, best_phrase, best_value = pos, phrase, value
+    return best_value
 
 
 def _expects_numeric_answer(question: str) -> bool:

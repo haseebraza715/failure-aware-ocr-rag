@@ -4,7 +4,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-
 FailureType = Literal["semantic", "word_level", "structural"]
 PolicyAction = Literal["answer_direct", "correct_text", "retry_retrieval", "invoke_vlm"]
 

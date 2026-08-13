@@ -33,7 +33,7 @@ IDS = ["ex1", "ex2", "ex3", "ex4"]
 
 
 class _FakeRetriever:
-    def __init__(self, chunks: list[Chunk], _settings: object) -> None:
+    def __init__(self, chunks: list[Chunk], _settings: object, *, cache_dir=None) -> None:
         self._hits = [
             RetrievalHit(
                 chunk=chunk,
@@ -50,7 +50,7 @@ class _FakeRetriever:
 
 
 class _FakeCorrector:
-    def __init__(self, _model_name: str, _revision: str | None = None) -> None:
+    def __init__(self, _model_name: str, _revision: str | None = None, _correction=None) -> None:
         pass
 
     def propose_correction(self, text: str) -> dict[str, str | bool]:

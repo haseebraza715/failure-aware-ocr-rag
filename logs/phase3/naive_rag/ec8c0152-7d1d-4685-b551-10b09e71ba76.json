@@ -17,15 +17,34 @@
     "em": 0.0,
     "f1": 0.0
   },
+  "recovery_metrics": {
+    "counterfactual_answer": "4",
+    "recovery_changed_answer": false,
+    "em": {
+      "actual": 0.0,
+      "counterfactual": 0.0,
+      "delta": 0.0,
+      "effect": "equal"
+    },
+    "f1": {
+      "actual": 0.0,
+      "counterfactual": 0.0,
+      "delta": 0.0,
+      "effect": "equal"
+    }
+  },
   "top_hit_texts": [
     "pwe 4. Remarks e We understand that no transfer pricing study has been performed for the Luxembourg company and that no advance pricing agreement has been discussed with the Luxembourg tax authorities. We recommend you to collect as much documentation as possible in order to provide the Luxembourg tax authorities with the most appropriate information, in case they raise some specific questions. e We have assumed that the arm\u2019s length principle has been respected regarding the transactions between related parties realised in 2011. e We understand that no director\u2019s fees were paid to the members of the Board of Directors. Based on the above mentioned comments, we estimate the tax charge for the year 2011 as follows: Estimated Accounted Amounts in EUR tax charges tax charges Difference Corporate Income Tax (CIT) 19,867,165 25,965,685 6,098,520 Municipal Business Tax (MBT) 6,084,801 \u00b0 (6,084,801) Net Wealth Tax (NWT) (*) oO oO oO Total 25,951,966 25,965,685 (13,719) (*) Taking into account the NWT reduction We remain at your entire disposal if you need any further information. Yours sincerely, _\u2014_ Cee Laurent Paquet Partner Director"
   ],
   "run_metadata": {
     "profile": "naive_rag",
-    "run_id": "20260421T152533Z",
+    "run_id": "20260808T225510Z",
     "api_enabled": false,
     "vlm_backend": "mock",
     "openai_model": "gpt-4o",
+    "enable_byt5": false,
+    "byt5_model": "google/byt5-small",
+    "seed": 42,
     "evaluation_size": 40,
     "selection": {
       "max_examples": 40,

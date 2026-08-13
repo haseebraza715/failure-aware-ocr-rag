@@ -67,8 +67,8 @@ def test_got_ocr_and_byt5_loaders_receive_pinned_revisions(monkeypatch) -> None:
 
     monkeypatch.setattr(ocr, "AutoProcessor", FakeLoader)
     monkeypatch.setattr(ocr, "AutoModelForImageTextToText", FakeLoader)
-    monkeypatch.setattr(recovery, "AutoTokenizer", FakeLoader)
-    monkeypatch.setattr(recovery, "AutoModelForSeq2SeqLM", FakeLoader)
+    monkeypatch.setattr("transformers.AutoTokenizer", FakeLoader)
+    monkeypatch.setattr("transformers.AutoModelForSeq2SeqLM", FakeLoader)
     ocr._load_got_ocr.cache_clear()
     recovery._load_byt5.cache_clear()
 

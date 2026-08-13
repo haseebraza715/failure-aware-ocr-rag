@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # Local credentials live in an ignored .env file; explicit shell exports win.
@@ -99,10 +99,13 @@ def _positive_int_env(name: str, fallback: int) -> int:
 
 
 class RetrievalSettings(BaseModel):
-    chunk_size_words: int = 180
-    chunk_overlap_words: int = 40
-    top_k: int = 5
-    semantic_backtrack_top_k: int = 8
+    chunk_size_words: int = Field(default=180, gt=0)
+    chunk_overlap_words: int = Field(default=40, ge=0)
+    top_k: int = Field(default=5, ge=1)
+    semantic_backtrack_top_k: int = Field(default=8, ge=1)
+    embedding_backend: str = "sentence-transformers"
+    embedding_batch_size: int = Field(default=64, gt=0, le=1024)
+    max_chunks: int = Field(default=10_000, gt=0)
     embedding_model: str = Field(
         default_factory=lambda: os.getenv(
             "EMBED_MODEL",
@@ -165,14 +168,46 @@ class RetrievalSettings(BaseModel):
         default_factory=lambda: _positive_int_env("FAAR_VISUAL_SCORE_BATCH_SIZE", 8)
     )
 
+    @model_validator(mode="after")
+    def _validate_chunk_geometry(self) -> RetrievalSettings:
+        if self.chunk_overlap_words >= self.chunk_size_words:
+            raise ValueError(
+                f"chunk_overlap_words ({self.chunk_overlap_words}) must be smaller than "
+                f"chunk_size_words ({self.chunk_size_words})"
+            )
+        return self
+
 
 class GateSettings(BaseModel):
     # This value is overwritten by config/gate_threshold.json after Phase 2.
-    quality_threshold: float = Field(default_factory=lambda: float(os.getenv("FAAR_GATE_THRESHOLD", "0.5")))
-    structural_threshold: int = 1
-    weird_char_threshold: float = 0.10
-    lexical_floor: float = 0.10
-    dense_floor: float = 0.20
+    quality_threshold: float = Field(
+        default_factory=lambda: float(os.getenv("FAAR_GATE_THRESHOLD", "0.5")),
+        ge=0.0,
+        le=1.0,
+    )
+    structural_threshold: int = Field(default=1, ge=0)
+    weird_char_threshold: float = Field(default=0.10, ge=0.0, le=1.0)
+    lexical_floor: float = Field(default=0.10, ge=0.0, le=1.0)
+    dense_floor: float = Field(default=0.20, ge=0.0, le=1.0)
+
+
+class CorrectionSettings(BaseModel):
+    """ByT5 correction-gate parameters. Defaults match the Phase 3 batch-run behavior."""
+
+    min_weird_char_ratio: float = Field(default=0.08, ge=0.0)
+    min_length_ratio: float = Field(default=0.6, ge=0.0)
+    max_length_ratio: float = Field(default=1.4, ge=0.0)
+    min_token_overlap: float = Field(default=0.5, ge=0.0, le=1.0)
+    max_noise_increase: float = Field(default=0.01, ge=0.0)
+
+    @model_validator(mode="after")
+    def _validate_length_ratio_bounds(self) -> CorrectionSettings:
+        if self.min_length_ratio > self.max_length_ratio:
+            raise ValueError(
+                f"min_length_ratio ({self.min_length_ratio}) must not exceed "
+                f"max_length_ratio ({self.max_length_ratio})"
+            )
+        return self
 
 
 class RecoverySettings(BaseModel):
@@ -185,6 +220,8 @@ class RecoverySettings(BaseModel):
     byt5_revision: str | None = Field(
         default_factory=lambda: os.getenv("BYT5_MODEL_REVISION", _locked_model_value("byt5", "revision"))
     )
+    correction: CorrectionSettings = Field(default_factory=CorrectionSettings)
+    enable_byt5: bool = True
     enable_backtracking: bool = True
     vlm_backend: str = Field(default_factory=lambda: os.getenv("VLM_BACKEND", "openai"))
     openai_model: str = Field(default_factory=lambda: os.getenv("OPENAI_MODEL", "gpt-4o-2024-11-20"))

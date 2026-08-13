@@ -1,4 +1,4 @@
-# FAAR — Failure-Aware Agentic Recovery for OCR-RAG
+# FAAR: Failure-Aware Agentic Recovery for OCR-RAG
 
 ## Supervisor-Aligned Execution Plan
 
@@ -32,7 +32,7 @@ This is now a paper-oriented implementation plan rather than a minimal prototype
 
 ---
 
-## Phase 0 — Ground Yourself In The Actual Data
+## Phase 0: Ground Yourself In The Actual Data
 
 **Status:** Completed  
 **Purpose:** Build a real, manually inspected development set before designing the system
@@ -76,7 +76,7 @@ Do not discard this phase. It remains the anchor for later detector analysis.
 
 ---
 
-## Phase 1 — Build The Working Prototype
+## Phase 1: Build The Working Prototype
 
 **Priority:** Highest  
 **Duration:** Immediate next phase  
@@ -161,7 +161,7 @@ Do not over-optimize here. The goal is not elegance first. The goal is to show t
 
 ---
 
-## Phase 2 — Formalize The Framework Mathematically
+## Phase 2: Formalize The Framework Mathematically
 
 **Priority:** High, but after the prototype is running  
 **Goal:** Convert the system logic into a clean methodology section
@@ -238,7 +238,7 @@ Phase 2 documentation artifacts:
 
 ---
 
-## Phase 3 — Run Real Experiments
+## Phase 3: Run Real Experiments
 
 **Priority:** Very high  
 **Goal:** Fill the biggest gap: evidence
@@ -311,7 +311,7 @@ If implementation complexity forces a rename, keep the ablation logic equivalent
 
 ---
 
-## Phase 4 — Refine Experimental Design And Claims
+## Phase 4: Refine Experimental Design And Claims
 
 **Goal:** Make sure the story supported by the experiments is precise and defensible
 
@@ -336,7 +336,7 @@ If implementation complexity forces a rename, keep the ablation logic equivalent
 
 ---
 
-## Phase 5 — Write The Paper Properly
+## Phase 5: Write The Paper Properly
 
 **Goal:** Convert implementation + experiments into a conference-ready paper structure
 

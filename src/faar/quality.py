@@ -4,14 +4,14 @@ import re
 from statistics import mean
 
 from .settings import GateSettings
+from .textnoise import GATE_ALLOWED_PUNCTUATION, char_noise_ratio
 from .types import RetrievalHit
 
 
 def weird_char_ratio(text: str) -> float:
     if not text:
         return 0.0
-    weird_chars = sum(1 for ch in text if not (ch.isalnum() or ch.isspace() or ch in ".,:%$()-/=+"))
-    char_ratio = weird_chars / max(len(text), 1)
+    char_ratio = char_noise_ratio(text, GATE_ALLOWED_PUNCTUATION)
     tokens = re.findall(r"\S+", text)
     weird_tokens = 0
     for token in tokens:
@@ -40,7 +40,12 @@ def layout_signals(text: str) -> dict[str, bool]:
     }
 
 
-def quality_gate(hits: list[RetrievalHit], settings: GateSettings) -> dict:
+def quality_gate(
+    hits: list[RetrievalHit],
+    settings: GateSettings,
+    *,
+    prototype_signals: bool = False,
+) -> dict:
     if not hits:
         return {
             "quality_score": 0.0,
@@ -48,16 +53,33 @@ def quality_gate(hits: list[RetrievalHit], settings: GateSettings) -> dict:
             "reasons": ["no_retrieval_hits"],
             "layout_signal_count": 0,
             "corruption_score": 1.0,
+            "top_reranker_score": 0.0,
         }
 
     top = hits[0]
     corruption_score = weird_char_ratio(top.chunk.text)
     layout = layout_signals(top.chunk.text)
     layout_count = sum(layout.values())
-    quality_score = top.reranker_score
+    lexical = top.bm25_score
+    dense = top.dense_score
     reasons: list[str] = []
-    if quality_score < settings.quality_threshold:
-        reasons.append("top_reranker_below_threshold")
+    if prototype_signals:
+        # Offline demo / local-hash path from main. Not used by AAAI B0-B4.
+        quality_score = (0.40 * dense) + (0.35 * lexical) + (0.25 * (1.0 - min(corruption_score, 1.0)))
+        if quality_score < settings.quality_threshold:
+            reasons.append("low_quality_score")
+        if layout_count >= settings.structural_threshold:
+            reasons.append("layout_alert")
+        if corruption_score > settings.weird_char_threshold:
+            reasons.append("word_noise_alert")
+        if lexical < settings.lexical_floor:
+            reasons.append("low_lexical_score")
+        if dense < settings.dense_floor:
+            reasons.append("low_dense_score")
+    else:
+        quality_score = top.reranker_score
+        if quality_score < settings.quality_threshold:
+            reasons.append("top_reranker_below_threshold")
 
     return {
         "quality_score": round(quality_score, 4),

@@ -8,7 +8,7 @@ from typing import Any
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2))
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def write_metrics_csv(path: Path, rows: list[dict[str, Any]]) -> None:

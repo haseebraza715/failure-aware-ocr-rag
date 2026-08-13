@@ -3,10 +3,11 @@ from __future__ import annotations
 import csv
 import json
 from collections import Counter
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from statistics import mean
-from typing import Any, Iterable
+from typing import Any
 
 from .results_aggregator import summarize_examples
 
@@ -19,7 +20,9 @@ EXPECTED_POLICY_BY_FAILURE: dict[str, str] = {
 
 
 def load_phase3_rows(logs_root: Path, profiles: Iterable[str] | None = None) -> dict[str, list[dict[str, Any]]]:
-    selected_profiles = list(profiles) if profiles is not None else sorted(path.name for path in logs_root.glob("*") if path.is_dir())
+    selected_profiles = (
+        list(profiles) if profiles is not None else sorted(path.name for path in logs_root.glob("*") if path.is_dir())
+    )
     rows_by_profile: dict[str, list[dict[str, Any]]] = {}
     for profile_name in selected_profiles:
         profile_dir = logs_root / profile_name
@@ -27,8 +30,8 @@ def load_phase3_rows(logs_root: Path, profiles: Iterable[str] | None = None) -> 
         if profile_dir.exists():
             for path in sorted(profile_dir.glob("*.json")):
                 try:
-                    payload = json.loads(path.read_text())
-                except json.JSONDecodeError:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
                     continue
                 if isinstance(payload, dict):
                     rows.append(payload)
@@ -40,10 +43,14 @@ def summarize_profile(rows: list[dict[str, Any]]) -> dict[str, Any]:
     base = summarize_examples(rows)
     action_distribution = _distribution((row.get("action_outcome") or {}).get("action", "unknown") for row in rows)
     failure_distribution = _distribution(row.get("failure_type", "unknown") for row in rows)
-    non_pass_rate = round(
-        mean(1.0 if row.get("failure_type", "pass") != "pass" else 0.0 for row in rows),
-        4,
-    ) if rows else 0.0
+    non_pass_rate = (
+        round(
+            mean(1.0 if row.get("failure_type", "pass") != "pass" else 0.0 for row in rows),
+            4,
+        )
+        if rows
+        else 0.0
+    )
     return {
         **base,
         "non_pass_rate": non_pass_rate,
@@ -241,6 +248,7 @@ def _assess_typed_recovery_vs_naive(faar_full_summary: dict[str, Any], naive_sum
         "status": status,
         "delta_f1_vs_naive_rag": delta_f1,
         "delta_em_vs_naive_rag": delta_em,
+        "measured_recovery_outcome": _recovery_outcome_snapshot(faar_full_summary),
     }
 
 
@@ -264,6 +272,17 @@ def _assess_selective_vlm_benefit(faar_full_summary: dict[str, Any], no_vlm_summ
         "delta_f1_vs_faar_no_vlm": delta_f1,
         "delta_em_vs_faar_no_vlm": delta_em,
         "faar_full_visual_fallback_rate": visual_rate,
+        "measured_recovery_outcome": _recovery_outcome_snapshot(faar_full_summary),
+    }
+
+
+def _recovery_outcome_snapshot(summary: dict[str, Any]) -> dict[str, Any]:
+    outcomes = summary.get("recovery_outcomes") or {}
+    return {
+        "reviewed_count": outcomes.get("reviewed_count", 0),
+        "changed_answer_count": outcomes.get("changed_answer_count", 0),
+        "em_effect_distribution": outcomes.get("em_effect_distribution", {}),
+        "f1_effect_distribution": outcomes.get("f1_effect_distribution", {}),
     }
 
 

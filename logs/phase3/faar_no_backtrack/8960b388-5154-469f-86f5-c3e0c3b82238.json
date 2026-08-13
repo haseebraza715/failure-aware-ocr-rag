@@ -9,14 +9,14 @@
   "action_outcome": {
     "action": "correct_text",
     "status": "skipped",
-    "reason": "byt5_correction_guarded",
+    "reason": "byt5_disabled_by_profile",
     "applied_count": 0,
     "reviewed_count": 1,
     "decisions": [
       {
         "chunk_id": "8960b388-5154-469f-86f5-c3e0c3b82238-p16-c0",
         "applied": false,
-        "reason": "source_not_noisy_enough"
+        "reason": "byt5_disabled_by_profile"
       }
     ]
   },
@@ -26,15 +26,34 @@
     "em": 0.0,
     "f1": 0.0
   },
+  "recovery_metrics": {
+    "counterfactual_answer": "31",
+    "recovery_changed_answer": false,
+    "em": {
+      "actual": 0.0,
+      "counterfactual": 0.0,
+      "delta": 0.0,
+      "effect": "equal"
+    },
+    "f1": {
+      "actual": 0.0,
+      "counterfactual": 0.0,
+      "delta": 0.0,
+      "effect": "equal"
+    }
+  },
   "top_hit_texts": [
     "Statement of Changes in Equity for the year ended 31 December 2008 ~\u2014Non-distributable Distributable Share Treasury Retained Total capital shares profits equity Company Note RM\u2019000 RM\u2019000 RM\u2019000 RM\u2019000 At 1 January 2007 336,000 (4,090) 11,120 343,030 Purchase of treasury shares - (1,471) - (1,471) Profit for the year - - 804,944 804,944 Dividends - 2006 final 25 - - (12,192) (12,192) - 2007 interim 25 - - (16,686) (16,686) At 31 December 2007 336,000 (5,561) 787,186 1,117,625 At 1 January 2008 336,000 (5,561) 787,186 1,117,625 Purchase of treasury shares - (7,463) - (7,463) Profit for the year - - 23,620 23,620 Dividends - 2007 final 25 - - (24,693) (24,693) - 2008 interim 25 - - (24,687) (24,687) At 31 December 2008 336,000 (13,024) 761,426 1,084,402 Note 16 Note 16 The notes on pages 40 to 86 are an integral part of these financial statements. 36 TAN CHONG MOTOR HOLDINGS BERHAD annual report 2008"
   ],
   "run_metadata": {
     "profile": "faar_no_backtrack",
-    "run_id": "20260421T152459Z",
+    "run_id": "20260808T225510Z",
     "api_enabled": false,
     "vlm_backend": "mock",
     "openai_model": "gpt-4o",
+    "enable_byt5": false,
+    "byt5_model": "google/byt5-small",
+    "seed": 42,
     "evaluation_size": 40,
     "selection": {
       "max_examples": 40,

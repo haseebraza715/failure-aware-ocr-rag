@@ -13,6 +13,13 @@ src/*.egg-info/
 src/**/*.egg-info/
 build/
 
+# Experiment output and benchmark data are preserved as committed evidence;
+# these rules keep new runs and untracked benchmark payloads out of git status.
+data/
+logs/
+artifacts/
+OHR-Bench/
+
 data/ohr_bench_raw/
 data/benchmark_prep/
 data/benchmark_assets_smoke/

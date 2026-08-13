@@ -13,7 +13,7 @@ from faar.types import Chunk, Phase0Example, RetrievalHit
 
 
 class _StaticRetriever:
-    def __init__(self, chunks, settings) -> None:
+    def __init__(self, chunks, settings, *, cache_dir=None) -> None:
         self.hits = [
             RetrievalHit(
                 chunk=Chunk(

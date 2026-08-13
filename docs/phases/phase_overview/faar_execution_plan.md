@@ -1,4 +1,4 @@
-# FAAR — Failure-Aware Agentic Recovery for OCR-RAG
+# FAAR: Failure-Aware Agentic Recovery for OCR-RAG
 
 ## Supervisor-Aligned Execution Plan (Canonical Phase Overview)
 

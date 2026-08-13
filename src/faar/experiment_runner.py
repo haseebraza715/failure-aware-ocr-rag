@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .answering import answer_from_hits
 from .api_logging import is_valid_api_usage, vlm_cost_rates, zero_api_usage
 from .benchmarks import load_benchmark_repository
 from .data import Phase0Repository
@@ -15,6 +16,20 @@ from .operations import ProgressReporter, check_termination
 from .resource_limits import enforce_memory_budget, is_fatal_resource_error
 from .run_io import atomic_write_json, run_fingerprint, safe_checkpoint_stem, select_shard
 from .settings import AppSettings
+
+
+def _effect_label(actual: float, counterfactual: float) -> str:
+    if actual > counterfactual:
+        return "improved"
+    if actual < counterfactual:
+        return "worsened"
+    return "equal"
+
+
+def _is_scoring_failure(exc: Exception) -> bool:
+    if isinstance(exc, FileNotFoundError):
+        return False
+    return True
 
 
 def run_profile(
@@ -31,6 +46,7 @@ def run_profile(
     resume: bool = False,
     shard_index: int | None = None,
     num_shards: int | None = None,
+    seed: int = 42,
 ) -> list[dict[str, Any]]:
     settings = apply_profile(settings, profile_name)
     use_repo_kwarg = repo is not None or bool(dataset and split)
@@ -53,6 +69,7 @@ def run_profile(
         selected_ids = select_shard(selected_ids, shard_index, num_shards)
     base_output = output_dir or (settings.project_root / "logs/phase3" / profile_name)
     base_output.mkdir(parents=True, exist_ok=True)
+    run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     rows_by_id: dict[str, dict[str, Any]] = {}
     pending: list[str] = []
     graph = None
@@ -101,10 +118,17 @@ def run_profile(
                 api_usage = zero_api_usage()
             elif not is_valid_api_usage(api_usage):
                 raise ValueError(f"example {example_id!r} returned invalid API usage")
+            question = result.get("question", "")
+            retrieved_hits = result.get("retrieved_hits", [])
+            counterfactual_answer = answer_from_hits(question, retrieved_hits).get("answer", "")
+            em = exact_match(prediction, gold)
+            f1 = token_f1(prediction, gold)
+            counterfactual_em = exact_match(counterfactual_answer, gold)
+            counterfactual_f1 = token_f1(counterfactual_answer, gold)
             row = {
                 "profile": profile_name,
                 "example_id": example_id,
-                "question": result.get("question", ""),
+                "question": question,
                 "gold_answer": gold,
                 "predicted_answer": prediction,
                 "failure_type": result.get("failure_type", "pass"),
@@ -119,8 +143,24 @@ def run_profile(
                 "metrics": {
                     "ndcg@5": ndcg_at_k(hit_texts, gold, k=5),
                     "recall@5": recall_at_k(hit_texts, gold, k=5),
-                    "em": exact_match(prediction, gold),
-                    "f1": token_f1(prediction, gold),
+                    "em": em,
+                    "f1": f1,
+                },
+                "recovery_metrics": {
+                    "counterfactual_answer": counterfactual_answer,
+                    "recovery_changed_answer": counterfactual_answer != prediction,
+                    "em": {
+                        "actual": round(em, 4),
+                        "counterfactual": round(counterfactual_em, 4),
+                        "delta": round(em - counterfactual_em, 4),
+                        "effect": _effect_label(em, counterfactual_em),
+                    },
+                    "f1": {
+                        "actual": round(f1, 4),
+                        "counterfactual": round(counterfactual_f1, 4),
+                        "delta": round(f1 - counterfactual_f1, 4),
+                        "effect": _effect_label(f1, counterfactual_f1),
+                    },
                 },
                 "top_hit_texts": hit_texts[:5],
                 "top_reranker_score": (result.get("gate") or {}).get("top_reranker_score", 0.0),
@@ -130,13 +170,16 @@ def run_profile(
                 },
                 "run_metadata": {
                     "profile": profile_name,
-                    "run_id": datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ"),
+                    "run_id": run_id,
                     "run_fingerprint": fingerprint,
                     "manifest_sha256": getattr(repo, "manifest_sha256", None),
                     "api_enabled": settings.recovery.api_enabled,
                     "vlm_backend": settings.recovery.vlm_backend,
                     "openai_model": settings.recovery.openai_model,
                     "vlm_model": settings.vlm_request_model(),
+                    "enable_byt5": settings.recovery.enable_byt5,
+                    "byt5_model": settings.recovery.byt5_model,
+                    "seed": seed,
                     "cost_rates": vlm_cost_rates(settings.recovery.vlm_backend),
                     "evaluation_size": len(selected_ids),
                     "selection": selection or {"max_examples": max_examples},
@@ -150,26 +193,47 @@ def run_profile(
             if is_fatal_resource_error(exc):
                 raise
             reason = f"{type(exc).__name__}: {exc}"
-            failed_row = {
-                "profile": profile_name,
-                "example_id": example_id,
-                "action_outcome": {"action": "failed", "status": "failed", "reason": reason},
-                "api_usage": zero_api_usage(),
-                "error": reason,
-                "run_metadata": {
+            if _is_scoring_failure(exc):
+                failed_row = {
                     "profile": profile_name,
-                    "run_id": datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ"),
-                    "run_fingerprint": fingerprint,
-                    "manifest_sha256": getattr(repo, "manifest_sha256", None),
-                    "evaluation_size": len(selected_ids),
-                    "selection": selection or {"max_examples": max_examples},
-                    "dataset": dataset or "phase0",
-                    "split": split or "development",
-                },
-            }
-            atomic_write_json(_checkpoint_path(base_output, example_id), failed_row)
-            failures.append((example_id, reason))
-            print(f"[faar] example {example_id!r} FAILED and was not scored: {reason}", flush=True)
+                    "example_id": example_id,
+                    "action_outcome": {"action": "failed", "status": "failed", "reason": reason},
+                    "api_usage": zero_api_usage(),
+                    "error": reason,
+                    "run_metadata": {
+                        "profile": profile_name,
+                        "run_id": run_id,
+                        "run_fingerprint": fingerprint,
+                        "manifest_sha256": getattr(repo, "manifest_sha256", None),
+                        "evaluation_size": len(selected_ids),
+                        "selection": selection or {"max_examples": max_examples},
+                        "dataset": dataset or "phase0",
+                        "split": split or "development",
+                    },
+                }
+                atomic_write_json(_checkpoint_path(base_output, example_id), failed_row)
+                failures.append((example_id, reason))
+                print(f"[faar] example {example_id!r} FAILED and was not scored: {reason}", flush=True)
+                processed += 1
+                reporter.update(processed)
+                continue
+            error_row = _error_row(
+                profile_name,
+                example_id,
+                exc,
+                run_id,
+                seed,
+                settings,
+                selection,
+                max_examples,
+                len(selected_ids),
+                fingerprint,
+                getattr(repo, "manifest_sha256", None),
+                dataset,
+                split,
+            )
+            rows_by_id[example_id] = error_row
+            atomic_write_json(_checkpoint_path(base_output, example_id), error_row)
             processed += 1
             reporter.update(processed)
             continue
@@ -186,6 +250,62 @@ def run_profile(
         )
     reporter.finish()
     return [rows_by_id[example_id] for example_id in selected_ids if example_id in rows_by_id]
+
+
+def _error_row(
+    profile_name: str,
+    example_id: str,
+    exc: Exception,
+    run_id: str,
+    seed: int,
+    settings: AppSettings,
+    selection: dict[str, Any] | None,
+    max_examples: int | None,
+    evaluation_size: int,
+    fingerprint: str,
+    manifest_sha256: str | None,
+    dataset: str | None,
+    split: str | None,
+) -> dict[str, Any]:
+    return {
+        "profile": profile_name,
+        "example_id": example_id,
+        "question": "",
+        "gold_answer": "",
+        "predicted_answer": "",
+        "failure_type": "error",
+        "policy_action": "error",
+        "action_outcome": {
+            "action": "failed",
+            "status": "failed",
+            "reason": f"{type(exc).__name__}: {exc}",
+        },
+        "metrics": {"ndcg@5": 0.0, "recall@5": 0.0, "em": 0.0, "f1": 0.0},
+        "recovery_metrics": {
+            "counterfactual_answer": "",
+            "recovery_changed_answer": False,
+            "em": {"actual": 0.0, "counterfactual": 0.0, "delta": 0.0, "effect": "equal"},
+            "f1": {"actual": 0.0, "counterfactual": 0.0, "delta": 0.0, "effect": "equal"},
+        },
+        "api_usage": zero_api_usage(),
+        "top_hit_texts": [],
+        "run_metadata": {
+            "profile": profile_name,
+            "run_id": run_id,
+            "run_fingerprint": fingerprint,
+            "manifest_sha256": manifest_sha256,
+            "api_enabled": settings.recovery.api_enabled,
+            "vlm_backend": settings.recovery.vlm_backend,
+            "openai_model": settings.recovery.openai_model,
+            "enable_byt5": settings.recovery.enable_byt5,
+            "byt5_model": settings.recovery.byt5_model,
+            "seed": seed,
+            "evaluation_size": evaluation_size,
+            "selection": selection or {"max_examples": max_examples},
+            "dataset": dataset or "phase0",
+            "split": split or "development",
+        },
+    }
 
 
 def _checkpoint_path(base_output: Path, example_id: str) -> Path:

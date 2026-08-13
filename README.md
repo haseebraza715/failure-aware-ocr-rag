@@ -1,6 +1,6 @@
 # Failure-aware OCR-RAG
 
-Failure-Aware Agentic Recovery (FAAR) for OCR-RAG document question answering.
+> An OCR-RAG pipeline that detects its own retrieval failures and recovers — re-reading pages or answering with measured confidence.
 
 ## Current research status
 
@@ -15,8 +15,10 @@ plan, a representative pilot, and then the ordered B0-B4 runs.
 - Experiment protocol and gates: [docs/faar-aaai-plan.md](docs/faar-aaai-plan.md)
 - Reproducibility rules: [docs/aaai-reproducibility.md](docs/aaai-reproducibility.md)
 
-The older 40-example prototype reports under `docs/reports/` are development
-history. Their mock-backend numbers are not the AAAI B0-B4 baseline results.
+The older 40-example prototype reports under `docs/reports/`, plus the
+committed files in `artifacts/phase3/` and `logs/phase3/`, are development
+history. Their mock-backend / local-hash numbers are **not** the AAAI B0-B4
+baseline results.
 
 ## Overview
 
@@ -36,11 +38,16 @@ Research objective:
 Prerequisites:
 
 - Python 3.12+
-- phase assets under `data/phase0/` and `artifacts/phase0/`
+- phase assets under `data/phase0/` and `artifacts/phase0/` for the historical slice
+- or the synthetic corpus under `examples/demo_corpus/` for the offline demo
 
 Install:
 
 ```bash
+git clone https://github.com/haseebraza715/failure-aware-ocr-rag.git faar
+cd faar
+git checkout faar-aaai-experiments
+python3 -m venv .venv && source .venv/bin/activate
 python -m pip install -e .
 ```
 
@@ -50,21 +57,25 @@ Basic verification:
 python -m pytest
 ```
 
-## Local prototype usage
+Do not use the local demo commands below for paper baselines. Cluster and paper
+runs use the pinned environment and ordered runner in [RUNBOOK.md](RUNBOOK.md).
 
-Run one end-to-end example:
+## Offline demo (historical prototype path)
+
+The demo is fully offline and deterministic: local-hash embeddings, mock VLM,
+seed 42, no API keys, ByT5 disabled by profile. It is a development walkthrough,
+not a paper result.
 
 ```bash
-faar-demo run-example --example-id 446d159e-b5c2-45dc-91cc-faaa931f3649 --project-root . --vlm-backend mock --seed 42 --output logs/phase1/phase1_e2e_latest.json
+python scripts/demo/demo_run.py
 ```
 
-Notes:
+Optional recorded assets:
 
-- `vlm-backend=mock` is the default for offline reproducibility
-- outputs are written to `logs/` and phase artifacts under `artifacts/`
-
-Do not use this demo command for paper baselines. Cluster and paper runs use
-the pinned environment and ordered runner documented in [RUNBOOK.md](RUNBOOK.md).
+```bash
+bash scripts/demo/record.sh
+IDLE_LIMIT=3.0 bash scripts/demo/render.sh assets/demo/demo.cast assets/demo
+```
 
 ## Architecture
 
@@ -76,9 +87,10 @@ the pinned environment and ordered runner documented in [RUNBOOK.md](RUNBOOK.md)
 - `src/faar/`: controller, quality, retrieval, recovery, answering, CLI
 - `tests/`: unit and integration coverage
 - `data/phase0/`: sampled benchmark metadata and manual labels
-- `artifacts/`: phase artifacts and summary files
+- `artifacts/`: phase artifacts and summary files (prototype evidence is historical)
 - `logs/`: per-run structured outputs by phase
 - `docs/`: modular phase and repository documentation
+- `cluster/`: supervisor job templates
 - `OHR-Bench/`: benchmark/evaluation subproject
 
 ## Documentation

@@ -7,8 +7,7 @@ from faar.settings import AppSettings
 
 
 class FakeGraph:
-    def invoke(self, state):
-        example_id = state["example_id"]
+    def invoke(self, _state):
         return {
             "question": "What is required?",
             "example": type("Ex", (), {"correct_answer": "certified engineers"})(),
@@ -74,6 +73,28 @@ def test_run_profile_writes_rows(monkeypatch, tmp_path: Path) -> None:
     assert saved["cost_rates"]["output_usd_per_million_tokens"] == 10.0
     assert saved["run_metadata"]["cost_rates"]["input_usd_per_million_tokens"] == 2.5
     assert saved["run_metadata"]["cost_rates"]["output_usd_per_million_tokens"] == 10.0
+
+
+def test_run_profile_records_recovery_metrics(monkeypatch, tmp_path: Path) -> None:
+    _prepare_phase0(tmp_path)
+    monkeypatch.setattr("faar.experiment_runner.build_graph", lambda settings: FakeGraph())
+    settings = AppSettings(project_root=tmp_path)
+    rows = run_profile(
+        settings,
+        profile_name="faar_full",
+        max_examples=1,
+        example_ids=["ex2"],
+        selection={"manual_failure_types": ["text_corruption"]},
+    )
+    recovery = rows[0]["recovery_metrics"]
+    # No pre-recovery hits exist in the fake, so the counterfactual answer is empty
+    # and the direct-answer path is the only answer producer.
+    assert recovery["counterfactual_answer"] == ""
+    assert recovery["recovery_changed_answer"] is True
+    assert set(recovery["em"]) == {"actual", "counterfactual", "delta", "effect"}
+    assert set(recovery["f1"]) == {"actual", "counterfactual", "delta", "effect"}
+    assert recovery["em"]["actual"] == 1.0
+    assert recovery["em"]["effect"] == "improved"
 
 
 def test_phase0_repository_supports_stratified_selection(tmp_path: Path) -> None:
