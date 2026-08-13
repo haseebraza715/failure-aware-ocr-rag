@@ -1,8 +1,8 @@
 # FAAR shared-cluster runbook
 
-Run the FAAR OHR-Bench asset preparation and validation safely on a shared GPU
-cluster. Everything here is copy-paste; edit only the bracketed placeholders.
-**Do not submit any job before the calibration report is approved.**
+This is the copy-paste procedure. The short supervisor page is
+[SUPERVISOR_HANDOFF.md](SUPERVISOR_HANDOFF.md). Do not submit any job before the
+calibration report is approved.
 
 ---
 

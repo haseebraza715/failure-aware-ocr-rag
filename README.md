@@ -1,102 +1,81 @@
-# Failure-aware OCR-RAG
+# FAAR
 
-> An OCR-RAG pipeline that detects its own retrieval failures and recovers — re-reading pages or answering with measured confidence.
+FAAR is a failure-aware OCR-RAG pipeline for document question answering. It
+retrieves from OCR text first, then applies a typed recovery only when a quality
+gate indicates that the evidence is likely to fail. Recoveries are `semantic`
+(retry retrieval), `word_level` (correct OCR noise), and `structural` (selective
+visual fallback).
 
-## Current research status
+## Status
 
-The AAAI experiment workflow lives on the `faar-aaai-experiments` branch. It
-is ready for a supervisor to run the bounded 108-page CUDA calibration on a
-shared cluster. It is not yet ready for full validation or paper-result claims.
-Those require calibration measurements, approval of the projected resource
-plan, a representative pilot, and then the ordered B0-B4 runs.
+| Stage | State |
+| --- | --- |
+| Local implementation and regression tests | Ready |
+| Bounded 108-page CUDA calibration on a shared cluster | Ready to run |
+| Full OHR validation preparation and B0-B4 paper runs | Not done |
 
-- Supervisor starting point: [SUPERVISOR_HANDOFF.md](SUPERVISOR_HANDOFF.md)
-- Exact shared-cluster procedure: [RUNBOOK.md](RUNBOOK.md)
-- Experiment protocol and gates: [docs/faar-aaai-plan.md](docs/faar-aaai-plan.md)
-- Reproducibility rules: [docs/aaai-reproducibility.md](docs/aaai-reproducibility.md)
+Real GPU calibration measurements and full validation results are still pending.
+Older 40-example mock-backend numbers in `docs/reports/` and `artifacts/phase3/`
+are prototype evidence only. They are not AAAI baselines.
 
-The older 40-example prototype reports under `docs/reports/`, plus the
-committed files in `artifacts/phase3/` and `logs/phase3/`, are development
-history. Their mock-backend / local-hash numbers are **not** the AAAI B0-B4
-baseline results.
+## Repository
 
-## Overview
+- GitHub: <https://github.com/haseebraza715/FailSafeRAG>
+- Branch: `faar-aaai-experiments`
 
-FAAR is a failure-aware OCR-RAG pipeline for document QA. It uses text-first retrieval by default, then applies targeted recovery only when quality signals indicate likely OCR-related failure.
+Do not run the cluster workflow from `main` until this branch has been reviewed
+and merged. Do not edit `split.json` or the locked OHR QA file. Their SHA-256
+checksums must remain:
 
-Key recovery types:
-- `semantic`: retry retrieval when evidence is likely missing or mismatched
-- `word_level`: correct OCR noise before answer generation
-- `structural`: fall back to selective visual reasoning for layout-heavy failures
+- `split.json`: `64583a532c5db5aa31e4cbb5cd9c7d894c7a2d5e8aa49f1a7f6041f54e714f53`
+- `OHR-Bench/data/qas_v2.json`: `2446db28741fa9f392067ee7aae7f3b05e0d85c584069a50ddd5b1b5bc783f58`
 
-Research objective:
-- improve answer quality on OCR-heavy inputs
-- reduce unnecessary multimodal cost compared to always-on visual pipelines
+## Setup
 
-## Local prototype setup
-
-Prerequisites:
-
-- Python 3.12+
-- phase assets under `data/phase0/` and `artifacts/phase0/` for the historical slice
-- or the synthetic corpus under `examples/demo_corpus/` for the offline demo
-
-Install:
+Use CPython 3.12 and the pinned AAAI extra. A paper run is invalid if `pip check`
+fails. The same command works on macOS for local checks and on Linux for Slurm.
 
 ```bash
 git clone https://github.com/haseebraza715/FailSafeRAG.git faar
 cd faar
 git checkout faar-aaai-experiments
-python3 -m venv .venv && source .venv/bin/activate
-python -m pip install -e .
+python3.12 -m venv .venv-aaai
+.venv-aaai/bin/python -m pip install --upgrade pip
+.venv-aaai/bin/python -m pip install -c constraints-aaai.txt -e '.[aaai]'
+.venv-aaai/bin/python -m pip check
 ```
 
-Basic verification:
+Copy `.env.example` to `.env` and fill paths and resource names only. Never
+commit `.env`. Local `pytest` is a code check, not a paper result. On macOS,
+run the bounded-memory tests in a separate process if the full suite hits the
+known OpenMP segfault.
+
+## First cluster commands
+
+Login-node preflight, no CUDA:
 
 ```bash
-python -m pytest
+.venv-aaai/bin/python cluster/preflight.py --check --no-cuda --project-root "$PWD"
 ```
 
-Do not use the local demo commands below for paper baselines. Cluster and paper
-runs use the pinned environment and ordered runner in [RUNBOOK.md](RUNBOOK.md).
-
-## Offline demo (historical prototype path)
-
-The demo is fully offline and deterministic: local-hash embeddings, mock VLM,
-seed 42, no API keys, ByT5 disabled by profile. It is a development walkthrough,
-not a paper result.
+Allocated-GPU preflight, then the bounded 108-page calibration. Submit nothing
+else until the calibration report is approved.
 
 ```bash
-python scripts/demo/demo_run.py
+sbatch cluster/templates/slurm_preflight.sbatch
+sbatch cluster/templates/slurm_calibration_108.sbatch
 ```
 
-Optional recorded assets:
-
-```bash
-bash scripts/demo/record.sh
-IDLE_LIMIT=3.0 bash scripts/demo/render.sh assets/demo/demo.cast assets/demo
-```
-
-## Architecture
-
-- Top-level architecture summary: [ARCHITECTURE.md](ARCHITECTURE.md)
-- Detailed handbook view: [docs/repo_handbook/architecture_overview.md](docs/repo_handbook/architecture_overview.md)
-
-## Repository Structure
-
-- `src/faar/`: controller, quality, retrieval, recovery, answering, CLI
-- `tests/`: unit and integration coverage
-- `data/phase0/`: sampled benchmark metadata and manual labels
-- `artifacts/`: phase artifacts and summary files (prototype evidence is historical)
-- `logs/`: per-run structured outputs by phase
-- `docs/`: modular phase and repository documentation
-- `cluster/`: supervisor job templates
-- `OHR-Bench/`: benchmark/evaluation subproject
+Edit partition, account, QOS, and `FAAR_GPU_BUDGET_GB` in those templates before
+submission. Exact procedure, resume, shard merge, and stop conditions are in
+[SUPERVISOR_HANDOFF.md](SUPERVISOR_HANDOFF.md) and [RUNBOOK.md](RUNBOOK.md).
+The next cluster-only work is that preflight and calibration. Full validation
+stays blocked until those measurements are approved.
 
 ## Documentation
 
-- Docs home: [docs/index.md](docs/index.md)
-- Phase docs: [docs/phases/index.md](docs/phases/index.md)
-- Repo handbook: [docs/repo_handbook/index.md](docs/repo_handbook/index.md)
-- Reports: [docs/reports/index.md](docs/reports/index.md)
-- Archives: [docs/archives/index.md](docs/archives/index.md)
+- [Supervisor handoff](SUPERVISOR_HANDOFF.md)
+- [Shared-cluster runbook](RUNBOOK.md)
+- [Architecture](docs/architecture/overview.md)
+- [Experimental plan](docs/experiments/aaai-plan.md)
+- [Documentation index](docs/README.md)
