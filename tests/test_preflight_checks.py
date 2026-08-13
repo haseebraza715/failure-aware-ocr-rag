@@ -23,14 +23,15 @@ def build_project(tmp_path: Path) -> Path:
     project = tmp_path
     (project / "OHR-Bench/data/retrieval_base/gt").mkdir(parents=True)
     (project / "OHR-Bench/data/qas_v2.json").write_text(json.dumps([{"ID": "e1", "doc_name": "a"}]))
-    (project / "split.json").write_text(json.dumps({"splits": {"val": ["e1"]}}))
+    (project / "config/datasets").mkdir(parents=True)
+    (project / "config/datasets/ohr_split.json").write_text(json.dumps({"splits": {"val": ["e1"]}}))
     (project / "data/ohr_bench_raw").mkdir(parents=True)
     (project / "data/ohr_bench_raw/pdfs.zip").write_bytes(b"PK")
-    (project / "config").mkdir()
+    (project / "config").mkdir(exist_ok=True)
     (project / "config/split_checksums.json").write_text(
         json.dumps(
             {
-                "split_sha256": hashlib.sha256((project / "split.json").read_bytes()).hexdigest(),
+                "split_sha256": hashlib.sha256((project / "config/datasets/ohr_split.json").read_bytes()).hexdigest(),
                 "qas_v2_sha256": hashlib.sha256((project / "OHR-Bench/data/qas_v2.json").read_bytes()).hexdigest(),
             }
         )
@@ -158,7 +159,7 @@ def test_run_checks_dual_gpu_limits_are_blocking(tmp_path: Path, clean_env, monk
 
 def test_run_checks_tampered_split_is_blocking(tmp_path: Path, clean_env) -> None:
     project = build_project(tmp_path)
-    with (project / "split.json").open("a") as handle:
+    with (project / "config/datasets/ohr_split.json").open("a") as handle:
         handle.write(" ")
     report = preflight.run_checks(gpu_payload(), project_root=project, path=project, cuda=False)
     assert report["exit_code"] == 1
@@ -168,7 +169,7 @@ def test_run_checks_tampered_split_is_blocking(tmp_path: Path, clean_env) -> Non
 
 def test_run_checks_missing_dataset_is_blocking(tmp_path: Path, clean_env) -> None:
     project = build_project(tmp_path)
-    (project / "split.json").unlink()
+    (project / "config/datasets/ohr_split.json").unlink()
     report = preflight.run_checks(gpu_payload(), project_root=project, path=project, cuda=False)
     assert report["exit_code"] == 1
     matching = [check for check in report["checks"] if check["name"] == "dataset_paths"]
@@ -325,7 +326,7 @@ def test_cli_check_writes_report_atomically(tmp_path: Path) -> None:
 
 def test_cli_check_exit_code_matches_blocking_failure(tmp_path: Path) -> None:
     project = build_project(tmp_path)
-    (project / "split.json").unlink()
+    (project / "config/datasets/ohr_split.json").unlink()
     code = preflight.main(
         ["--check", "--no-cuda", "--dry-run", "--project-root", str(project), "--path", str(project)]
     )

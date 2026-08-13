@@ -65,7 +65,8 @@ def _write_ohr_fixture(tmp_path: Path, *, pages: range, evidence_page: int = 2) 
     (tmp_path / "OHR-Bench/data/retrieval_base/gt").mkdir(parents=True)
     (tmp_path / "ocr").mkdir()
     (tmp_path / "images").mkdir()
-    (tmp_path / "split.json").write_text(json.dumps({"splits": {"test": ["e1"], "val": [], "train": []}}))
+    (tmp_path / "config/datasets").mkdir(parents=True)
+    (tmp_path / "config/datasets/ohr_split.json").write_text(json.dumps({"splits": {"test": ["e1"], "val": [], "train": []}}))
     (tmp_path / "OHR-Bench/data/qas_v2.json").write_text(
         json.dumps(
             [

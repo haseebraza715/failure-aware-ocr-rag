@@ -3,7 +3,7 @@
 Current AAAI cluster work starts at the repository root:
 
 - [Supervisor handoff](../SUPERVISOR_HANDOFF.md)
-- [Shared-cluster runbook](../RUNBOOK.md)
+- [Shared-cluster runbook](operations/runbook.md)
 
 Those two files are the operational source of truth. Everything below is
 supporting or historical.
@@ -39,11 +39,8 @@ and dated execution notes.
 | [evidence/evidence-manifest.tsv](evidence/evidence-manifest.tsv) | Provenance of committed prototype assets |
 | [paper/faar_aaai_findings.tex](paper/faar_aaai_findings.tex) | Draft findings note, not a submitted paper |
 
-## Root CLIs
+## Command-line tools
 
-Experiment and cluster entrypoints stay at the repository root because tests
-import them as modules and Slurm templates invoke them from `$PWD`:
-
-`run.py`, `evaluate.py`, `prepare_benchmark_assets.py`,
-`register_benchmark_assets.py`, `tune_gate.py`, `extract_ocr.py`,
-`split_dataset.py`, `run_b0_one_doc_smoke.py`.
+User-facing commands are grouped under `scripts/` by purpose: experiments,
+data preparation, annotation, smoke checks, and release checks. Cluster launchers
+and scheduler templates remain under `cluster/`.

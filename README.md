@@ -24,10 +24,10 @@ are prototype evidence only. They are not AAAI baselines.
 - Branch: `faar-aaai-experiments`
 
 Do not run the cluster workflow from `main` until this branch has been reviewed
-and merged. Do not edit `split.json` or the locked OHR QA file. Their SHA-256
+and merged. Do not edit `config/datasets/ohr_split.json` or the locked OHR QA file. Their SHA-256
 checksums must remain:
 
-- `split.json`: `64583a532c5db5aa31e4cbb5cd9c7d894c7a2d5e8aa49f1a7f6041f54e714f53`
+- `config/datasets/ohr_split.json`: `64583a532c5db5aa31e4cbb5cd9c7d894c7a2d5e8aa49f1a7f6041f54e714f53`
 - `OHR-Bench/data/qas_v2.json`: `2446db28741fa9f392067ee7aae7f3b05e0d85c584069a50ddd5b1b5bc783f58`
 
 ## Setup
@@ -41,7 +41,7 @@ cd faar
 git checkout faar-aaai-experiments
 python3.12 -m venv .venv-aaai
 .venv-aaai/bin/python -m pip install --upgrade pip
-.venv-aaai/bin/python -m pip install -c constraints-aaai.txt -e '.[aaai]'
+.venv-aaai/bin/python -m pip install -c config/environment/constraints-aaai.txt -e '.[aaai]'
 .venv-aaai/bin/python -m pip check
 ```
 
@@ -68,14 +68,15 @@ sbatch cluster/templates/slurm_calibration_108.sbatch
 
 Edit partition, account, QOS, and `FAAR_GPU_BUDGET_GB` in those templates before
 submission. Exact procedure, resume, shard merge, and stop conditions are in
-[SUPERVISOR_HANDOFF.md](SUPERVISOR_HANDOFF.md) and [RUNBOOK.md](RUNBOOK.md).
+[SUPERVISOR_HANDOFF.md](SUPERVISOR_HANDOFF.md) and
+[docs/operations/runbook.md](docs/operations/runbook.md).
 The next cluster-only work is that preflight and calibration. Full validation
 stays blocked until those measurements are approved.
 
 ## Documentation
 
 - [Supervisor handoff](SUPERVISOR_HANDOFF.md)
-- [Shared-cluster runbook](RUNBOOK.md)
+- [Shared-cluster runbook](docs/operations/runbook.md)
 - [Architecture](docs/architecture/overview.md)
 - [Experimental plan](docs/experiments/aaai-plan.md)
 - [Documentation index](docs/README.md)

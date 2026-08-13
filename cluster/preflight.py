@@ -26,7 +26,7 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from faar.dataset_paths import DatasetPathError, env_raw, resolve_dataset_paths
+from faar.dataset_paths import SPLIT_RELATIVE_PATH, DatasetPathError, env_raw, resolve_dataset_paths
 
 try:
     import resource
@@ -705,7 +705,7 @@ def run_checks(
         )
 
     dataset_checks: list[tuple[str, Path]] = [
-        ("split.json", project_root / "split.json"),
+        (SPLIT_RELATIVE_PATH.as_posix(), project_root / SPLIT_RELATIVE_PATH),
         ("qas_v2.json", project_root / "OHR-Bench/data/qas_v2.json"),
     ]
     missing_paths = [label for label, candidate in dataset_checks if not candidate.is_file()]
@@ -735,7 +735,10 @@ def run_checks(
         else:
             mismatches = []
             measurements = {}
-            for relative, key in (("split.json", "split_sha256"), ("OHR-Bench/data/qas_v2.json", "qas_v2_sha256")):
+            for relative, key in (
+                (SPLIT_RELATIVE_PATH.as_posix(), "split_sha256"),
+                ("OHR-Bench/data/qas_v2.json", "qas_v2_sha256"),
+            ):
                 expected = lock.get(key) if isinstance(lock, dict) else None
                 source = project_root / relative
                 if not source.is_file() or not isinstance(expected, str):

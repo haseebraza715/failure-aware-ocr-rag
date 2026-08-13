@@ -7,8 +7,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 import run
+
 from faar.experiment_runner import run_profile
 from faar.settings import AppSettings
 
@@ -226,7 +226,7 @@ def test_cli_resume_flag_reaches_text_profile_path(monkeypatch, tmp_path: Path) 
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--mode", "faar", "--resume", "--baseline", str(baseline_path), "--out", str(tmp_path / "faar.json")],
+        ["scripts/experiments/run.py", "--mode", "faar", "--resume", "--baseline", str(baseline_path), "--out", str(tmp_path / "faar.json")],
     )
     run.main()
     assert captured["kwargs"] == {"resume": True, "publish": False}
@@ -239,7 +239,7 @@ def test_cli_shard_flags_suffix_output_and_flow_to_runner(monkeypatch, tmp_path:
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--mode", "faar", "--shard-index", "0", "--num-shards", "2", "--baseline", str(baseline_path), "--out", str(tmp_path / "faar.json")],
+        ["scripts/experiments/run.py", "--mode", "faar", "--shard-index", "0", "--num-shards", "2", "--baseline", str(baseline_path), "--out", str(tmp_path / "faar.json")],
     )
     run.main()
     assert captured["kwargs"] == {"shard_index": 0, "num_shards": 2, "publish": False}
@@ -253,7 +253,7 @@ def test_cli_defaults_unchanged_without_flags(monkeypatch, tmp_path: Path) -> No
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--mode", "faar", "--baseline", str(baseline_path), "--out", str(tmp_path / "faar.json")],
+        ["scripts/experiments/run.py", "--mode", "faar", "--baseline", str(baseline_path), "--out", str(tmp_path / "faar.json")],
     )
     run.main()
     assert captured["kwargs"] == {"publish": False}
@@ -273,7 +273,7 @@ def test_cli_visual_path_rejects_shard_flags(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--mode", "colpali", "--shard-index", "0", "--num-shards", "2", "--out", str(tmp_path / "vis.json")],
+        ["scripts/experiments/run.py", "--mode", "colpali", "--shard-index", "0", "--num-shards", "2", "--out", str(tmp_path / "vis.json")],
     )
     with pytest.raises(SystemExit, match="not supported for visual modes"):
         run.main()
@@ -293,7 +293,7 @@ def test_cli_visual_resume_reaches_baseline(monkeypatch, tmp_path: Path) -> None
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--mode", "colpali", "--resume", "--out", str(tmp_path / "vis.json")],
+        ["scripts/experiments/run.py", "--mode", "colpali", "--resume", "--out", str(tmp_path / "vis.json")],
     )
     run.main()
     assert len(visual_calls) == 1
@@ -324,7 +324,7 @@ def test_cli_partial_shard_flags_fail_closed(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--mode", "faar", "--shard-index", "0", "--out", str(tmp_path / "faar.json")],
+        ["scripts/experiments/run.py", "--mode", "faar", "--shard-index", "0", "--out", str(tmp_path / "faar.json")],
     )
     with pytest.raises(SystemExit, match="--shard-index requires --num-shards"):
         run.main()

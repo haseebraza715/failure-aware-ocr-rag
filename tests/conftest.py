@@ -5,8 +5,16 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+SCRIPT_DIRS = (
+    ROOT / "scripts/experiments",
+    ROOT / "scripts/data",
+    ROOT / "scripts/annotation",
+    ROOT / "scripts/smoke",
+    ROOT / "scripts/release",
+)
+for import_path in (SRC, *SCRIPT_DIRS):
+    if str(import_path) not in sys.path:
+        sys.path.insert(0, str(import_path))
 
 
 @pytest.fixture(autouse=True)
@@ -50,6 +58,8 @@ def isolate_model_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def isolate_run_benchmark_repository(monkeypatch: pytest.MonkeyPatch) -> None:
-    import run
+    run = sys.modules.get("run")
+    if run is None:
+        return
 
     monkeypatch.setattr(run, "load_benchmark_repository", lambda *args, **kwargs: object())

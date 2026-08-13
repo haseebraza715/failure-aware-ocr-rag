@@ -1,8 +1,9 @@
 # Cluster handoff
 
 The step-by-step supervisor handoff (clone, environment, preflight, bounded
-calibration, resume, sizing, sharded preparation) is in `RUNBOOK.md` at the
-repository root. This file documents the mechanics behind each command.
+calibration, resume, sizing, sharded preparation) is in
+`docs/operations/runbook.md`. This file documents the mechanics behind each
+command.
 
 ## Environment
 
@@ -11,7 +12,7 @@ Create the pinned CPython 3.12 environment and verify it:
 ```bash
 python3.12 -m venv .venv-aaai
 .venv-aaai/bin/python -m pip install --upgrade pip
-.venv-aaai/bin/python -m pip install -c constraints-aaai.txt -e '.[aaai]'
+.venv-aaai/bin/python -m pip install -c config/environment/constraints-aaai.txt -e '.[aaai]'
 .venv-aaai/bin/python -m pip check
 mkdir -p results/environment
 .venv-aaai/bin/python -m pip freeze > results/environment/pip-freeze.txt
@@ -79,7 +80,7 @@ Stages and boundaries:
 - B2 `--gate on --recovery random_type`: requires
   `config/gate_threshold.json` locked from validation-only results
   (`source_split` `val`, precision >= 0.75, recall >= 0.70); run
-  `tune_gate.py` on validation results first. The gate is never tuned on test
+  `scripts/experiments/tune_gate.py` on validation results first. The gate is never tuned on test
   data.
 - B3 `--mode colpali`: visual retrieval baseline.
 - B4 `--mode visrag`: visual retrieval baseline.
@@ -91,7 +92,7 @@ commands without running them.
 Resume behavior: without `--resume` the runner refuses to start if any
 `results/baselines/<dataset>/<split>/{b0,b1,b2,b3,b4}.json` exists. With
 `--resume`, completed stages are re-validated and skipped, and each missing
-stage runs. `--resume` is forwarded to `run.py` for B0..B4, so all stages
+stage runs. `--resume` is forwarded to `scripts/experiments/run.py` for B0..B4, so all stages
 reuse completed per-example checkpoints.
 
 Output validation: each stage result must carry that stage's profile and
@@ -126,7 +127,7 @@ assets must request the `val` split explicitly (`FAAR_SPLIT=val`).
 Once the validation B0 exists, tune and lock the gate threshold:
 
 ```bash
-.venv-aaai/bin/python tune_gate.py \
+.venv-aaai/bin/python scripts/experiments/tune_gate.py \
   --baseline results/baselines/ohrbench/val/b0.json \
   --out results/gate_threshold_search.json \
   --lock config/gate_threshold.json
@@ -229,7 +230,7 @@ mkdir -p "$HF_HOME"
 
 .venv-aaai/bin/python cluster/launcher.py \
   --project-root "$PWD" \
-  --entrypoint prepare_benchmark_assets.py \
+  --entrypoint scripts/data/prepare_benchmark_assets.py \
   --preflight-out results/environment/preflight_calibration.json \
   --dataset ohrbench \
   --out-root "${SCRATCH:-$PWD/results/calibration}/faar-ohr-108" \
@@ -353,7 +354,7 @@ Rules:
   (run_spec comparison includes the shard index). Merge B0 first; when merging
   B1 or B2, pass the merged B0 as `--baseline` so the merged IDs and harm rate
   are validated before publication.
-- B3/B4 (ColPali/VisRAG) are single-GPU per job: `run.py` rejects shard flags
+- B3/B4 (ColPali/VisRAG) are single-GPU per job: `scripts/experiments/run.py` rejects shard flags
   for visual modes because corpus embeddings are built once per process. The
   corpus-embedding cache (below) keeps a resumed visual run from re-encoding
   the corpus.
@@ -374,7 +375,7 @@ The merge verifies the split checksum lock, requires every shard index in
 `[0, num_shards)` exactly once, rejects overlapping or uncompleted documents,
 and requires the combined document set to match the locked split exactly. The
 merged record is published atomically. `prepare_assets.py` and
-`prepare_benchmark_assets.py` read `FAAR_PDF_ROOT`, `FAAR_PDF_ZIP`, and
+`scripts/data/prepare_benchmark_assets.py` read `FAAR_PDF_ROOT`, `FAAR_PDF_ZIP`, and
 `FAAR_DOCUMENT_INVENTORY` from the environment as defaults for their CLI
 flags, and preflight validates those configured paths before any job.
 

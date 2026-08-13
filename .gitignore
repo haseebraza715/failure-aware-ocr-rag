@@ -17,6 +17,8 @@ dist/
 # Experiment output and benchmark data are preserved as committed evidence;
 # these rules keep new runs and untracked benchmark payloads out of git status.
 data/
+!scripts/data/
+!scripts/data/*.py
 logs/
 artifacts/
 OHR-Bench/

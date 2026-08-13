@@ -2,7 +2,7 @@
 # Generated with importlib.metadata (path-safe; no editable URLs).
 # Git commit: 1dda8c81842090417610484231b3fb7727a23918
 # Platform: macOS-26.5.1-arm64 / CPython 3.12.13
-# Install: python3.12 -m venv .venv-aaai && .venv-aaai/bin/python -m pip install --upgrade pip && .venv-aaai/bin/python -m pip install -c constraints-aaai.txt -e '.[aaai]'
+# Install: python3.12 -m venv .venv-aaai && .venv-aaai/bin/python -m pip install --upgrade pip && .venv-aaai/bin/python -m pip install -c config/environment/constraints-aaai.txt -e '.[aaai]'
 # Editable project install recorded as faar==0.1.0; source identity is the Git commit above.
 # Do not substitute a raw `pip freeze` output: it can embed personal VCS URLs for editable installs.
 accelerate==1.5.2

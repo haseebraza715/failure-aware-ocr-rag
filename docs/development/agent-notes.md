@@ -57,9 +57,9 @@ Put these in the paper implementation section.
 
 ## Non-Negotiables
 
-- `split.json` is created once and never touched again.
+- `config/datasets/ohr_split.json` is created once and never touched again.
 - The gate threshold is tuned on validation data only, never on test data.
-- `evaluate.py` must always emit `EM`, `F1`, `vlm_rate`, and `harm_rate`, or the run does not count.
+- `scripts/experiments/evaluate.py` must always emit `EM`, `F1`, `vlm_rate`, and `harm_rate`, or the run does not count.
 - Never commit API keys or credentials.
 - Do not silently switch to the free/local stack when a required paid key is missing.
 - Keep all work on the `faar-aaai-experiments` branch until human review and merge.

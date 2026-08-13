@@ -1,7 +1,7 @@
 # AAAI Reproducibility Contract
 
 This document defines the software and model identity checks required before a
-FAAR result can be reported. It complements `constraints-aaai.txt`; it does not
+FAAR result can be reported. It complements `config/environment/constraints-aaai.txt`; it does not
 replace the experiment ordering or acceptance criteria in
 `docs/experiments/aaai-plan.md`.
 
@@ -14,13 +14,13 @@ constraints file:
 ```bash
 python3.12 -m venv .venv-aaai
 .venv-aaai/bin/python -m pip install --upgrade pip
-.venv-aaai/bin/python -m pip install -c constraints-aaai.txt -e '.[aaai]'
+.venv-aaai/bin/python -m pip install -c config/environment/constraints-aaai.txt -e '.[aaai]'
 .venv-aaai/bin/python -m pip check
 mkdir -p results/environment
 .venv-aaai/bin/python -m pip freeze > results/environment/pip-freeze.txt
 ```
 
-All entries in `constraints-aaai.txt` are exact pins. The set was dependency
+All entries in `config/environment/constraints-aaai.txt` are exact pins. The set was dependency
 resolved together for CPython 3.12 on macOS arm64. Platform-specific wheels must
 still be resolved and checked on the machine used for reported runs. In
 particular, do not replace the pinned PyTorch build with a CUDA build without
@@ -111,7 +111,7 @@ Each reported result must retain, at minimum:
 - `pip-freeze.txt` and successful `pip check` output.
 - Every model repository ID and resolved 40-character commit SHA.
 - The hosted VLM request model, response model identifier, and UTC timestamp.
-- Dataset name, dataset revision/checksum, split name, and `split.json` checksum.
+- Dataset name, dataset revision/checksum, split name, and `config/datasets/ohr_split.json` checksum.
 - Gate threshold and evidence that it was selected on validation only.
 - Random seeds, command line, environment-variable names, and output JSON path.
 - API call count, token usage, cost, runtime, and W&B run ID.

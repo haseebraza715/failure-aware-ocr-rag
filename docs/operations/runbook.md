@@ -1,7 +1,7 @@
 # FAAR shared-cluster runbook
 
 This is the copy-paste procedure. The short supervisor page is
-[SUPERVISOR_HANDOFF.md](SUPERVISOR_HANDOFF.md). Do not submit any job before the
+[SUPERVISOR_HANDOFF.md](../../SUPERVISOR_HANDOFF.md). Do not submit any job before the
 calibration report is approved.
 
 ---
@@ -20,7 +20,7 @@ git rev-parse HEAD          # record this SHA; it goes into the calibration repo
 ```bash
 python3.12 -m venv .venv-aaai
 .venv-aaai/bin/python -m pip install --upgrade pip
-.venv-aaai/bin/python -m pip install -c constraints-aaai.txt -e '.[aaai]'
+.venv-aaai/bin/python -m pip install -c config/environment/constraints-aaai.txt -e '.[aaai]'
 .venv-aaai/bin/python -m pip check
 mkdir -p results/environment
 .venv-aaai/bin/python -m pip freeze > results/environment/pip-freeze.txt
@@ -46,7 +46,7 @@ mkdir -p "$HF_HOME"
 # export FAAR_DOCUMENT_INVENTORY=/path/to/gt
 ```
 
-Required local inputs (see section 12): `split.json`, `config/split_checksums.json`,
+Required local inputs (see section 12): `config/datasets/ohr_split.json`, `config/split_checksums.json`,
 `OHR-Bench/data/qas_v2.json`, `OHR-Bench/data/retrieval_base/gt/`, and the PDF
 archive at `data/ohr_bench_raw/pdfs.zip` (or `FAAR_PDF_ROOT`). The
 preparation CLIs and preflight honor `FAAR_PDF_ROOT`, `FAAR_PDF_ZIP`, and
@@ -129,7 +129,7 @@ happens only against the calibration checkpoint. Do not guess elapsed time from
 the start timestamp. Supply the scheduler-reported wall time for that attempt:
 
 ```bash
-.venv-aaai/bin/python prepare_benchmark_assets.py \
+.venv-aaai/bin/python scripts/data/prepare_benchmark_assets.py \
   --project-root "$PWD" \
   --dataset ohrbench \
   --out-root results/calibration/faar-ohr-108 \
@@ -201,7 +201,7 @@ it into one record:
 Then build the locked benchmark manifest and validate coverage:
 
 ```bash
-.venv-aaai/bin/python register_benchmark_assets.py \
+.venv-aaai/bin/python scripts/data/register_benchmark_assets.py \
   --dataset ohrbench --split val \
   --ocr-dir "$FAAR_SCRATCH/faar-ohr-val/ocr" \
   --image-dir "$FAAR_SCRATCH/faar-ohr-val/images" \
@@ -223,7 +223,7 @@ is the recommended engineering check before full baselines.
 | `Immutable split integrity check failed` | The split/QA files changed or the clone is wrong; restore them, never edit |
 | `FAAR_GPU_BUDGET_GB` missing | Choose it from the preflight GPU report |
 | Job killed at walltime (143) | Re-submit; checkpoints resume automatically |
-| Hard kill / SIGKILL / node death | Resume marks the running attempt unclean and `timing_complete=false`. Apply `prepare_benchmark_assets.py --scheduler-elapsed-sec` from sacct/qstat to the checkpoint, rebuild the summary, then project. Repeat once per unresolved unclean attempt, or re-run calibration. Projection does not accept scheduler timing. |
+| Hard kill / SIGKILL / node death | Resume marks the running attempt unclean and `timing_complete=false`. Apply `scripts/data/prepare_benchmark_assets.py --scheduler-elapsed-sec` from sacct/qstat to the checkpoint, rebuild the summary, then project. Repeat once per unresolved unclean attempt, or re-run calibration. Projection does not accept scheduler timing. |
 | Checkpoint identity mismatch | The smoke document, pages, source PDF, or model lock changed. Use a new `--checkpoint` path. |
 | `CUDA out of memory` / `MemoryError` | Job aborts safely with checkpoint; reduce budget or re-check the preflight |
 | Recoverable document errors | Listed in the shard manifest; the job exits non-zero; re-submit with `--resume` to retry failed documents |

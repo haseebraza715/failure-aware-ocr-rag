@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Resumable, sharded, multi-document OHR-Bench asset preparation.
 
-Pipeline stages per document (identical to prepare_benchmark_assets.py):
+Pipeline stages per document (identical to scripts/data/prepare_benchmark_assets.py):
   1. Safe PDF extract/copy from zip or filesystem
   2. Docling structured audit Markdown
   3. Deterministic page PNG rendering
@@ -9,7 +9,7 @@ Pipeline stages per document (identical to prepare_benchmark_assets.py):
 
 Design invariants:
 
-- Documents come only from the immutable split.json + qas_v2.json pair and are
+- Documents come only from the immutable OHR split + qas_v2.json pair and are
   ordered stably (sorted unique doc_name), so shard boundaries are identical
   on every machine and every retry.
 - Shards are contiguous, non-overlapping chunks of the sorted document list
@@ -59,7 +59,7 @@ from faar.asset_preparation import (
     load_locked_docling,
     load_locked_got_ocr,
 )
-from faar.dataset_paths import DatasetPathError, env_raw, resolve_dataset_paths
+from faar.dataset_paths import SPLIT_RELATIVE_PATH, DatasetPathError, env_raw, resolve_dataset_paths
 from faar.ohr_inventory import load_resolved_ohr_document_inventory
 from faar.operations import check_termination, install_graceful_termination_handler
 from faar.resource_limits import enforce_memory_budget, is_fatal_resource_error
@@ -95,7 +95,7 @@ def verify_split_checksums(project_root: Path) -> None:
     if not isinstance(lock, dict):
         raise SystemExit(f"Split checksum lock has an invalid structure: {lock_path}")
     for relative, key in (
-        ("split.json", "split_sha256"),
+        (SPLIT_RELATIVE_PATH.as_posix(), "split_sha256"),
         ("OHR-Bench/data/qas_v2.json", "qas_v2_sha256"),
     ):
         source = project_root / relative
@@ -115,10 +115,10 @@ def verify_split_checksums(project_root: Path) -> None:
 
 def load_split_documents(project_root: Path, split: str) -> tuple[list[str], int]:
     """Return (sorted unique doc_names, example count) for the locked split."""
-    split_payload = json.loads((project_root / "split.json").read_text(encoding="utf-8"))
+    split_payload = json.loads((project_root / SPLIT_RELATIVE_PATH).read_text(encoding="utf-8"))
     example_ids = split_payload.get("splits", {}).get(split)
     if not isinstance(example_ids, list) or not example_ids:
-        raise SystemExit(f"split.json has no non-empty {split!r} selection.")
+        raise SystemExit(f"{SPLIT_RELATIVE_PATH} has no non-empty {split!r} selection.")
     rows = json.loads((project_root / "OHR-Bench/data/qas_v2.json").read_text(encoding="utf-8"))
     by_id = {str(row.get("ID")): row for row in rows}
     missing = [example_id for example_id in example_ids if example_id not in by_id]

@@ -199,7 +199,7 @@ def _verify_locked_provenance(
     source_path = payload.get("source_path")
     if not isinstance(source_path, str) or not source_path:
         raise ValueError(
-            f"Locked gate threshold at {path} records no source_path provenance; re-tune with tune_gate.py."
+            f"Locked gate threshold at {path} records no source_path provenance; re-tune with scripts/experiments/tune_gate.py."
         )
     source = Path(source_path)
     if not source.is_file():
@@ -267,7 +267,7 @@ def require_paper_gate_threshold(
 ) -> dict[str, Any]:
     if not path.is_file():
         raise ValueError(
-            f"Gate-dependent paper runs require a locked gate threshold at {path}; run tune_gate.py on validation results first."
+            f"Gate-dependent paper runs require a locked gate threshold at {path}; run scripts/experiments/tune_gate.py on validation results first."
         )
     payload = json.loads(path.read_text())
     if not isinstance(payload, dict):

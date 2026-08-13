@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 import run
+
 from faar.gate_tuning import _gate_relevant_source_digest
 from faar.settings import AppSettings
 
@@ -164,7 +164,7 @@ def test_visual_modes_dispatch_to_visual_baseline_runner(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--mode", mode, "--baseline", str(baseline_path), "--out", str(tmp_path / f"{mode}.json")],
+        ["scripts/experiments/run.py", "--mode", mode, "--baseline", str(baseline_path), "--out", str(tmp_path / f"{mode}.json")],
     )
 
     run.main()
@@ -213,7 +213,7 @@ def test_faar_and_ablations_compute_harm_against_supplied_matching_baseline(
         sys,
         "argv",
         [
-            "run.py",
+            "scripts/experiments/run.py",
             *mode_args,
             "--baseline",
             str(baseline_path),
@@ -255,7 +255,7 @@ def test_saved_run_provenance_records_openai_cost_rates(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--gate", "off", "--recovery", "off", "--out", str(output_path)],
+        ["scripts/experiments/run.py", "--gate", "off", "--recovery", "off", "--out", str(output_path)],
     )
 
     run.main()
@@ -413,7 +413,7 @@ def test_faar_mode_requires_explicit_baseline_before_computation(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--mode", "faar", "--out", str(tmp_path / "faar.json")],
+        ["scripts/experiments/run.py", "--mode", "faar", "--out", str(tmp_path / "faar.json")],
     )
     with pytest.raises(SystemExit, match="Missing required --baseline"):
         run.main()
@@ -435,7 +435,7 @@ def test_b2_requires_explicit_baseline_before_computation(
         sys,
         "argv",
         [
-            "run.py",
+            "scripts/experiments/run.py",
             "--gate",
             "on",
             "--recovery",
@@ -481,7 +481,7 @@ def test_b2_requires_paid_vlm_api_key(
         sys,
         "argv",
         [
-            "run.py",
+            "scripts/experiments/run.py",
             "--gate",
             "on",
             "--recovery",
@@ -530,7 +530,7 @@ def test_baseline_seed_provenance_mismatch_fails(
         sys,
         "argv",
         [
-            "run.py",
+            "scripts/experiments/run.py",
             "--mode",
             "faar",
             "--baseline",
@@ -557,7 +557,7 @@ def test_baseline_missing_provenance_fails_before_computation(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--mode", "faar", "--baseline", str(baseline_path), "--out", str(tmp_path / "faar.json")],
+        ["scripts/experiments/run.py", "--mode", "faar", "--baseline", str(baseline_path), "--out", str(tmp_path / "faar.json")],
     )
     with pytest.raises(SystemExit, match="missing run_spec.model_provenance"):
         run.main()
@@ -572,7 +572,7 @@ def test_b0_rejects_baseline_argument(monkeypatch: pytest.MonkeyPatch, tmp_path:
         sys,
         "argv",
         [
-            "run.py",
+            "scripts/experiments/run.py",
             "--gate",
             "off",
             "--recovery",
@@ -617,7 +617,7 @@ def test_baseline_missing_example_id_coverage_fails(
         sys,
         "argv",
         [
-            "run.py",
+            "scripts/experiments/run.py",
             "--mode",
             "faar",
             "--baseline",

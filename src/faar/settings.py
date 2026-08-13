@@ -8,6 +8,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, model_validator
 
+from .dataset_paths import SPLIT_RELATIVE_PATH
+
 # Local credentials live in an ignored .env file; explicit shell exports win.
 load_dotenv(override=False)
 
@@ -47,7 +49,7 @@ def _canonical_model_repository(repository: str) -> str:
 def resolve_retrieval_models(
     *, embed: str | None = None, reranker: str | None = None
 ) -> tuple[str, str]:
-    """Resolve effective embedding/reranker model names exactly as run.py will.
+    """Resolve effective embedding/reranker model names exactly as scripts/experiments/run.py will.
 
     Applies CLI override, then environment (EMBED_MODEL/EMBED_MODEL_REPO,
     RERANKER/RERANKER_MODEL_REPO), then committed model-revision locks, then
@@ -65,7 +67,7 @@ def effective_retrieval_provenance(
 ) -> dict[str, dict[str, str | None]]:
     """Gate-relevant model provenance the next B0 will record (embedding + reranker).
 
-    Mirrors run.py's resolution so gate-lock validation can compare the lock
+    Mirrors scripts/experiments/run.py's resolution so gate-lock validation can compare the lock
     against the exact provenance a fresh run will produce, without importing
     torch or initializing any external client.
     """
@@ -289,7 +291,7 @@ class AppSettings(BaseModel):
         self.phase0_ocr_dir = (self.phase0_ocr_dir or self.project_root / "artifacts/phase0/ocr_text").resolve()
         self.logs_dir = (self.logs_dir or self.project_root / "logs/phase1").resolve()
         self.artifacts_dir = (self.artifacts_dir or self.project_root / "artifacts/phase1").resolve()
-        self.split_path = (self.split_path or self.project_root / "split.json").resolve()
+        self.split_path = (self.split_path or self.project_root / SPLIT_RELATIVE_PATH).resolve()
         self.external_data_dir = (self.external_data_dir or self.project_root / "data/external").resolve()
         self.results_dir = (self.results_dir or self.project_root / "results").resolve()
         self.gate_threshold_path = (self.gate_threshold_path or self.project_root / "config/gate_threshold.json").resolve()

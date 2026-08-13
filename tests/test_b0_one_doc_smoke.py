@@ -98,14 +98,15 @@ def _seed_mini_ohr_fixture(project: Path, *, doc_name: str = DEFAULT_SMOKE_DOC) 
 
     example_id = "82f09e85-85a0-459c-88fc-0479b095cb6f"
     qas_src = ROOT / "OHR-Bench/data/qas_v2.json"
-    split_src = ROOT / "split.json"
+    split_src = ROOT / "config/datasets/ohr_split.json"
     (project / "OHR-Bench/data").mkdir(parents=True, exist_ok=True)
+    (project / "config/datasets").mkdir(parents=True, exist_ok=True)
     if qas_src.is_file() and split_src.is_file():
         # Use real locked split + the real QA row for the smoke doc (no fabrication).
         split_payload = json.loads(split_src.read_text(encoding="utf-8"))
         qas_rows = json.loads(qas_src.read_text(encoding="utf-8"))
         row = next(r for r in qas_rows if str(r.get("doc_name")) == doc_name and str(r["ID"]) == example_id)
-        (project / "split.json").write_text(
+        (project / "config/datasets/ohr_split.json").write_text(
             json.dumps({"splits": {"train": [], "val": [example_id], "test": []}}, indent=2) + "\n",
             encoding="utf-8",
         )
@@ -123,7 +124,7 @@ def _seed_mini_ohr_fixture(project: Path, *, doc_name: str = DEFAULT_SMOKE_DOC) 
             encoding="utf-8",
         )
     else:
-        (project / "split.json").write_text(
+        (project / "config/datasets/ohr_split.json").write_text(
             json.dumps({"splits": {"train": [], "val": [example_id], "test": []}}) + "\n",
             encoding="utf-8",
         )
@@ -231,7 +232,7 @@ def test_real_prepared_smoke_assets_cli(tmp_path: Path) -> None:
     out_path = tmp_path / "b0_one_doc.json"
     cmd = [
         sys.executable,
-        str(ROOT / "run_b0_one_doc_smoke.py"),
+        str(ROOT / "scripts/smoke/run_b0_one_doc_smoke.py"),
         "--project-root",
         str(ROOT),
         "--smoke-root",

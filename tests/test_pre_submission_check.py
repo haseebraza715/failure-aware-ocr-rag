@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-CHECK_PATH = Path(__file__).resolve().parents[1] / "pre_submission_check.py"
+CHECK_PATH = Path(__file__).resolve().parents[1] / "scripts/release/pre_submission_check.py"
 CHECK_SPEC = spec_from_file_location("pre_submission_check", CHECK_PATH)
 assert CHECK_SPEC and CHECK_SPEC.loader
 pre_submission_check = module_from_spec(CHECK_SPEC)

@@ -4,9 +4,9 @@ import json
 import sys
 from pathlib import Path
 
+import extract_ocr
 import pytest
 
-import extract_ocr
 from faar.settings import LOCKED_MODELS, AppSettings
 
 
@@ -69,7 +69,7 @@ def test_env_override_cannot_bypass_committed_got_ocr_lock(
         sys,
         "argv",
         [
-            "extract_ocr.py",
+            "scripts/annotation/extract_ocr.py",
             "--engine",
             "got-ocr-2",
             "--samples",
@@ -116,7 +116,7 @@ def test_extract_ocr_cli_threads_locked_revision(monkeypatch, tmp_path: Path) ->
         sys,
         "argv",
         [
-            "extract_ocr.py",
+            "scripts/annotation/extract_ocr.py",
             "--engine",
             "got-ocr-2",
             "--samples",

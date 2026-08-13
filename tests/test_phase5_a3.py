@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import run
+
 from faar.graph import build_graph
 from faar.settings import AppSettings
 from faar.types import Chunk, Phase0Example, RetrievalHit
@@ -79,7 +80,7 @@ def test_a3_cli_configures_symspell_wordlevel_fallback(monkeypatch, tmp_path: Pa
         sys,
         "argv",
         [
-            "run.py",
+            "scripts/experiments/run.py",
             "--ablate",
             "no_wordlevel_llm",
             "--wordlevel_fallback",

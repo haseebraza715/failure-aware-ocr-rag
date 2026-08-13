@@ -18,7 +18,7 @@
 # only after the preflight report is approved; do not submit anything else yet.
 #
 # Requirements before submission:
-#   1. Preflight approved (see RUNBOOK.md).
+#   1. Preflight approved (see docs/operations/runbook.md).
 #   2. FAAR_GPU_BUDGET_GB set below to a budget chosen from the preflight VRAM report.
 #   3. OHR archive present (data/ohr_bench_raw/pdfs.zip) or FAAR_PDF_ROOT exported.
 #
@@ -39,7 +39,7 @@ mkdir -p "$FAAR_SCRATCH" "$HF_HOME"
 
 "${FAAR_PYTHON}" cluster/launcher.py \
   --project-root "${SLURM_SUBMIT_DIR:-$PWD}" \
-  --entrypoint prepare_benchmark_assets.py \
+  --entrypoint scripts/data/prepare_benchmark_assets.py \
   --preflight-out "results/environment/preflight_calibration.json" \
   --dataset ohrbench \
   --out-root "$FAAR_SCRATCH/faar-ohr-108" \

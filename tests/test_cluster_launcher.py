@@ -116,9 +116,10 @@ def test_explicit_vlm_on_b0_does_not_require_a_key(monkeypatch, tmp_path: Path) 
 
 
 def test_build_child_command_plain_argv_no_shell(tmp_path: Path) -> None:
-    (tmp_path / "run.py").write_text("", encoding="utf-8")
+    (tmp_path / "scripts/experiments").mkdir(parents=True)
+    (tmp_path / "scripts/experiments/run.py").write_text("", encoding="utf-8")
     argv = launcher.build_child_command(tmp_path, ["--gate", "on", "--out", "results/x.json"], "/usr/bin/python3")
-    assert argv == ["/usr/bin/python3", str(tmp_path / "run.py"), "--gate", "on", "--out", "results/x.json"]
+    assert argv == ["/usr/bin/python3", str(tmp_path / "scripts/experiments/run.py"), "--gate", "on", "--out", "results/x.json"]
     assert all(isinstance(item, str) for item in argv)
 
 
@@ -128,13 +129,14 @@ def test_build_child_command_missing_runpy_fails(tmp_path: Path) -> None:
 
 
 def test_build_child_command_accepts_repository_local_entrypoint(tmp_path: Path) -> None:
-    entrypoint = tmp_path / "prepare_benchmark_assets.py"
+    entrypoint = tmp_path / "scripts/data/prepare_benchmark_assets.py"
+    entrypoint.parent.mkdir(parents=True)
     entrypoint.write_text("", encoding="utf-8")
     argv = launcher.build_child_command(
         tmp_path,
         ["--dataset", "ohrbench", "--execute"],
         "/usr/bin/python3",
-        "prepare_benchmark_assets.py",
+        "scripts/data/prepare_benchmark_assets.py",
     )
     assert argv == [
         "/usr/bin/python3",
@@ -518,7 +520,8 @@ def test_forwarded_signal_child_exits_zero_yields_128_plus_signal(monkeypatch, t
 
 
 def _write_fake_runpy(tmp_path: Path) -> None:
-    (tmp_path / "run.py").write_text(
+    (tmp_path / "scripts/experiments").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "scripts/experiments/run.py").write_text(
         "\n".join(
             [
                 "import os, signal, sys, time",

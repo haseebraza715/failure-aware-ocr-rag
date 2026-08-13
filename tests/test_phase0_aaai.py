@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from evaluate import evaluate_results
 from split_dataset import build_split
 

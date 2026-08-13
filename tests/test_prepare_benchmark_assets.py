@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from prepare_benchmark_assets import load_checkpoint, save_checkpoint
+from prepare_benchmark_assets import page_image_name as cli_page_image_name
 
 from faar.asset_preparation import (
     execute_document_preparation,
@@ -14,8 +16,6 @@ from faar.asset_preparation import (
     page_ocr_name,
     plan_document_work,
 )
-from prepare_benchmark_assets import load_checkpoint, save_checkpoint
-from prepare_benchmark_assets import page_image_name as cli_page_image_name
 
 
 def test_deterministic_output_naming() -> None:
@@ -284,7 +284,7 @@ def test_cli_smoke_writes_plan_without_execution(tmp_path: Path) -> None:
         )
     )
     out_root = tmp_path / "out"
-    script = Path(__file__).resolve().parents[1] / "prepare_benchmark_assets.py"
+    script = Path(__file__).resolve().parents[1] / "scripts/data/prepare_benchmark_assets.py"
     completed = subprocess.run(
         [
             sys.executable,
@@ -338,7 +338,8 @@ def test_calibration_first_run_preemption_persists_checkpoint(
     )
     (project / "OHR-Bench/data").mkdir(parents=True)
     (project / "OHR-Bench/data/qas_v2.json").write_text(json.dumps([{"ID": "e1", "doc_name": "academic/demo"}]))
-    (project / "split.json").write_text(json.dumps({"splits": {"val": ["e1"]}}))
+    (project / "config/datasets").mkdir(parents=True, exist_ok=True)
+    (project / "config/datasets/ohr_split.json").write_text(json.dumps({"splits": {"val": ["e1"]}}))
     gt = project / "OHR-Bench/data/retrieval_base/gt/academic"
     gt.mkdir(parents=True)
     (gt / "demo.json").write_text(json.dumps([{"text": "x", "page_idx": 0}]))
@@ -428,7 +429,7 @@ import sys
 from pathlib import Path
 root = Path(%r)
 sys.path.insert(0, str(root / "src"))
-sys.path.insert(0, str(root))
+sys.path.insert(0, str(root / "scripts" / "data"))
 from faar.asset_preparation import load_locked_got_ocr, plan_document_work, page_image_name
 import prepare_benchmark_assets
 banned = {"torch", "transformers", "colpali_engine"}
@@ -464,13 +465,13 @@ LOCK = {
 
 def _calibration_project(tmp_path: Path, docs: tuple[str, ...] = ("academic/demo",)) -> Path:
     project = tmp_path
-    (project / "config").mkdir()
+    (project / "config/datasets").mkdir(parents=True)
     (project / "config/model_revisions.json").write_text(json.dumps(LOCK), encoding="utf-8")
     (project / "OHR-Bench/data").mkdir(parents=True)
     (project / "OHR-Bench/data/qas_v2.json").write_text(
         json.dumps([{"ID": f"e{i}", "doc_name": doc} for i, doc in enumerate(docs)])
     )
-    (project / "split.json").write_text(json.dumps({"splits": {"val": [f"e{i}" for i in range(len(docs))]}}))
+    (project / "config/datasets/ohr_split.json").write_text(json.dumps({"splits": {"val": [f"e{i}" for i in range(len(docs))]}}))
     for doc in docs:
         gt = project / "OHR-Bench/data/retrieval_base/gt" / Path(doc).parent
         gt.mkdir(parents=True, exist_ok=True)
@@ -739,7 +740,7 @@ def test_relative_inventory_from_outside_working_directory(tmp_path: Path) -> No
     project = _calibration_project(tmp_path)
     outsider = tmp_path / "cwd"
     outsider.mkdir()
-    script = Path(__file__).resolve().parents[1] / "prepare_benchmark_assets.py"
+    script = Path(__file__).resolve().parents[1] / "scripts/data/prepare_benchmark_assets.py"
     completed = subprocess.run(
         [
             sys.executable,

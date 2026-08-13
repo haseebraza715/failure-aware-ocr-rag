@@ -39,7 +39,7 @@ def write_lock(project: Path) -> None:
     (config / "split_checksums.json").write_text(
         json.dumps(
             {
-                "split_sha256": prepare.sha256_file(project / "split.json"),
+                "split_sha256": prepare.sha256_file(project / "config/datasets/ohr_split.json"),
                 "qas_v2_sha256": prepare.sha256_file(project / "OHR-Bench/data/qas_v2.json"),
             }
         ),
@@ -53,7 +53,8 @@ def build_project(tmp_path: Path, docs: list[str] = DOCS) -> Path:
     (project / "OHR-Bench/data/qas_v2.json").write_text(
         json.dumps([{"ID": f"e{i}", "doc_name": doc} for i, doc in enumerate(docs)])
     )
-    (project / "split.json").write_text(
+    (project / "config/datasets").mkdir(parents=True, exist_ok=True)
+    (project / "config/datasets/ohr_split.json").write_text(
         json.dumps(
             {
                 "splits": {
@@ -978,7 +979,7 @@ def test_split_checksum_mismatch_fails_closed(tmp_path: Path) -> None:
         cwd=project,
     )
     assert completed.returncode == 0
-    with (project / "split.json").open("a") as handle:
+    with (project / "config/datasets/ohr_split.json").open("a") as handle:
         handle.write(" ")
     tampered = subprocess.run(
         [

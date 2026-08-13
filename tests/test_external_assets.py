@@ -513,7 +513,7 @@ def test_cli_writes_portable_query_and_corpus_manifest(tmp_path: Path) -> None:
         )
     )
     out = tmp_path / "manifest.json"
-    script = Path(__file__).resolve().parents[1] / "register_external_assets.py"
+    script = Path(__file__).resolve().parents[1] / "scripts/data/register_external_assets.py"
     completed = subprocess.run(
         [
             sys.executable,

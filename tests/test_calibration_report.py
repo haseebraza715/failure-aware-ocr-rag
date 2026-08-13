@@ -72,7 +72,8 @@ def build_project(tmp_path: Path) -> Path:
     project = tmp_path
     (project / "OHR-Bench/data").mkdir(parents=True, exist_ok=True)
     (project / "OHR-Bench/data/qas_v2.json").write_text(json.dumps([{"ID": "e1", "doc_name": "manual/x"}]))
-    (project / "split.json").write_text(json.dumps({"splits": {"val": ["e1"]}}))
+    (project / "config/datasets").mkdir(parents=True, exist_ok=True)
+    (project / "config/datasets/ohr_split.json").write_text(json.dumps({"splits": {"val": ["e1"]}}))
     return project
 
 
@@ -337,7 +338,7 @@ def test_build_summary_exposes_incomplete_timing(tmp_path: Path) -> None:
     assert summary["runtime"]["timing_complete"] is False
     assert summary["runtime"]["total_wall_sec"] is None
     assert summary["runtime"]["measured_wall_sec"] == 12.0
-    with pytest.raises(SystemExit, match="prepare_benchmark_assets.py --scheduler-elapsed-sec"):
+    with pytest.raises(SystemExit, match="scripts/data/prepare_benchmark_assets.py --scheduler-elapsed-sec"):
         report.project_preparation(
             summary,
             headroom_fraction=0.25,
@@ -359,7 +360,7 @@ def test_project_cli_rejects_incomplete_timing(tmp_path: Path) -> None:
     summary = report.build_summary(checkpoint_path=path, project_root=project)
     summary_path = tmp_path / "summary.json"
     summary_path.write_text(json.dumps(summary))
-    with pytest.raises(SystemExit, match="prepare_benchmark_assets.py --scheduler-elapsed-sec"):
+    with pytest.raises(SystemExit, match="scripts/data/prepare_benchmark_assets.py --scheduler-elapsed-sec"):
         report.main(["project", "--summary", str(summary_path)])
 
 

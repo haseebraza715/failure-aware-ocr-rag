@@ -8,7 +8,8 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parent / "src"
+ROOT = Path(__file__).resolve().parents[2]
+SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
@@ -18,7 +19,7 @@ from faar.settings import AppSettings
 
 IMMUTABLE_REVISION_RE = re.compile(r"[0-9a-f]{40}")
 MUTABLE_REVISION_NAMES = {"main", "master", "latest", "head"}
-MODEL_REVISIONS_PATH = Path(__file__).resolve().parent / "config" / "model_revisions.json"
+MODEL_REVISIONS_PATH = ROOT / "config" / "model_revisions.json"
 
 
 def _committed_got_ocr_lock() -> dict[str, str]:

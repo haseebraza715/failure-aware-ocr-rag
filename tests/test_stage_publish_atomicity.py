@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 import run
 from evaluate import evaluate_results
+
 from faar.settings import AppSettings
 
 
@@ -113,7 +113,7 @@ def test_text_stage_publishes_once_with_computed_harm(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", *cli_args, "--baseline", str(baseline), "--out", str(out)],
+        ["scripts/experiments/run.py", *cli_args, "--baseline", str(baseline), "--out", str(out)],
     )
 
     run.main()
@@ -142,7 +142,7 @@ def test_visual_stage_publishes_once_with_computed_harm(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--mode", mode, "--baseline", str(baseline), "--out", str(out)],
+        ["scripts/experiments/run.py", "--mode", mode, "--baseline", str(baseline), "--out", str(out)],
     )
 
     run.main()
@@ -171,7 +171,7 @@ def test_visual_stage_dict_return_fails_before_publication(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--mode", mode, "--baseline", str(baseline), "--out", str(out)],
+        ["scripts/experiments/run.py", "--mode", mode, "--baseline", str(baseline), "--out", str(out)],
     )
 
     with pytest.raises(SystemExit, match="expected list\\[dict\\] per-example rows"):
@@ -200,7 +200,7 @@ def test_visual_stage_harm_failure_leaves_no_public_output(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--mode", mode, "--baseline", str(baseline), "--out", str(out)],
+        ["scripts/experiments/run.py", "--mode", mode, "--baseline", str(baseline), "--out", str(out)],
     )
 
     with pytest.raises(RuntimeError, match="simulated cluster cancellation"):
@@ -222,7 +222,7 @@ def test_text_stage_harm_failure_leaves_no_public_output(
         sys,
         "argv",
         [
-            "run.py",
+            "scripts/experiments/run.py",
             "--gate",
             "off",
             "--recovery",
@@ -252,7 +252,7 @@ def test_text_stage_baseline_coverage_failure_leaves_no_public_output(
         sys,
         "argv",
         [
-            "run.py",
+            "scripts/experiments/run.py",
             "--gate",
             "off",
             "--recovery",
@@ -282,7 +282,7 @@ def test_text_stage_interrupted_before_harm_leaves_no_public_output(
         sys,
         "argv",
         [
-            "run.py",
+            "scripts/experiments/run.py",
             "--gate",
             "off",
             "--recovery",
@@ -312,7 +312,7 @@ def test_visual_stage_interrupted_before_harm_leaves_no_public_output(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--mode", "colpali", "--baseline", str(baseline), "--out", str(out)],
+        ["scripts/experiments/run.py", "--mode", "colpali", "--baseline", str(baseline), "--out", str(out)],
     )
 
     with pytest.raises(RuntimeError, match="simulated cluster cancellation"):
@@ -356,7 +356,7 @@ def test_b0_publishes_once_with_zero_harm(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--gate", "off", "--recovery", "off", "--out", str(out)],
+        ["scripts/experiments/run.py", "--gate", "off", "--recovery", "off", "--out", str(out)],
     )
 
     run.main()

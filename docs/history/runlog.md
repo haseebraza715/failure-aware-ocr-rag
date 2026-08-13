@@ -1,7 +1,7 @@
 # Historical: AAAI run log
 
 Dated command log from the experiment branch. It is not a runbook.
-Current operations are in [RUNBOOK.md](../../RUNBOOK.md).
+Current operations are in [the shared-cluster runbook](../operations/runbook.md).
 
 ---
 

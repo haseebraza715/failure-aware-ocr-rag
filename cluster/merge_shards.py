@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Merge per-shard baseline outputs into one unsharded result file.
 
-Multi-GPU usage: launch one run.py process per GPU with
+Multi-GPU usage: launch one scripts/experiments/run.py process per GPU with
 --shard-index i --num-shards N, then merge the shard outputs:
 
     python cluster/merge_shards.py --out results/b2.json --baseline results/b0.json \

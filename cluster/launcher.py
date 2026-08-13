@@ -363,7 +363,7 @@ def build_child_command(
     root: Path,
     run_args: list[str],
     python_executable: str | None = None,
-    entrypoint: Path | str = "run.py",
+    entrypoint: Path | str = "scripts/experiments/run.py",
 ) -> list[str]:
     python = python_executable or os.getenv("FAAR_PYTHON") or sys.executable
     candidate = Path(entrypoint)
@@ -461,8 +461,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--entrypoint",
         type=Path,
-        default=Path("run.py"),
-        help="Repository-local Python entry point (default: run.py)",
+        default=Path("scripts/experiments/run.py"),
+        help="Repository-local Python entry point (default: scripts/experiments/run.py)",
     )
     parser.add_argument("--preflight-out", type=Path, default=None, help="Saved redacted preflight JSON path")
     args, run_args = parser.parse_known_args(argv)

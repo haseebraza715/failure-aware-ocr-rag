@@ -197,7 +197,7 @@ def validate_gate_lock(
     path = root / "config" / "gate_threshold.json"
     if not path.is_file():
         raise SystemExit(
-            f"B2 requires a locked gate threshold at {path}; run tune_gate.py on validation results first."
+            f"B2 requires a locked gate threshold at {path}; run scripts/experiments/tune_gate.py on validation results first."
         )
     try:
         return require_paper_gate_threshold(

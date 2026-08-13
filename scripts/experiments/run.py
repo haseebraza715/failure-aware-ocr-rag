@@ -12,11 +12,12 @@ from typing import Any
 
 import numpy as np
 
-SRC = Path(__file__).resolve().parent / "src"
+SRC = Path(__file__).resolve().parents[2] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from evaluate import load_rows
+
 from faar.api_logging import vlm_cost_rates
 from faar.benchmarks import load_benchmark_repository
 from faar.experiment_runner import run_profile

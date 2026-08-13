@@ -17,7 +17,7 @@ EXPECTED_ENTRYPOINTS = {
     ],
     "slurm_calibration_108.sbatch": [
         ("cluster/launcher.py", {"--project-root", "--entrypoint", "--preflight-out"}),
-        ("prepare_benchmark_assets.py", {"--dataset", "--out-root", "--smoke-doc", "--execute"}),
+        ("scripts/data/prepare_benchmark_assets.py", {"--dataset", "--out-root", "--smoke-doc", "--execute"}),
     ],
     "slurm_prepare_val_shard.sbatch": [
         ("cluster/launcher.py", {"--project-root", "--entrypoint", "--preflight-out"}),

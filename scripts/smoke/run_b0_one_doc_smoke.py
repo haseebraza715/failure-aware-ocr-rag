@@ -2,7 +2,7 @@
 """Phase 0 one-document B0 end-to-end smoke CLI.
 
 Uses prepared assets under data/benchmark_prep/smoke/ only.
-Does not modify split.json, does not run the full dataset, and does not
+Does not modify config/datasets/ohr_split.json, does not run the full dataset, and does not
 count as a paper result. Default retrieval is a local lexical mock (no HF
 downloads, no paid VLM calls). Pass --use-pinned-models to load the locked
 NV-Embed-v2 + bge-reranker-v2-m3 stack when available.
@@ -26,7 +26,7 @@ if "--use-pinned-models" not in sys.argv:
     os.environ["OMP_WAIT_POLICY"] = "PASSIVE"
     os.environ["KMP_INIT_AT_FORK"] = "TRUE"
 
-SRC = Path(__file__).resolve().parent / "src"
+SRC = Path(__file__).resolve().parents[2] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 

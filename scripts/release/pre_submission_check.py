@@ -75,7 +75,7 @@ def main() -> None:
     allowed_checklist_references = {
         "./docs/experiments/aaai-plan.md",
         "./docs/history/aaai-execution-status.md",
-        "./pre_submission_check.py",
+        "./scripts/release/pre_submission_check.py",
     }
     try:
         raw_handle_matches = scan_git_matches(root, "haseebraza")

@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import run as run_module
+
 from faar.api_logging import anthropic_cost_rates, openai_cost_rates, vlm_cost_rates
 from faar.experiment_runner import run_profile
 from faar.recovery import VisualFallback
@@ -173,7 +174,7 @@ def test_run_spec_persists_anthropic_cost_rates(monkeypatch, tmp_path: Path) -> 
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--gate", "off", "--recovery", "off", "--out", str(output_path)],
+        ["scripts/experiments/run.py", "--gate", "off", "--recovery", "off", "--out", str(output_path)],
     )
 
     run_module.main()

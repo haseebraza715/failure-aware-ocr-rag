@@ -18,9 +18,9 @@
 #
 # Prerequisites:
 #   - Prepared validation assets + locked manifest for the split in use
-#     (register_benchmark_assets.py output; see RUNBOOK.md).
+#     (scripts/data/register_benchmark_assets.py output; see docs/operations/runbook.md).
 #   - config/gate_threshold.json if the pilot runs B2 or later
-#     (tune_gate.py on validation B0; run --stop-after b0 otherwise).
+#     (scripts/experiments/tune_gate.py on validation B0; run --stop-after b0 otherwise).
 #   - OPENAI_API_KEY (or ANTHROPIC_API_KEY for Claude) read from the submit
 #     environment or $PWD/.env. NEVER paste keys into this file.
 #

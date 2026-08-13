@@ -19,11 +19,11 @@
 # sync (--array=0-3 with SHARDS=4 launches shards 0..3).
 #
 # Only after the calibration report is approved and the shard count is sized
-# (see RUNBOOK.md "Sizing and shard count"). Each shard writes its own
+# (see docs/operations/runbook.md "Sizing and shard count"). Each shard writes its own
 # checkpoint and a shard manifest; shards are resumed by re-submitting the job.
 #
 # After ALL shards complete, build the locked benchmark manifest with
-# register_benchmark_assets.py (see RUNBOOK.md) and validate the merge before
+# scripts/data/register_benchmark_assets.py (see docs/operations/runbook.md) and validate the merge before
 # any baseline run.
 #
 # Requirements: FAAR_GPU_BUDGET_GB set from the preflight report; OHR archive

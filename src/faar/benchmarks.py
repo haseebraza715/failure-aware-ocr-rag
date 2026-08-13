@@ -10,6 +10,7 @@ from .asset_paths import AssetPathError, resolve_project_asset, to_relative_proj
 from .asset_preparation import sha256_file
 from .chunking import build_page_chunks
 from .data import DatasetUnavailableError
+from .dataset_paths import SPLIT_RELATIVE_PATH
 from .ohr_inventory import load_resolved_ohr_document_inventory
 from .settings import RetrievalSettings
 from .types import Phase0Example
@@ -292,7 +293,7 @@ def load_benchmark_repository(project_root: Path, dataset: str, split: str) -> B
     if not manifest_path.exists():
         raise DatasetUnavailableError(
             f"Missing benchmark asset manifest: {manifest_path}. "
-            "Create it with register_benchmark_assets.py after GOT-OCR and page rendering are complete."
+            "Create it with scripts/data/register_benchmark_assets.py after GOT-OCR and page rendering are complete."
         )
     return load_benchmark_repository_from_manifest(
         project_root,
@@ -331,7 +332,7 @@ def build_ohr_asset_manifest(
     document_inventory_dir: Path | None = None,
 ) -> dict[str, list[dict[str, Any]] | dict[str, list[int]]]:
     project_root = project_root.expanduser().resolve()
-    split_payload = json.loads((project_root / "split.json").read_text())
+    split_payload = json.loads((project_root / SPLIT_RELATIVE_PATH).read_text())
     if split not in split_payload["splits"]:
         raise ValueError(f"Unknown OHR-Bench split {split!r}.")
     selected_ids = set(split_payload["splits"][split])

@@ -77,7 +77,7 @@ def test_a1_cli_uses_the_no_gate_profile(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--ablate", "no_gate", "--baseline", str(baseline_path), "--out", str(tmp_path / "a1.json")],
+        ["scripts/experiments/run.py", "--ablate", "no_gate", "--baseline", str(baseline_path), "--out", str(tmp_path / "a1.json")],
     )
 
     runner.main()

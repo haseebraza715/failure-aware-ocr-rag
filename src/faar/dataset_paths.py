@@ -6,6 +6,7 @@ from pathlib import Path
 
 DEFAULT_INVENTORY = "OHR-Bench/data/retrieval_base/gt"
 DEFAULT_PDF_ZIP = "data/ohr_bench_raw/pdfs.zip"
+SPLIT_RELATIVE_PATH = Path("config/datasets/ohr_split.json")
 
 INVENTORY_LABEL = "document inventory"
 PDF_ROOT_LABEL = "FAAR_PDF_ROOT / --pdf-root"

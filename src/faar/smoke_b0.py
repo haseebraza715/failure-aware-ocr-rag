@@ -22,6 +22,7 @@ from typing import Any
 from .api_logging import vlm_cost_rates
 from .benchmarks import BenchmarkRepository, load_benchmark_repository_from_manifest
 from .data import DatasetUnavailableError
+from .dataset_paths import SPLIT_RELATIVE_PATH
 from .experiment_profiles import apply_profile
 from .metrics import exact_match, token_f1
 from .results_aggregator import summarize_examples
@@ -126,12 +127,12 @@ def build_ohr_one_doc_smoke_manifest(
 ) -> dict[str, Any]:
     """Build a one-document manifest from prepared smoke assets and locked split/qas.
 
-    Does not fabricate QA rows or page counts. Reads real split.json + qas_v2.json
+    Does not fabricate QA rows or page counts. Reads real config/datasets/ohr_split.json + qas_v2.json
     and requires prepared OCR/image files for every inventoried page of the smoke doc.
     """
     project_root = project_root.expanduser().resolve()
     smoke_root = smoke_root_path(project_root, smoke_root)
-    split_path = project_root / "split.json"
+    split_path = project_root / SPLIT_RELATIVE_PATH
     qas_path = project_root / "OHR-Bench/data/qas_v2.json"
     if not split_path.is_file():
         raise DatasetUnavailableError(f"Missing immutable split file: {split_path}")
@@ -170,7 +171,7 @@ def build_ohr_one_doc_smoke_manifest(
         )
     if not records:
         raise DatasetUnavailableError(
-            f"No {split} examples in split.json/qas_v2.json for smoke doc {doc_name!r}."
+            f"No {split} examples in config/datasets/ohr_split.json/qas_v2.json for smoke doc {doc_name!r}."
         )
 
     page_ids = _inventory_page_ids(smoke_root, doc_name)

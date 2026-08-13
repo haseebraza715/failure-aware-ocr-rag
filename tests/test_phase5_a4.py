@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 import run
+
 from faar.experiment_profiles import apply_profile
 from faar.graph import build_graph
 from faar.settings import AppSettings
@@ -66,7 +67,7 @@ def test_a4_cli_selects_no_backtrack_profile(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run.py", "--ablate", "no_semantic_retry", "--baseline", str(baseline_path), "--out", str(tmp_path / "a4.json")],
+        ["scripts/experiments/run.py", "--ablate", "no_semantic_retry", "--baseline", str(baseline_path), "--out", str(tmp_path / "a4.json")],
     )
 
     run.main()

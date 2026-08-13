@@ -2,7 +2,7 @@
 
 FAAR is ready for a bounded 108-page CUDA calibration on a shared cluster.
 Full validation and B0-B4 paper runs have not started. The complete command and
-recovery reference is [RUNBOOK.md](RUNBOOK.md).
+recovery reference is [docs/operations/runbook.md](docs/operations/runbook.md).
 
 ## Current gate
 
@@ -26,7 +26,7 @@ git rev-parse HEAD
 
 python3.12 -m venv .venv-aaai
 .venv-aaai/bin/python -m pip install --upgrade pip
-.venv-aaai/bin/python -m pip install -c constraints-aaai.txt -e '.[aaai]'
+.venv-aaai/bin/python -m pip install -c config/environment/constraints-aaai.txt -e '.[aaai]'
 .venv-aaai/bin/python -m pip check
 cp .env.example .env
 ```
@@ -97,7 +97,8 @@ result. Do not submit validation preparation or baseline jobs concurrently.
 
 Slurm sends SIGTERM 120 seconds before wall time. Re-submit the same script
 after exit 143; completed work resumes from the checkpoint. For SIGKILL or node
-failure, obtain elapsed time from `sacct` or `qstat` and follow RUNBOOK section 8
+failure, obtain elapsed time from `sacct` or `qstat` and follow
+[runbook section 8](docs/operations/runbook.md#8-resume-a-preempted-job)
 before projecting resources. Never estimate missing wall time.
 
 Return these files, without `.env`, keys, PDFs, or model caches:
@@ -108,7 +109,8 @@ Return these files, without `.env`, keys, PDFs, or model caches:
 4. `results/calibration/calibration_summary.json`
 5. `results/calibration/preparation_projection.json`
 
-RUNBOOK section 9 contains the summary and projection commands. The report must
+[Runbook section 9](docs/operations/runbook.md#9-build-the-calibration-report-and-send-it-back)
+contains the summary and projection commands. The report must
 include commit SHA, GPU model, peak RSS, stage and total runtime, OCR throughput,
 generated storage, cache growth, resume state, timing completeness, and locked
 hashes.

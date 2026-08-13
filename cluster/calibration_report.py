@@ -2,7 +2,7 @@
 """Calibration reporting and runtime/storage projections.
 
 `build` consumes a calibration checkpoint (the bounded 108-page single-document
-run produced by prepare_benchmark_assets.py, or a prepare_assets.py shard
+run produced by scripts/data/prepare_benchmark_assets.py, or a prepare_assets.py shard
 checkpoint) and emits a machine-readable summary:
 
 - commit SHA, non-secret configuration, and locked split/manifest hashes;
@@ -37,6 +37,7 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from faar.dataset_paths import SPLIT_RELATIVE_PATH
 from faar.run_io import atomic_write_text
 
 SCHEMA_VERSION = 1
@@ -201,7 +202,7 @@ def build_summary(
                 "free_memory_bytes_at_start": devices[0].get("free_memory_bytes"),
             }
 
-    split_checksum = _sha256(project_root / "split.json")
+    split_checksum = _sha256(project_root / SPLIT_RELATIVE_PATH)
     qas_checksum = _sha256(project_root / "OHR-Bench/data/qas_v2.json")
     split = str(checkpoint.get("split") or checkpoint.get("dataset") or "")
     manifest_path = project_root / "data/benchmark_assets/ohrbench" / f"{split}.json"
@@ -275,7 +276,7 @@ def project_preparation(
         raise SystemExit(
             "calibration timing is incomplete because an attempt ended in an unclean shutdown. "
             "Projection refuses an incomplete wall-time total and does not accept scheduler timing. "
-            "Apply scheduler timing with prepare_benchmark_assets.py --scheduler-elapsed-sec, "
+            "Apply scheduler timing with scripts/data/prepare_benchmark_assets.py --scheduler-elapsed-sec, "
             "rebuild the calibration summary, then run projection again."
         )
     throughput = (summary.get("throughput") or {}).get("ocr_page_runtime_sec") or {}
