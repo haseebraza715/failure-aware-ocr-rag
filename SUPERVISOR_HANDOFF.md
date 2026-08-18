@@ -43,7 +43,9 @@ inventory, and the OHR PDF archive. Supply the archive at
 development archive is about 1.4 GB. Do not copy a 200 GB expanded corpus before
 the calibration measures generated storage.
 
-Set these values in the ignored `.env` file or scheduler environment:
+Set these values in the ignored `.env` file or scheduler environment.
+Slurm/PBS templates source `.env` after `cd`, and cluster entry points load it
+without overriding exported values:
 
 | Variable | Purpose |
 | --- | --- |

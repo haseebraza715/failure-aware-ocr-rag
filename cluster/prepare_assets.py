@@ -59,7 +59,13 @@ from faar.asset_preparation import (
     load_locked_docling,
     load_locked_got_ocr,
 )
-from faar.dataset_paths import SPLIT_RELATIVE_PATH, DatasetPathError, env_raw, resolve_dataset_paths
+from faar.dataset_paths import (
+    SPLIT_RELATIVE_PATH,
+    DatasetPathError,
+    env_raw,
+    load_project_dotenv,
+    resolve_dataset_paths,
+)
 from faar.ohr_inventory import load_resolved_ohr_document_inventory
 from faar.operations import check_termination, install_graceful_termination_handler
 from faar.resource_limits import enforce_memory_budget, is_fatal_resource_error
@@ -646,13 +652,13 @@ def main(argv: list[str] | None = None) -> int:
     _validate_positive_int("--num-shards", args.num_shards)
     _validate_positive_int("--max-documents", args.max_documents)
     _validate_positive_int("--max-pages", args.max_pages)
-    _validate_resource_config()
-    _default_thread_limits()
-    install_graceful_termination_handler()
-
     project_root = args.project_root.expanduser().resolve()
     if not project_root.is_dir():
         raise SystemExit(f"project root is not a directory: {project_root}")
+    load_project_dotenv(project_root)
+    _validate_resource_config()
+    _default_thread_limits()
+    install_graceful_termination_handler()
     verify_split_checksums(project_root)
     doc_names, example_count = load_split_documents(project_root, args.split)
 

@@ -24,6 +24,21 @@ def env_raw(name: str) -> str | None:
     return str(raw).strip()
 
 
+def load_project_dotenv(project_root: Path) -> bool:
+    """Load the ignored project `.env` without overriding exported values.
+
+    Cluster entry points and preparation CLIs read FAAR_* paths from the
+    process environment. Supervisors are told to put those values in `.env`.
+    """
+    env_file = resolve_against_project_root(".env", project_root)
+    if not env_file.is_file():
+        return False
+    from dotenv import load_dotenv
+
+    load_dotenv(dotenv_path=env_file, override=False)
+    return True
+
+
 def resolve_against_project_root(raw: str | Path, project_root: Path) -> Path:
     """Resolve a configured path against the explicit project root, never cwd."""
     root = project_root.expanduser().resolve()

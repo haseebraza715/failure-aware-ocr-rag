@@ -121,6 +121,24 @@ def test_run_checks_passes_with_no_warnings(
     assert report["summary"]["warnings"] == 0
 
 
+def test_preflight_check_reads_pdf_zip_from_dotenv(
+    tmp_path: Path, clean_env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = build_project(tmp_path)
+    (project / "data/ohr_bench_raw/pdfs.zip").unlink()
+    custom = project / "elsewhere" / "pdfs.zip"
+    custom.parent.mkdir()
+    custom.write_bytes(b"PK")
+    (project / ".env").write_text(f"FAAR_PDF_ZIP={custom}\n", encoding="utf-8")
+    monkeypatch.setattr(preflight.shutil, "which", lambda name: f"/usr/bin/{name}")
+    code = preflight.main(["--check", "--no-cuda", "--dry-run", "--project-root", str(project)])
+    assert code != 1
+    report = json.loads(capsys.readouterr().out)
+    dataset = next(check for check in report["checks"] if check["name"] == "dataset_paths")
+    assert dataset["status"] == "pass"
+    assert report["environment"].get("FAAR_PDF_ZIP") == str(custom)
+
+
 def test_run_checks_missing_cuda_is_blocking(tmp_path: Path, clean_env) -> None:
     project = build_project(tmp_path)
     report = preflight.run_checks(gpu_payload(devices=[]), project_root=project, path=project, cuda=True)

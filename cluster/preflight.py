@@ -26,7 +26,13 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from faar.dataset_paths import SPLIT_RELATIVE_PATH, DatasetPathError, env_raw, resolve_dataset_paths
+from faar.dataset_paths import (
+    SPLIT_RELATIVE_PATH,
+    DatasetPathError,
+    env_raw,
+    load_project_dotenv,
+    resolve_dataset_paths,
+)
 
 try:
     import resource
@@ -917,6 +923,7 @@ def main(argv: list[str] | None = None) -> int:
     cuda = not args.no_cuda
     measured_path = args.path.expanduser().resolve()
     project_root = (args.project_root or args.path).expanduser().resolve()
+    load_project_dotenv(project_root)
     payload = collect(measured_path, cuda=cuda)
     if not args.check:
         rendered = render(payload)

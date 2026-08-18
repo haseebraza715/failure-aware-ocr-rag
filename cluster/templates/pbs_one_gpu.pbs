@@ -13,6 +13,12 @@
 set -euo pipefail
 cd "${PBS_O_WORKDIR:-$PWD}"
 mkdir -p logs
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
 
 export VLM_BACKEND="${VLM_BACKEND:-openai}"
 export FAAR_PYTHON="${FAAR_PYTHON:-$PWD/.venv-aaai/bin/python}"

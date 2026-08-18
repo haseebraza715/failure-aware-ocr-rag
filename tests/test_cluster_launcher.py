@@ -636,6 +636,35 @@ def test_launcher_rejects_multiple_gpus_end_to_end(tmp_path: Path) -> None:
     assert "arg-one" not in result.stderr
 
 
+def test_launcher_reads_gpu_budget_from_dotenv(tmp_path: Path) -> None:
+    _write_fake_runpy(tmp_path)
+    (tmp_path / "scripts/experiments/run.py").write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
+    preflight_file = tmp_path / "preflight.json"
+    preflight_file.write_text(
+        __import__("json").dumps(
+            _gpu_payload(devices=[{"index": 0, "total_memory_bytes": 16 * GIB, "free_memory_bytes": 16 * GIB}])
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "hf").mkdir()
+    (tmp_path / ".env").write_text("FAAR_GPU_BUDGET_GB=8\n", encoding="utf-8")
+    env = os.environ.copy()
+    env["FAAR_PREFLIGHT_JSON"] = str(preflight_file)
+    env["HF_HOME"] = str(tmp_path / "hf")
+    env.pop("FAAR_GPU_BUDGET_GB", None)
+    env.pop("FAAR_MAX_GPU_MEMORY_FRACTION", None)
+    result = subprocess.run(
+        [sys.executable, str(CLUSTER / "launcher.py"), "--project-root", str(tmp_path), "--gate", "off"],
+        cwd=str(tmp_path),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "FAAR_GPU_BUDGET_GB=8" in result.stdout
+
+
 def test_launcher_missing_key_fails_before_child(tmp_path: Path) -> None:
     _write_fake_runpy(tmp_path)
     preflight_file = tmp_path / "preflight.json"

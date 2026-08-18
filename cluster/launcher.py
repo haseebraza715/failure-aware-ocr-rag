@@ -20,6 +20,8 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import preflight
 
+from faar.dataset_paths import load_project_dotenv
+
 
 class LaunchError(Exception):
     pass
@@ -468,6 +470,7 @@ def main(argv: list[str] | None = None) -> int:
     args, run_args = parser.parse_known_args(argv)
     try:
         root = resolve_root(args.project_root)
+        load_project_dotenv(root)
         payload = load_preflight(root)
         report_path = args.preflight_out or default_preflight_path(root, payload)
         if not report_path.is_absolute():

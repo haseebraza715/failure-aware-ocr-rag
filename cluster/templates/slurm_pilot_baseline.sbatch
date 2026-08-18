@@ -29,6 +29,12 @@
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:-$PWD}"
 mkdir -p logs
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
 
 # <EDIT: 50-100 example pilot size>
 export PILOT_EXAMPLES="${PILOT_EXAMPLES:-100}"

@@ -114,6 +114,23 @@ def test_templates_never_hardcode_private_values() -> None:
                 assert False, f"{name}:{line_no} has a non-placeholder partition"
 
 
+def test_templates_source_project_dotenv() -> None:
+    for name in (
+        "slurm_preflight.sbatch",
+        "slurm_calibration_108.sbatch",
+        "slurm_prepare_val_shard.sbatch",
+        "slurm_pilot_baseline.sbatch",
+        "slurm_one_gpu.sbatch",
+        "pbs_one_gpu.pbs",
+    ):
+        text = (TEMPLATES / name).read_text(encoding="utf-8")
+        assert "source .env" in text, f"{name} does not source the project .env"
+        source_at = text.index("source .env")
+        scratch_at = text.find("FAAR_SCRATCH=")
+        if scratch_at != -1:
+            assert source_at < scratch_at, f"{name} uses FAAR_SCRATCH before sourcing .env"
+
+
 def test_templates_include_signal_and_resume_behavior() -> None:
     calibration = (TEMPLATES / "slurm_calibration_108.sbatch").read_text()
     sharded = (TEMPLATES / "slurm_prepare_val_shard.sbatch").read_text()

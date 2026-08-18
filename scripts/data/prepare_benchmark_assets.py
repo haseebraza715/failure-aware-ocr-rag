@@ -40,7 +40,7 @@ from faar.asset_preparation import (
     plan_document_work,
     resolve_pdf_source,
 )
-from faar.dataset_paths import DatasetPathError, env_raw, resolve_dataset_paths
+from faar.dataset_paths import DatasetPathError, env_raw, load_project_dotenv, resolve_dataset_paths
 from faar.ohr_inventory import (
     diagnose_ohr_inventory_gaps,
     load_resolved_ohr_document_inventory,
@@ -338,6 +338,7 @@ def main(argv: list[str] | None = None) -> int:
     install_graceful_termination_handler()
 
     project_root = (args.project_root or Path.cwd()).expanduser().resolve()
+    load_project_dotenv(project_root)
     try:
         dataset_paths = resolve_dataset_paths(
             project_root=project_root,

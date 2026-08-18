@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
-from faar.dataset_paths import DatasetPathError, resolve_against_project_root, resolve_dataset_paths
+from faar.dataset_paths import (
+    DatasetPathError,
+    load_project_dotenv,
+    resolve_against_project_root,
+    resolve_dataset_paths,
+)
 
 
 def test_relative_paths_resolve_against_project_root_not_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -54,6 +60,28 @@ def test_explicit_pdf_zip_is_validated_even_when_pdf_root_is_set(tmp_path: Path)
             pdf_root=pdf_root,
             pdf_zip=missing_zip,
         )
+
+
+def test_load_project_dotenv_does_not_override_exported_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / ".env").write_text("FAAR_SCRATCH=/from-dotenv\nFAAR_PDF_ZIP=/from-dotenv.zip\n")
+    monkeypatch.delenv("FAAR_SCRATCH", raising=False)
+    monkeypatch.setenv("FAAR_PDF_ZIP", "/already-exported.zip")
+    outsider = tmp_path / "cwd"
+    outsider.mkdir()
+    monkeypatch.chdir(outsider)
+    assert load_project_dotenv(project) is True
+    assert os.environ["FAAR_SCRATCH"] == "/from-dotenv"
+    assert os.environ["FAAR_PDF_ZIP"] == "/already-exported.zip"
+
+
+def test_load_project_dotenv_missing_file_is_a_no_op(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FAAR_SCRATCH", raising=False)
+    assert load_project_dotenv(tmp_path) is False
+    assert os.getenv("FAAR_SCRATCH") is None
 
 
 def test_pdf_root_must_be_a_directory(tmp_path: Path) -> None:

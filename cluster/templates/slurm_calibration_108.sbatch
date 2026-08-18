@@ -29,6 +29,12 @@
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:-$PWD}"
 mkdir -p logs
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
 
 export FAAR_PYTHON="${FAAR_PYTHON:-$PWD/.venv-aaai/bin/python}"
 export FAAR_SCRATCH="${FAAR_SCRATCH:-$PWD/results/calibration}"
