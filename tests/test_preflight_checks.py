@@ -115,6 +115,11 @@ def test_run_checks_passes_with_no_warnings(
     monkeypatch.setenv("OMP_NUM_THREADS", "4")
     monkeypatch.setenv("MKL_NUM_THREADS", "4")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-1234567890abcdef")
+    monkeypatch.setattr(
+        preflight.shutil,
+        "disk_usage",
+        lambda path: type("usage", (), {"total": 100 * GIB, "used": 20 * GIB, "free": 80 * GIB})(),
+    )
     report = preflight.run_checks(gpu_payload(), project_root=project, path=project, cuda=True)
     assert report["exit_code"] == 0, report
     assert report["summary"]["failed"] == 0
