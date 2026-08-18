@@ -1,8 +1,9 @@
 # FAAR shared-cluster runbook
 
 This is the copy-paste procedure. The short supervisor page is
-[SUPERVISOR_HANDOFF.md](../../SUPERVISOR_HANDOFF.md). Do not submit any job before the
-calibration report is approved.
+[SUPERVISOR_HANDOFF.md](../../SUPERVISOR_HANDOFF.md). Submit only the allocated-GPU
+preflight and the bounded 108-page calibration until that calibration report is
+approved. Do not submit validation, pilot, or B0-B4 jobs before then.
 
 ---
 

@@ -10,8 +10,10 @@
 #SBATCH --time=08:00:00
 #SBATCH --signal=TERM@120
 
-# Edit the resource directives for the confirmed lab allocation.
-# B0--B4 checkpoint each example and resume with --resume.
+# Do NOT submit this full B0-B4 job until the calibration report is approved
+# and the locked validation manifest exists. Edit the resource directives for
+# the confirmed lab allocation. B0--B4 checkpoint each example and resume with
+# --resume.
 
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:-$PWD}"

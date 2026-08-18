@@ -135,8 +135,10 @@ def test_templates_include_signal_and_resume_behavior() -> None:
     calibration = (TEMPLATES / "slurm_calibration_108.sbatch").read_text()
     sharded = (TEMPLATES / "slurm_prepare_val_shard.sbatch").read_text()
     pilot = (TEMPLATES / "slurm_pilot_baseline.sbatch").read_text()
+    one_gpu = (TEMPLATES / "slurm_one_gpu.sbatch").read_text()
     assert "--signal=TERM@120" in calibration
     assert "--signal=TERM@120" in sharded
     assert "--signal=TERM@120" in pilot
     assert "--resume" in sharded
     assert "--resume" in pilot
+    assert "Do NOT submit this full B0-B4 job until the calibration report is approved" in one_gpu
