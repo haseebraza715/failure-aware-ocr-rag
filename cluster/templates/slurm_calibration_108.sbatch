@@ -50,4 +50,5 @@ mkdir -p "$FAAR_SCRATCH" "$HF_HOME"
   --dataset ohrbench \
   --out-root "$FAAR_SCRATCH/faar-ohr-108" \
   --smoke-doc manual/User_Manual_1500S_Classic_EN \
+  --require-calibration-108 \
   --execute

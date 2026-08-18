@@ -235,6 +235,7 @@ mkdir -p "$HF_HOME"
   --dataset ohrbench \
   --out-root "${SCRATCH:-$PWD/results/calibration}/faar-ohr-108" \
   --smoke-doc manual/User_Manual_1500S_Classic_EN \
+  --require-calibration-108 \
   --execute
 ```
 
@@ -279,9 +280,10 @@ Editable one-GPU Slurm templates under `cluster/templates/`:
 `slurm_one_gpu.sbatch` runs the full ordered baseline runner and
 `pbs_one_gpu.pbs` is its PBS equivalent:
 
-- `slurm_one_gpu.sbatch`: `--gpus=1`, bounded `--mem` and
-  `--time`, and `--signal=TERM@120` so Slurm delivers SIGTERM 120 s before
-  walltime.
+- `slurm_one_gpu.sbatch`: generic full B0-B4 runner, not the 108-page
+  calibration. `--gpus=1`, bounded `--mem` and `--time`, `--signal=TERM@120`,
+  and `<EDIT_PARTITION>` / `<EDIT_QOS>` / `<EDIT_ACCOUNT>` placeholders that
+  refuse to start Python until they are replaced.
 - `pbs_one_gpu.pbs`: `ngpus=1` and bounded `ncpus`/`mem`/
   `walltime`; its optional TORQUE `softwalltime` directive is disabled until
   the target cluster confirms support.

@@ -62,6 +62,9 @@ IDENTITY_FIELDS = (
     "docling",
     "render_scale",
 )
+CALIBRATION_108_DOC = "manual/User_Manual_1500S_Classic_EN"
+CALIBRATION_108_PAGE_COUNT = 108
+CALIBRATION_108_PAGE_IDS = list(range(CALIBRATION_108_PAGE_COUNT))
 
 
 def _rel(path: Path, project_root: Path) -> str:
@@ -113,6 +116,55 @@ def _inventory_page_ids(project_root: Path, doc_rel: str, inventory_dir: Path, p
             f"No complete gt inventory for {doc_rel!r} (resolved={resolved!r}, diagnosis={kind}, path={path})."
         )
     return inventory[doc_rel]
+
+
+def validate_calibration_108(*, smoke_doc: str, page_ids: list[int] | None) -> None:
+    """Refuse the bounded calibration unless the exact 108-page document is selected."""
+    problems: list[str] = []
+    if smoke_doc != CALIBRATION_108_DOC:
+        problems.append(f"document is {smoke_doc!r}; required {CALIBRATION_108_DOC!r}")
+    if not page_ids:
+        problems.append("page inventory is missing")
+    else:
+        try:
+            ids = [int(page_id) for page_id in page_ids]
+        except (TypeError, ValueError):
+            problems.append("page inventory contains non-integer page indices")
+            ids = None
+        if ids is not None and ids != CALIBRATION_108_PAGE_IDS:
+            expected = set(CALIBRATION_108_PAGE_IDS)
+            if len(ids) != CALIBRATION_108_PAGE_COUNT:
+                problems.append(f"page count is {len(ids)}; required {CALIBRATION_108_PAGE_COUNT}")
+            seen: set[int] = set()
+            duplicates: list[int] = []
+            for page_id in ids:
+                if page_id in seen:
+                    duplicates.append(page_id)
+                else:
+                    seen.add(page_id)
+            if duplicates:
+                problems.append(f"duplicate page indices: {sorted(set(duplicates))}")
+            missing = [page_id for page_id in CALIBRATION_108_PAGE_IDS if page_id not in seen]
+            extra = sorted(page_id for page_id in seen if page_id not in expected)
+            if missing:
+                preview = missing[:12]
+                suffix = "..." if len(missing) > 12 else ""
+                problems.append(f"missing page indices: {preview}{suffix}")
+            if extra:
+                preview = extra[:12]
+                suffix = "..." if len(extra) > 12 else ""
+                problems.append(f"unexpected page indices: {preview}{suffix}")
+            unique_sorted = sorted(seen)
+            if unique_sorted and unique_sorted != list(range(unique_sorted[0], unique_sorted[-1] + 1)):
+                problems.append("page indices are not contiguous")
+            if ids != unique_sorted:
+                problems.append("page indices are not strictly increasing from 0 through 107")
+    if problems:
+        raise SystemExit(
+            "Bounded 108-page calibration lock failed before processing: "
+            + "; ".join(problems)
+            + ". Refusing to start calibration."
+        )
 
 
 def build_run_identity(
@@ -319,6 +371,15 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Execute the one-document pipeline (local Docling/GOT-OCR). Full-dataset mode remains blocked.",
     )
+    parser.add_argument(
+        "--require-calibration-108",
+        action="store_true",
+        help=(
+            "Refuse to run unless --smoke-doc is manual/User_Manual_1500S_Classic_EN "
+            "and the selected pages are exactly 0 through 107. Required for the "
+            "bounded supervisor calibration; other one-document prep stays unlocked."
+        ),
+    )
     parser.add_argument("--checkpoint", type=Path, help="Resumable checkpoint JSON path.")
     parser.add_argument(
         "--scheduler-elapsed-sec",
@@ -382,7 +443,9 @@ def main(argv: list[str] | None = None) -> int:
 
     doc_rel = args.smoke_doc.strip().removesuffix(".pdf")
     page_ids = _inventory_page_ids(project_root, doc_rel, inventory_dir, args.page_ids)
-    if not page_ids:
+    if args.require_calibration_108:
+        validate_calibration_108(smoke_doc=doc_rel, page_ids=page_ids)
+    elif not page_ids:
         raise SystemExit("--page-ids / inventory must contain at least one page id.")
 
     kind, source = resolve_pdf_source(

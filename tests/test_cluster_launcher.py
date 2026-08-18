@@ -128,6 +128,70 @@ def test_build_child_command_missing_runpy_fails(tmp_path: Path) -> None:
         launcher.build_child_command(tmp_path, [], "/usr/bin/python3")
 
 
+def test_validate_calibration_launch_requires_lock_for_execute() -> None:
+    with pytest.raises(launcher.LaunchError, match="--require-calibration-108"):
+        launcher.validate_calibration_launch(
+            "scripts/data/prepare_benchmark_assets.py",
+            ["--dataset", "ohrbench", "--smoke-doc", launcher.CALIBRATION_108_DOC, "--execute"],
+        )
+
+
+def test_validate_calibration_launch_rejects_wrong_smoke_doc() -> None:
+    with pytest.raises(launcher.LaunchError, match="manual/User_Manual_1500S_Classic_EN"):
+        launcher.validate_calibration_launch(
+            "scripts/data/prepare_benchmark_assets.py",
+            [
+                "--dataset",
+                "ohrbench",
+                "--smoke-doc",
+                "academic/demo",
+                "--require-calibration-108",
+                "--execute",
+            ],
+        )
+
+
+def test_validate_calibration_launch_accepts_locked_execute() -> None:
+    launcher.validate_calibration_launch(
+        "scripts/data/prepare_benchmark_assets.py",
+        [
+            "--dataset",
+            "ohrbench",
+            "--smoke-doc",
+            launcher.CALIBRATION_108_DOC,
+            "--require-calibration-108",
+            "--execute",
+        ],
+    )
+
+
+def test_validate_calibration_launch_ignores_other_entrypoints() -> None:
+    launcher.validate_calibration_launch("scripts/experiments/run.py", ["--execute"])
+
+
+def test_launcher_main_refuses_unlocked_calibration_execute_before_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entrypoint = tmp_path / "scripts/data/prepare_benchmark_assets.py"
+    entrypoint.parent.mkdir(parents=True)
+    entrypoint.write_text("raise SystemExit('child must not start')\n", encoding="utf-8")
+    monkeypatch.setattr(launcher, "load_preflight", lambda root: (_ for _ in ()).throw(AssertionError("too late")))
+    code = launcher.main(
+        [
+            "--project-root",
+            str(tmp_path),
+            "--entrypoint",
+            "scripts/data/prepare_benchmark_assets.py",
+            "--dataset",
+            "ohrbench",
+            "--smoke-doc",
+            launcher.CALIBRATION_108_DOC,
+            "--execute",
+        ]
+    )
+    assert code == 2
+
+
 def test_build_child_command_accepts_repository_local_entrypoint(tmp_path: Path) -> None:
     entrypoint = tmp_path / "scripts/data/prepare_benchmark_assets.py"
     entrypoint.parent.mkdir(parents=True)

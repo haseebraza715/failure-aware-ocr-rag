@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import shlex
 import subprocess
@@ -17,7 +18,10 @@ EXPECTED_ENTRYPOINTS = {
     ],
     "slurm_calibration_108.sbatch": [
         ("cluster/launcher.py", {"--project-root", "--entrypoint", "--preflight-out"}),
-        ("scripts/data/prepare_benchmark_assets.py", {"--dataset", "--out-root", "--smoke-doc", "--execute"}),
+        (
+            "scripts/data/prepare_benchmark_assets.py",
+            {"--dataset", "--out-root", "--smoke-doc", "--require-calibration-108", "--execute"},
+        ),
     ],
     "slurm_prepare_val_shard.sbatch": [
         ("cluster/launcher.py", {"--project-root", "--entrypoint", "--preflight-out"}),
@@ -131,6 +135,49 @@ def test_templates_source_project_dotenv() -> None:
             assert source_at < scratch_at, f"{name} uses FAAR_SCRATCH before sourcing .env"
 
 
+def test_all_templates_pass_bash_syntax() -> None:
+    for path in sorted(TEMPLATES.glob("*")):
+        if path.suffix not in {".sbatch", ".pbs"}:
+            continue
+        completed = subprocess.run(["bash", "-n", str(path)], check=False, capture_output=True, text=True)
+        assert completed.returncode == 0, f"{path.name}: {completed.stderr}"
+
+
+def test_one_gpu_template_has_no_hardcoded_scheduler_defaults() -> None:
+    text = (TEMPLATES / "slurm_one_gpu.sbatch").read_text(encoding="utf-8")
+    assert "#SBATCH --partition=<EDIT_PARTITION>" in text
+    assert "#SBATCH --qos=<EDIT_QOS>" in text
+    assert "#SBATCH --account=<EDIT_ACCOUNT>" in text
+    assert not re.search(r"^#SBATCH --partition=gpu\s*$", text, re.MULTILINE)
+    assert not re.search(r"^#SBATCH --qos=normal\s*$", text, re.MULTILINE)
+    preflight = (TEMPLATES / "slurm_preflight.sbatch").read_text(encoding="utf-8")
+    calibration = (TEMPLATES / "slurm_calibration_108.sbatch").read_text(encoding="utf-8")
+    assert "--require-calibration-108" in calibration
+    assert "cluster/preflight.py" in preflight
+    assert "#SBATCH --partition=<EDIT: partition that offers the intended GPU, e.g. gpu>" in preflight
+    assert "#SBATCH --partition=<EDIT: partition that offers the intended GPU, e.g. gpu>" in calibration
+
+
+def test_one_gpu_template_fails_closed_before_python(tmp_path: Path) -> None:
+    script = tmp_path / "slurm_one_gpu.sbatch"
+    script.write_text((TEMPLATES / "slurm_one_gpu.sbatch").read_text(encoding="utf-8"), encoding="utf-8")
+    fake_python = tmp_path / "fake-python"
+    fake_python.write_text("#!/usr/bin/env bash\necho PYTHON_STARTED > python-started\nexit 0\n")
+    fake_python.chmod(0o755)
+    completed = subprocess.run(
+        ["bash", str(script)],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env={**os.environ, "FAAR_PYTHON": str(fake_python)},
+    )
+    assert completed.returncode == 2
+    assert "<EDIT_PARTITION>" in completed.stderr
+    assert "not the bounded 108-page calibration" in completed.stderr
+    assert not (tmp_path / "python-started").exists()
+
+
 def test_templates_include_signal_and_resume_behavior() -> None:
     calibration = (TEMPLATES / "slurm_calibration_108.sbatch").read_text()
     sharded = (TEMPLATES / "slurm_prepare_val_shard.sbatch").read_text()
@@ -141,4 +188,5 @@ def test_templates_include_signal_and_resume_behavior() -> None:
     assert "--signal=TERM@120" in pilot
     assert "--resume" in sharded
     assert "--resume" in pilot
-    assert "Do NOT submit this full B0-B4 job until the calibration report is approved" in one_gpu
+    assert "This is NOT the bounded 108-page calibration" in one_gpu
+    assert "Do not submit this file for supervisor preflight or calibration" in one_gpu

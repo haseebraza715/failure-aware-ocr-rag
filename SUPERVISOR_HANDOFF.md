@@ -91,9 +91,12 @@ Choose `FAAR_GPU_BUDGET_GB` from that report. Then submit only:
 sbatch cluster/templates/slurm_calibration_108.sbatch
 ```
 
-This processes one complete 108-page document through PDF extraction, Docling,
-page rendering, and pinned GOT-OCR. It is calibration evidence, not a paper
-result. Do not submit validation preparation or baseline jobs concurrently.
+This processes one complete 108-page document
+(`manual/User_Manual_1500S_Classic_EN`, pages 0–107) through PDF extraction,
+Docling, page rendering, and pinned GOT-OCR. The job refuses to start if that
+document or page set does not match. It is calibration evidence, not a paper
+result. Do not submit `slurm_one_gpu.sbatch`, validation preparation, or
+baseline jobs concurrently.
 
 ## Resume and return files
 

@@ -91,9 +91,11 @@ sbatch cluster/templates/slurm_calibration_108.sbatch
 ```
 
 This runs one complete 108-page document
-(`manual/User_Manual_1500S_Classic_EN`) through PDF extraction, Docling, page
-rendering, and pinned GOT-OCR. **Calibration evidence only — never a paper
-result.** Submit nothing else until it is approved.
+(`manual/User_Manual_1500S_Classic_EN`, pages 0–107) through PDF extraction, Docling, page
+rendering, and pinned GOT-OCR. The job refuses to start if the document or
+inventory is not that exact 108-page set. **Calibration evidence only — never a paper
+result.** Submit nothing else until it is approved. Do not use
+`cluster/templates/slurm_one_gpu.sbatch` for this step.
 
 ## 7. Monitor logs and disk
 
@@ -135,6 +137,7 @@ the start timestamp. Supply the scheduler-reported wall time for that attempt:
   --dataset ohrbench \
   --out-root results/calibration/faar-ohr-108 \
   --smoke-doc manual/User_Manual_1500S_Classic_EN \
+  --require-calibration-108 \
   --scheduler-elapsed-sec <seconds from sacct/qstat>
 ```
 

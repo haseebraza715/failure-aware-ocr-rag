@@ -22,6 +22,9 @@ import preflight
 
 from faar.dataset_paths import load_project_dotenv
 
+CALIBRATION_108_DOC = "manual/User_Manual_1500S_Classic_EN"
+CALIBRATION_PREP_ENTRYPOINT = "scripts/data/prepare_benchmark_assets.py"
+
 
 class LaunchError(Exception):
     pass
@@ -361,6 +364,39 @@ def validate_required_keys(root: Path, run_args: list[str] | None = None) -> Non
         )
 
 
+def _run_arg_value(run_args: list[str], flag: str) -> str | None:
+    prefix = f"{flag}="
+    for index, token in enumerate(run_args):
+        if token == flag and index + 1 < len(run_args):
+            return run_args[index + 1]
+        if token.startswith(prefix):
+            return token.split("=", 1)[1]
+    return None
+
+
+def validate_calibration_launch(entrypoint: Path | str, run_args: list[str]) -> None:
+    """GPU execution of one-document prep is the bounded 108-page calibration only."""
+    entry = Path(entrypoint).as_posix().replace("\\", "/")
+    if not entry.endswith(CALIBRATION_PREP_ENTRYPOINT):
+        return
+    if "--execute" not in run_args:
+        return
+    if "--require-calibration-108" not in run_args:
+        raise LaunchError(
+            "GPU execution of scripts/data/prepare_benchmark_assets.py requires "
+            "--require-calibration-108. That launcher path is the bounded 108-page "
+            "calibration, not general asset preparation."
+        )
+    smoke_doc = _run_arg_value(run_args, "--smoke-doc")
+    if smoke_doc is not None:
+        smoke_doc = smoke_doc.strip().removesuffix(".pdf")
+    if smoke_doc != CALIBRATION_108_DOC:
+        raise LaunchError(
+            f"bounded calibration requires --smoke-doc {CALIBRATION_108_DOC}; "
+            f"received {smoke_doc!r}."
+        )
+
+
 def build_child_command(
     root: Path,
     run_args: list[str],
@@ -471,6 +507,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         root = resolve_root(args.project_root)
         load_project_dotenv(root)
+        validate_calibration_launch(args.entrypoint, run_args)
         payload = load_preflight(root)
         report_path = args.preflight_out or default_preflight_path(root, payload)
         if not report_path.is_absolute():
